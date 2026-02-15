@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 
 from vox.api.deps import get_current_user, get_db
 from vox.api.messages import _msg_response
-from vox.db.models import Message, Pin, User
+from vox.db.models import Message, Pin, User, message_attachments
 from vox.models.messages import SearchResponse
 
 router = APIRouter(tags=["search"])
@@ -35,5 +35,13 @@ async def search_messages(
         stmt = stmt.where(Message.id > after)
     if pinned is True:
         stmt = stmt.join(Pin, Pin.msg_id == Message.id)
+    if has_file is True:
+        stmt = stmt.join(message_attachments, message_attachments.c.msg_id == Message.id)
+    if has_file is False:
+        from sqlalchemy import not_, exists
+        attachment_exists = select(message_attachments.c.msg_id).where(
+            message_attachments.c.msg_id == Message.id
+        ).exists()
+        stmt = stmt.where(not_(attachment_exists))
     result = await db.execute(stmt)
     return SearchResponse(results=[_msg_response(m) for m in result.scalars().all()])

@@ -311,6 +311,10 @@ def stage_invite(room_id: int, user_id: int) -> dict[str, Any]:
     return _event("stage_invite", {"room_id": room_id, "user_id": user_id})
 
 
+def stage_invite_decline(room_id: int, user_id: int) -> dict[str, Any]:
+    return _event("stage_invite_decline", {"room_id": room_id, "user_id": user_id})
+
+
 def stage_revoke(room_id: int, user_id: int) -> dict[str, Any]:
     return _event("stage_revoke", {"room_id": room_id, "user_id": user_id})
 

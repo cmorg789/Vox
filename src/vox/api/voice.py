@@ -135,6 +135,9 @@ async def stage_respond_to_invite(
         db.add(speaker)
         await db.commit()
         await _dispatch_voice_state(db, room_id)
+    else:
+        evt = gw.stage_invite_decline(room_id=room_id, user_id=user.id)
+        await dispatch(evt)
 
 
 @router.post("/api/v1/rooms/{room_id}/stage/revoke", status_code=204)
