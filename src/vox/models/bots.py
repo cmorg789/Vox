@@ -60,3 +60,8 @@ class InteractionResponse(BaseModel):
     embeds: list | None = None
     components: list | None = None
     ephemeral: bool = False
+
+
+class ComponentInteractionRequest(BaseModel):
+    msg_id: int
+    component_id: str

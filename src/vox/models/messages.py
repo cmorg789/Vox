@@ -23,6 +23,7 @@ class EditMessageRequest(BaseModel):
 class SendMessageResponse(VoxModel):
     msg_id: int
     timestamp: int
+    interaction_id: str | None = None
 
 
 class EditMessageResponse(VoxModel):

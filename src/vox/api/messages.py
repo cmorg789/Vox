@@ -1,15 +1,17 @@
 import time
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from vox.api.deps import get_current_user, get_db, require_permission
-from vox.db.models import File, Message, Pin, Reaction, User, message_attachments
+from vox.db.models import Bot, BotCommand, File, Message, Pin, Reaction, User, message_attachments
 from vox.permissions import MANAGE_MESSAGES, READ_HISTORY, SEND_IN_THREADS, SEND_MESSAGES, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
+from vox import interactions
 from vox.models.messages import (
     BulkDeleteRequest,
     EditMessageRequest,
@@ -61,6 +63,104 @@ def _msg_response(m: Message) -> MessageResponse:
     )
 
 
+def _parse_slash_command(text: str) -> tuple[str, dict] | None:
+    """Parse '/command param1=val1 param2=val2' into (name, params)."""
+    if not text.startswith("/"):
+        return None
+    parts = text.split()
+    name = parts[0][1:]  # strip leading /
+    if not name:
+        return None
+    params: dict = {}
+    for part in parts[1:]:
+        if "=" in part:
+            k, v = part.split("=", 1)
+            params[k] = v
+        else:
+            params[part] = True
+    return name, params
+
+
+async def _handle_slash_command(
+    text: str,
+    user: User,
+    feed_id: int | None,
+    dm_id: int | None,
+    db: AsyncSession,
+) -> SendMessageResponse | None:
+    """If text is a slash command, intercept and create interaction. Returns response or None."""
+    parsed = _parse_slash_command(text)
+    if parsed is None:
+        return None
+    cmd_name, params = parsed
+
+    # Look up the command
+    result = await db.execute(select(BotCommand).where(BotCommand.name == cmd_name))
+    bot_cmd = result.scalar_one_or_none()
+    if bot_cmd is None:
+        return None  # Not a registered command, treat as normal message
+
+    # Get the bot
+    result = await db.execute(select(Bot).where(Bot.id == bot_cmd.bot_id))
+    bot = result.scalar_one()
+
+    interaction = interactions.create(
+        type="slash_command",
+        command=cmd_name,
+        params=params,
+        user_id=user.id,
+        feed_id=feed_id,
+        dm_id=dm_id,
+        bot_id=bot.id,
+    )
+
+    payload = {
+        "id": interaction.id,
+        "type": "slash_command",
+        "command": cmd_name,
+        "params": params,
+        "user_id": user.id,
+        "feed_id": feed_id,
+        "dm_id": dm_id,
+    }
+
+    if bot.interaction_url:
+        # HTTP callback bot
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(bot.interaction_url, json=payload, timeout=5.0)
+                if resp.status_code == 200 and resp.content:
+                    data = resp.json()
+                    if data.get("body"):
+                        # Create message from bot response
+                        msg_id = _snowflake()
+                        ts = int(time.time() * 1000)
+                        msg = Message(
+                            id=msg_id,
+                            feed_id=feed_id,
+                            dm_id=dm_id,
+                            author_id=bot.user_id,
+                            body=data["body"],
+                            timestamp=ts,
+                        )
+                        db.add(msg)
+                        await db.commit()
+                        await dispatch(gw.message_create(
+                            msg_id=msg_id, feed_id=feed_id, dm_id=dm_id,
+                            author_id=bot.user_id, body=data["body"], timestamp=ts,
+                        ))
+        except httpx.HTTPError:
+            pass
+    else:
+        # Gateway bot — dispatch interaction_create to the bot's user
+        await dispatch(
+            gw.interaction_create(payload),
+            user_ids=[bot.user_id],
+        )
+
+    return SendMessageResponse(msg_id=0, timestamp=int(time.time() * 1000), interaction_id=interaction.id)
+
+
 # --- Feed Messages ---
 
 @router.get("/api/v1/feeds/{feed_id}/messages")
@@ -88,6 +188,10 @@ async def send_feed_message(
     db: AsyncSession = Depends(get_db),
     user: User = require_permission(SEND_MESSAGES, space_type="feed", space_id_param="feed_id"),
 ) -> SendMessageResponse:
+    # Slash command interception
+    intercepted = await _handle_slash_command(body.body, user, feed_id=feed_id, dm_id=None, db=db)
+    if intercepted is not None:
+        return intercepted
     msg_id = _snowflake()
     ts = int(time.time() * 1000)
     msg = Message(
@@ -194,6 +298,10 @@ async def send_thread_message(
     db: AsyncSession = Depends(get_db),
     user: User = require_permission(SEND_IN_THREADS, space_type="feed", space_id_param="feed_id"),
 ) -> SendMessageResponse:
+    # Slash command interception
+    intercepted = await _handle_slash_command(body.body, user, feed_id=feed_id, dm_id=None, db=db)
+    if intercepted is not None:
+        return intercepted
     msg_id = _snowflake()
     ts = int(time.time() * 1000)
     msg = Message(

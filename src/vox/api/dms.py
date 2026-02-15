@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from vox.api.deps import get_current_user, get_db
-from vox.api.messages import _msg_response, _snowflake
+from vox.api.messages import _handle_slash_command, _msg_response, _snowflake
 from vox.db.models import DM, DMReadState, DMSettings, File, Message, User, dm_participants, message_attachments
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
@@ -187,6 +187,10 @@ async def send_dm_message(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> SendMessageResponse:
+    # Slash command interception
+    intercepted = await _handle_slash_command(body.body, user, feed_id=None, dm_id=dm_id, db=db)
+    if intercepted is not None:
+        return intercepted
     msg_id = _snowflake()
     ts = int(time.time() * 1000)
     msg = Message(id=msg_id, dm_id=dm_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to)
