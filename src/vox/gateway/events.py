@@ -28,17 +28,24 @@ def ready(
     user_id: int,
     display_name: str,
     server_name: str,
+    server_icon: str | None = None,
+    server_time: int | None = None,
     protocol_version: int = 1,
     capabilities: list[str] | None = None,
 ) -> dict[str, Any]:
-    return _event("ready", {
+    d: dict[str, Any] = {
         "session_id": session_id,
         "user_id": user_id,
         "display_name": display_name,
         "server_name": server_name,
         "protocol_version": protocol_version,
         "capabilities": capabilities or ["voice", "e2ee", "federation", "bots", "webhooks"],
-    })
+    }
+    if server_icon is not None:
+        d["server_icon"] = server_icon
+    if server_time is not None:
+        d["server_time"] = server_time
+    return _event("ready", d)
 
 
 # --- Message Events ---
@@ -266,3 +273,81 @@ def typing_start(user_id: int, feed_id: int | None = None, dm_id: int | None = N
 
 def presence_update(user_id: int, status: str, **extra: Any) -> dict[str, Any]:
     return _event("presence_update", {"user_id": user_id, "status": status, **extra})
+
+
+# --- Voice/Stage Events ---
+
+def voice_state_update(room_id: int, members: list[dict[str, Any]]) -> dict[str, Any]:
+    return _event("voice_state_update", {"room_id": room_id, "members": members})
+
+
+def voice_codec_neg(media_type: str, codec: str, **params: Any) -> dict[str, Any]:
+    return _event("voice_codec_neg", {"media_type": media_type, "codec": codec, **params})
+
+
+def stage_request(room_id: int, user_id: int) -> dict[str, Any]:
+    return _event("stage_request", {"room_id": room_id, "user_id": user_id})
+
+
+def stage_invite(room_id: int, user_id: int) -> dict[str, Any]:
+    return _event("stage_invite", {"room_id": room_id, "user_id": user_id})
+
+
+def stage_revoke(room_id: int, user_id: int) -> dict[str, Any]:
+    return _event("stage_revoke", {"room_id": room_id, "user_id": user_id})
+
+
+def stage_topic_update(room_id: int, topic: str) -> dict[str, Any]:
+    return _event("stage_topic_update", {"room_id": room_id, "topic": topic})
+
+
+def media_token_refresh(room_id: int, media_token: str) -> dict[str, Any]:
+    return _event("media_token_refresh", {"room_id": room_id, "media_token": media_token})
+
+
+# --- E2EE Events ---
+
+def mls_welcome(data: str) -> dict[str, Any]:
+    return _event("mls_welcome", {"data": data})
+
+
+def mls_commit(data: str) -> dict[str, Any]:
+    return _event("mls_commit", {"data": data})
+
+
+def mls_proposal(data: str) -> dict[str, Any]:
+    return _event("mls_proposal", {"data": data})
+
+
+def device_list_update(devices: list[dict[str, Any]]) -> dict[str, Any]:
+    return _event("device_list_update", {"devices": devices})
+
+
+def device_pair_prompt(device_name: str, ip: str, location: str, pair_id: str) -> dict[str, Any]:
+    return _event("device_pair_prompt", {"device_name": device_name, "ip": ip, "location": location, "pair_id": pair_id})
+
+
+def cpace_isi(pair_id: str, data: str) -> dict[str, Any]:
+    return _event("cpace_isi", {"pair_id": pair_id, "data": data})
+
+
+def cpace_rsi(pair_id: str, data: str) -> dict[str, Any]:
+    return _event("cpace_rsi", {"pair_id": pair_id, "data": data})
+
+
+def cpace_confirm(pair_id: str, data: str) -> dict[str, Any]:
+    return _event("cpace_confirm", {"pair_id": pair_id, "data": data})
+
+
+def cpace_new_device_key(pair_id: str, data: str, nonce: str) -> dict[str, Any]:
+    return _event("cpace_new_device_key", {"pair_id": pair_id, "data": data, "nonce": nonce})
+
+
+def key_reset_notify(user_id: int) -> dict[str, Any]:
+    return _event("key_reset_notify", {"user_id": user_id})
+
+
+# --- Bot Events ---
+
+def interaction_create(interaction: dict[str, Any]) -> dict[str, Any]:
+    return _event("interaction_create", interaction)
