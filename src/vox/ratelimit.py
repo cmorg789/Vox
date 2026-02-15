@@ -41,6 +41,7 @@ CATEGORIES: dict[str, tuple[int, float]] = {
     "e2ee": (30, 0.5),
     "search": (10, 0.1),
     "files": (20, 0.5),
+    "federation": (50, 1.0),
 }
 
 # In-memory store: (key, category) -> Bucket
@@ -69,6 +70,7 @@ _PREFIX_MAP: list[tuple[str, str]] = [
     ("/api/v1/e2ee", "e2ee"),
     ("/api/v1/dms", "messages"),
     ("/api/v1/files", "files"),
+    ("/api/v1/federation", "federation"),
 ]
 
 
@@ -179,6 +181,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     async def _resolve_key(self, request: Request, path: str) -> str:
         ip = request.client.host if request.client else "unknown"
+
+        # Federation endpoints are keyed by X-Vox-Origin header
+        if path.startswith("/api/v1/federation"):
+            origin = request.headers.get("x-vox-origin", ip)
+            return f"fed:{origin}"
 
         # Webhook execution is always IP-keyed
         if path.startswith("/api/v1/webhooks/") and "/execute" in path:

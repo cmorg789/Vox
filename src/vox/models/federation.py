@@ -1,0 +1,70 @@
+from pydantic import BaseModel, Field
+
+from vox.models.base import VoxModel
+
+
+class RelayMessageRequest(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    from_: str = Field(alias="from")
+    to: str
+    opaque_blob: str
+
+
+class RelayTypingRequest(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    from_: str = Field(alias="from")
+    to: str
+
+
+class RelayReadRequest(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    from_: str = Field(alias="from")
+    to: str
+    up_to_msg_id: int
+
+
+class FederatedDevicePrekey(VoxModel):
+    device_id: str
+    identity_key: str
+    signed_prekey: str
+    one_time_prekey: str | None = None
+
+
+class FederatedPrekeyResponse(VoxModel):
+    user_address: str
+    devices: list[FederatedDevicePrekey]
+
+
+class FederatedUserProfile(VoxModel):
+    display_name: str
+    avatar_url: str | None = None
+    bio: str | None = None
+
+
+class PresenceSubscribeRequest(BaseModel):
+    user_address: str
+
+
+class PresenceNotifyRequest(BaseModel):
+    user_address: str
+    status: str
+    activity: str | None = None
+
+
+class FederationJoinRequest(BaseModel):
+    user_address: str
+    invite_code: str | None = None
+    voucher: str
+
+
+class FederationJoinResponse(VoxModel):
+    accepted: bool
+    federation_token: str
+    server_info: dict
+
+
+class FederationBlockRequest(BaseModel):
+    reason: str | None = None

@@ -205,6 +205,25 @@ async def send_dm_message(
     await db.commit()
     pids = await _dm_participant_ids(db, dm_id)
     await dispatch(gw.message_create(msg_id=msg_id, dm_id=dm_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to), user_ids=pids)
+
+    # Outbound federation relay for federated participants
+    try:
+        from vox.federation.client import relay_dm_message
+        from vox.federation.service import get_our_domain
+
+        our_domain = await get_our_domain(db)
+        if our_domain:
+            participants = await db.execute(
+                select(User).join(dm_participants, dm_participants.c.user_id == User.id).where(dm_participants.c.dm_id == dm_id)
+            )
+            for participant in participants.scalars().all():
+                if participant.federated and participant.home_domain:
+                    from_address = f"{user.username}@{our_domain}"
+                    to_address = participant.username  # Already user@domain for fed users
+                    await relay_dm_message(db, from_address, to_address, body.body or "")
+    except Exception:
+        pass  # Fire-and-forget
+
     return SendMessageResponse(msg_id=msg_id, timestamp=ts)
 
 

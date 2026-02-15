@@ -23,6 +23,7 @@ from vox.auth.service import authenticate, create_session, create_user, get_user
 
 from vox.db.models import Role, TOTPSecret, User, WebAuthnCredential, RecoveryCode, role_members
 from vox.models.auth import (
+    FederationTokenLoginRequest,
     Login2FARequest,
     LoginRequest,
     LoginResponse,
@@ -519,6 +520,50 @@ async def webauthn_login(
 
     await verify_webauthn_authentication(db, challenge_id, assertion)
 
+    token = await create_session(db, user.id)
+    role_ids = await get_user_role_ids(db, user.id)
+    await db.commit()
+
+    return LoginResponse(
+        token=token,
+        user_id=user.id,
+        display_name=user.display_name,
+        roles=role_ids,
+    )
+
+
+# --- Federation Token Login ---
+
+
+@router.post("/login/federation")
+async def login_federation(
+    body: FederationTokenLoginRequest,
+    db: AsyncSession = Depends(get_db),
+) -> LoginResponse:
+    from vox.auth.service import get_user_by_token
+
+    user = await get_user_by_token(db, body.federation_token)
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": "AUTH_FAILED", "message": "Invalid federation token."}},
+        )
+    if not user.federated:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": "AUTH_FAILED", "message": "Token does not belong to a federated user."}},
+        )
+
+    # Delete the federation session
+    from vox.db.models import Session as DBSession
+    result = await db.execute(
+        select(DBSession).where(DBSession.token == body.federation_token)
+    )
+    fed_session = result.scalar_one_or_none()
+    if fed_session:
+        await db.delete(fed_session)
+
+    # Create a regular session
     token = await create_session(db, user.id)
     role_ids = await get_user_role_ids(db, user.id)
     await db.commit()

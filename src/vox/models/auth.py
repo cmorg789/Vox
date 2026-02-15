@@ -109,3 +109,10 @@ class WebAuthnCredentialResponse(VoxModel):
     name: str
     registered_at: int
     last_used_at: int | None
+
+
+# --- Federation Token Login ---
+
+
+class FederationTokenLoginRequest(BaseModel):
+    federation_token: str
