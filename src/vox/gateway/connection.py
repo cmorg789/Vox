@@ -100,6 +100,7 @@ class Connection:
 
     async def run(self, db_factory: Any) -> None:
         """Main connection lifecycle."""
+        self._db_factory = db_factory
         try:
             await self.ws.accept()
 
@@ -154,6 +155,11 @@ class Connection:
             await self.close(CLOSE_UNKNOWN_ERROR, "UNKNOWN_ERROR")
         finally:
             if self.authenticated:
+                # Clean up voice state on disconnect
+                try:
+                    await self._cleanup_voice_state(db_factory)
+                except Exception:
+                    log.debug("Voice cleanup skipped for user %d", self.user_id)
                 # Preserve session state in hub for resume
                 state = SessionState(
                     user_id=self.user_id,
@@ -300,8 +306,7 @@ class Connection:
 
             elif msg_type == "voice_state_update":
                 from vox.gateway.dispatch import dispatch
-                evt = {"type": "voice_state_update", "d": {"user_id": self.user_id, **data}}
-                await dispatch(evt)
+                await self._handle_voice_state_update(data, db_factory)
 
             elif msg_type == "mls_relay":
                 mls_type = data.get("mls_type", "")
@@ -340,3 +345,62 @@ class Connection:
                 await self.hub.broadcast(evt)
 
             # Unknown types are silently ignored per spec tolerance
+
+    async def _handle_voice_state_update(self, data: dict[str, Any], db_factory: Any) -> None:
+        from vox.gateway.dispatch import dispatch
+        from vox.db.models import VoiceState
+        from vox.voice.service import get_room_members
+        from sqlalchemy import select
+
+        async with db_factory() as db:
+            result = await db.execute(select(VoiceState).where(VoiceState.user_id == self.user_id))
+            vs = result.scalar_one_or_none()
+            if vs is None:
+                return
+
+            if "self_mute" in data:
+                vs.self_mute = data["self_mute"]
+            if "self_deaf" in data:
+                vs.self_deaf = data["self_deaf"]
+            if "video" in data:
+                vs.video = data["video"]
+            if "streaming" in data:
+                vs.streaming = data["streaming"]
+            await db.commit()
+
+            members = await get_room_members(db, vs.room_id)
+            evt = events.voice_state_update(
+                room_id=vs.room_id,
+                members=[m.model_dump() for m in members],
+            )
+            await dispatch(evt)
+
+    async def _cleanup_voice_state(self, db_factory: Any) -> None:
+        # Check in-memory SFU state first to avoid unnecessary DB access
+        from vox.voice.service import _sfu
+        if _sfu is None:
+            return
+        try:
+            users = _sfu.get_room_users  # just check SFU is alive
+        except Exception:
+            return
+
+        from vox.db.models import VoiceState
+        from vox.voice.service import leave_room, get_room_members
+        from vox.gateway.dispatch import dispatch
+        from sqlalchemy import select
+
+        async with db_factory() as db:
+            result = await db.execute(select(VoiceState).where(VoiceState.user_id == self.user_id))
+            vs = result.scalar_one_or_none()
+            if vs is None:
+                return
+            room_id = vs.room_id
+            await leave_room(db, room_id, self.user_id)
+
+            members = await get_room_members(db, room_id)
+            evt = events.voice_state_update(
+                room_id=room_id,
+                members=[m.model_dump() for m in members],
+            )
+            await dispatch(evt)

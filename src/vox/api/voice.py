@@ -1,11 +1,13 @@
-import secrets
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
-from vox.db.models import User
-from vox.permissions import CONNECT, MOVE_MEMBERS, STAGE_MODERATOR
+from vox.db.models import Room, StageSpeaker, User, VoiceState
+from vox.gateway import events as gw
+from vox.gateway.dispatch import dispatch
 from vox.models.voice import (
     StageInviteRequest,
     StageInviteResponseRequest,
@@ -16,8 +18,16 @@ from vox.models.voice import (
     VoiceKickRequest,
     VoiceMoveRequest,
 )
+from vox.permissions import CONNECT, MOVE_MEMBERS, STAGE_MODERATOR
+from vox.voice import service as voice_service
 
 router = APIRouter(tags=["voice"])
+
+
+async def _dispatch_voice_state(db: AsyncSession, room_id: int) -> None:
+    members = await voice_service.get_room_members(db, room_id)
+    evt = gw.voice_state_update(room_id=room_id, members=[m.model_dump() for m in members])
+    await dispatch(evt)
 
 
 @router.post("/api/v1/rooms/{room_id}/voice/join")
@@ -27,8 +37,16 @@ async def join_voice(
     db: AsyncSession = Depends(get_db),
     user: User = require_permission(CONNECT, space_type="room", space_id_param="room_id"),
 ) -> VoiceJoinResponse:
-    media_token = "media_" + secrets.token_urlsafe(32)
-    return VoiceJoinResponse(media_url="quic://localhost:4443", media_token=media_token, members=[])
+    # Verify room exists
+    result = await db.execute(select(Room).where(Room.id == room_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "NOT_FOUND", "message": "Room not found."}})
+
+    token, members = await voice_service.join_room(db, room_id, user.id, body.self_mute, body.self_deaf)
+    media_url = await voice_service.get_media_url(db)
+
+    await _dispatch_voice_state(db, room_id)
+    return VoiceJoinResponse(media_url=media_url, media_token=token, members=members)
 
 
 @router.post("/api/v1/rooms/{room_id}/voice/leave", status_code=204)
@@ -37,8 +55,8 @@ async def leave_voice(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    # TODO: track voice state, remove from SFU
-    pass
+    await voice_service.leave_room(db, room_id, user.id)
+    await _dispatch_voice_state(db, room_id)
 
 
 @router.post("/api/v1/rooms/{room_id}/voice/kick", status_code=204)
@@ -48,7 +66,8 @@ async def kick_from_voice(
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(MOVE_MEMBERS, space_type="room", space_id_param="room_id"),
 ):
-    pass
+    await voice_service.kick_user(db, room_id, body.user_id)
+    await _dispatch_voice_state(db, room_id)
 
 
 @router.post("/api/v1/rooms/{room_id}/voice/move", status_code=204)
@@ -58,7 +77,9 @@ async def move_to_room(
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(MOVE_MEMBERS, space_type="room", space_id_param="room_id"),
 ):
-    pass
+    await voice_service.move_user(db, room_id, body.to_room_id, body.user_id)
+    await _dispatch_voice_state(db, room_id)
+    await _dispatch_voice_state(db, body.to_room_id)
 
 
 # --- Stage ---
@@ -69,8 +90,15 @@ async def stage_request_to_speak(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    # TODO: send stage_request event via gateway
-    pass
+    # Verify user is in room
+    result = await db.execute(
+        select(VoiceState).where(VoiceState.user_id == user.id, VoiceState.room_id == room_id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=400, detail={"error": {"code": "NOT_IN_VOICE", "message": "Not in this voice room."}})
+
+    evt = gw.stage_request(room_id=room_id, user_id=user.id)
+    await dispatch(evt)
 
 
 @router.post("/api/v1/rooms/{room_id}/stage/invite", status_code=204)
@@ -80,7 +108,15 @@ async def stage_invite_to_speak(
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(STAGE_MODERATOR, space_type="room", space_id_param="room_id"),
 ):
-    pass
+    # Verify target user is in room
+    result = await db.execute(
+        select(VoiceState).where(VoiceState.user_id == body.user_id, VoiceState.room_id == room_id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=400, detail={"error": {"code": "NOT_IN_VOICE", "message": "Target user is not in this voice room."}})
+
+    evt = gw.stage_invite(room_id=room_id, user_id=body.user_id)
+    await dispatch(evt, user_ids=[body.user_id])
 
 
 @router.post("/api/v1/rooms/{room_id}/stage/invite/respond", status_code=204)
@@ -90,7 +126,15 @@ async def stage_respond_to_invite(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    pass
+    if body.accepted:
+        speaker = StageSpeaker(
+            room_id=room_id,
+            user_id=user.id,
+            granted_at=datetime.now(timezone.utc),
+        )
+        db.add(speaker)
+        await db.commit()
+        await _dispatch_voice_state(db, room_id)
 
 
 @router.post("/api/v1/rooms/{room_id}/stage/revoke", status_code=204)
@@ -100,7 +144,11 @@ async def stage_revoke_speaker(
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(STAGE_MODERATOR, space_type="room", space_id_param="room_id"),
 ):
-    pass
+    from sqlalchemy import delete
+    await db.execute(delete(StageSpeaker).where(StageSpeaker.room_id == room_id, StageSpeaker.user_id == body.user_id))
+    await db.commit()
+    evt = gw.stage_revoke(room_id=room_id, user_id=body.user_id)
+    await dispatch(evt)
 
 
 @router.patch("/api/v1/rooms/{room_id}/stage/topic")
@@ -110,5 +158,12 @@ async def stage_set_topic(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    # TODO: store stage topic, broadcast via gateway
+    result = await db.execute(select(Room).where(Room.id == room_id))
+    room = result.scalar_one_or_none()
+    if room is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "NOT_FOUND", "message": "Room not found."}})
+    room.topic = body.topic
+    await db.commit()
+    evt = gw.stage_topic_update(room_id=room_id, topic=body.topic)
+    await dispatch(evt)
     return {"topic": body.topic}

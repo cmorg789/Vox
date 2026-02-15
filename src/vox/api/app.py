@@ -8,6 +8,7 @@ from vox.db.models import Base
 from vox.gateway.connection import Connection
 from vox.gateway.hub import get_hub, init_hub
 from vox.ratelimit import RateLimitMiddleware
+from vox.voice.service import stop_sfu
 
 
 def create_app(database_url: str) -> FastAPI:
@@ -24,6 +25,8 @@ def create_app(database_url: str) -> FastAPI:
         # Initialize the gateway hub
         init_hub()
         yield
+        # Shutdown SFU
+        stop_sfu()
         # Dispose engine on shutdown
         await engine.dispose()
 

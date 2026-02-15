@@ -142,7 +142,28 @@ class Room(Base):
     category_id: Mapped[Optional[int]] = mapped_column(ForeignKey("categories.id"))
     position: Mapped[int] = mapped_column(Integer)
 
+    topic: Mapped[Optional[str]] = mapped_column(String(255))
     category: Mapped[Optional["Category"]] = relationship(back_populates="rooms")
+
+
+class VoiceState(Base):
+    __tablename__ = "voice_states"
+
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), primary_key=True)
+    room_id: Mapped[int] = mapped_column(ForeignKey("rooms.id"))
+    self_mute: Mapped[bool] = mapped_column(Boolean, server_default="0")
+    self_deaf: Mapped[bool] = mapped_column(Boolean, server_default="0")
+    video: Mapped[bool] = mapped_column(Boolean, server_default="0")
+    streaming: Mapped[bool] = mapped_column(Boolean, server_default="0")
+    joined_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class StageSpeaker(Base):
+    __tablename__ = "stage_speakers"
+
+    room_id: Mapped[int] = mapped_column(Integer, ForeignKey("rooms.id"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), primary_key=True)
+    granted_at: Mapped[datetime] = mapped_column(DateTime)
 
 
 class Thread(Base):

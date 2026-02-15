@@ -1,3 +1,5 @@
+import os
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -6,6 +8,10 @@ from vox.db.engine import get_engine
 from vox.db.models import Base
 from vox.interactions import reset as reset_interactions
 from vox.ratelimit import reset as reset_ratelimit
+from vox.voice.service import reset as reset_voice
+
+# Use port 0 so each SFU picks a random free port (avoids conflicts)
+os.environ.setdefault("VOX_MEDIA_BIND", "127.0.0.1:0")
 
 
 @pytest.fixture()
@@ -28,9 +34,11 @@ async def db(app):
 def _clear_state():
     reset_ratelimit()
     reset_interactions()
+    reset_voice()
     yield
     reset_ratelimit()
     reset_interactions()
+    reset_voice()
 
 
 @pytest.fixture()
