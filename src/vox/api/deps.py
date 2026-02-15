@@ -26,6 +26,10 @@ async def get_current_user(
     else:
         raise HTTPException(status_code=401, detail={"error": {"code": "AUTH_FAILED", "message": "Invalid authorization header."}})
 
+    RESTRICTED_PREFIXES = ("mfa_", "setup_totp_", "setup_webauthn_")
+    if any(token.startswith(p) for p in RESTRICTED_PREFIXES):
+        raise HTTPException(status_code=401, detail={"error": {"code": "AUTH_FAILED", "message": "Restricted token cannot be used for authentication."}})
+
     user = await get_user_by_token(db, token)
     if user is None:
         raise HTTPException(status_code=401, detail={"error": {"code": "AUTH_EXPIRED", "message": "Session token expired or invalid."}})

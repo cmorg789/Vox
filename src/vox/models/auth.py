@@ -86,6 +86,15 @@ class MFARemoveRequest(BaseModel):
 # --- WebAuthn ---
 
 
+class WebAuthnChallengeRequest(BaseModel):
+    username: str
+
+
+class WebAuthnChallengeResponse(VoxModel):
+    challenge_id: str
+    options: dict
+
+
 class WebAuthnLoginRequest(BaseModel):
     username: str
     client_data_json: str
