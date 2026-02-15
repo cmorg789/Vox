@@ -1,9 +1,11 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 
-from vox.db.engine import get_engine, init_engine
+from vox.db.engine import get_engine, get_session_factory, init_engine
 from vox.db.models import Base
+from vox.gateway.connection import Connection
+from vox.gateway.hub import get_hub, init_hub
 
 
 def create_app(database_url: str) -> FastAPI:
@@ -15,6 +17,8 @@ def create_app(database_url: str) -> FastAPI:
         engine = get_engine()
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+        # Initialize the gateway hub
+        init_hub()
         yield
         # Dispose engine on shutdown
         await engine.dispose()
@@ -57,5 +61,12 @@ def create_app(database_url: str) -> FastAPI:
     app.include_router(voice_router)
     app.include_router(gateway_info_router)
     app.include_router(search_router)
+
+    @app.websocket("/gateway")
+    async def gateway_websocket(ws: WebSocket):
+        hub = get_hub()
+        conn = Connection(ws, hub)
+        db_factory = get_session_factory()
+        await conn.run(db_factory)
 
     return app

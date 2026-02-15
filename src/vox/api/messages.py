@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db
 from vox.db.models import Message, Pin, Reaction, User
+from vox.gateway import events as gw
+from vox.gateway.dispatch import dispatch
 from vox.models.messages import (
     BulkDeleteRequest,
     EditMessageRequest,
@@ -91,6 +93,7 @@ async def send_feed_message(
     )
     db.add(msg)
     await db.commit()
+    await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to))
     return SendMessageResponse(msg_id=msg_id, timestamp=ts)
 
 
@@ -111,6 +114,7 @@ async def edit_feed_message(
     msg.body = body.body
     msg.edit_timestamp = int(time.time() * 1000)
     await db.commit()
+    await dispatch(gw.message_update(msg_id=msg.id, feed_id=feed_id, body=body.body, edit_timestamp=msg.edit_timestamp))
     return EditMessageResponse(msg_id=msg.id, edit_timestamp=msg.edit_timestamp)
 
 
@@ -131,6 +135,7 @@ async def delete_feed_message(
         raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Insufficient permissions."}})
     await db.delete(msg)
     await db.commit()
+    await dispatch(gw.message_delete(msg_id=msg_id, feed_id=feed_id))
 
 
 @router.post("/api/v1/feeds/{feed_id}/messages/bulk-delete", status_code=204)
@@ -143,6 +148,7 @@ async def bulk_delete_messages(
     # TODO: check MANAGE_MESSAGES permission
     await db.execute(delete(Message).where(Message.id.in_(body.msg_ids), Message.feed_id == feed_id))
     await db.commit()
+    await dispatch(gw.message_bulk_delete(feed_id=feed_id, msg_ids=body.msg_ids))
 
 
 # --- Thread Messages ---
@@ -188,6 +194,7 @@ async def send_thread_message(
     )
     db.add(msg)
     await db.commit()
+    await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to))
     return SendMessageResponse(msg_id=msg_id, timestamp=ts)
 
 
@@ -203,6 +210,7 @@ async def add_reaction(
 ):
     db.add(Reaction(msg_id=msg_id, user_id=user.id, emoji=emoji))
     await db.commit()
+    await dispatch(gw.message_reaction_add(msg_id=msg_id, user_id=user.id, emoji=emoji))
 
 
 @router.delete("/api/v1/feeds/{feed_id}/messages/{msg_id}/reactions/{emoji}", status_code=204)
@@ -217,6 +225,7 @@ async def remove_reaction(
         delete(Reaction).where(Reaction.msg_id == msg_id, Reaction.user_id == user.id, Reaction.emoji == emoji)
     )
     await db.commit()
+    await dispatch(gw.message_reaction_remove(msg_id=msg_id, user_id=user.id, emoji=emoji))
 
 
 # --- Pins ---
@@ -231,6 +240,7 @@ async def pin_message(
     from datetime import datetime, timezone
     db.add(Pin(feed_id=feed_id, msg_id=msg_id, pinned_at=datetime.now(timezone.utc)))
     await db.commit()
+    await dispatch(gw.message_pin_update(msg_id=msg_id, feed_id=feed_id, pinned=True))
 
 
 @router.delete("/api/v1/feeds/{feed_id}/pins/{msg_id}", status_code=204)
@@ -242,6 +252,7 @@ async def unpin_message(
 ):
     await db.execute(delete(Pin).where(Pin.feed_id == feed_id, Pin.msg_id == msg_id))
     await db.commit()
+    await dispatch(gw.message_pin_update(msg_id=msg_id, feed_id=feed_id, pinned=False))
 
 
 @router.get("/api/v1/feeds/{feed_id}/pins")

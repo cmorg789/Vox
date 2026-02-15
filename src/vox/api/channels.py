@@ -4,6 +4,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db
 from vox.db.models import Category, Feed, Room, Thread, User, feed_subscribers, thread_subscribers
+from vox.gateway import events as gw
+from vox.gateway.dispatch import dispatch
 from vox.models.channels import (
     CategoryResponse,
     CreateCategoryRequest,
@@ -49,6 +51,7 @@ async def create_feed(
     db.add(feed)
     await db.flush()
     await db.commit()
+    await dispatch(gw.feed_create(feed_id=feed.id, name=feed.name, type=feed.type, category_id=feed.category_id))
     return FeedResponse(feed_id=feed.id, name=feed.name, type=feed.type, topic=feed.topic, category_id=feed.category_id)
 
 
@@ -64,11 +67,16 @@ async def update_feed(
     feed = result.scalar_one_or_none()
     if feed is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Feed does not exist."}})
+    changed = {}
     if body.name is not None:
         feed.name = body.name
+        changed["name"] = body.name
     if body.topic is not None:
         feed.topic = body.topic
+        changed["topic"] = body.topic
     await db.commit()
+    if changed:
+        await dispatch(gw.feed_update(feed_id=feed_id, **changed))
     return FeedResponse(feed_id=feed.id, name=feed.name, type=feed.type, topic=feed.topic, category_id=feed.category_id)
 
 
@@ -85,6 +93,7 @@ async def delete_feed(
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Feed does not exist."}})
     await db.delete(feed)
     await db.commit()
+    await dispatch(gw.feed_delete(feed_id=feed_id))
 
 
 # --- Rooms ---
@@ -101,6 +110,7 @@ async def create_room(
     db.add(room)
     await db.flush()
     await db.commit()
+    await dispatch(gw.room_create(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id))
     return RoomResponse(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id)
 
 
@@ -116,9 +126,13 @@ async def update_room(
     room = result.scalar_one_or_none()
     if room is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Room does not exist."}})
+    changed = {}
     if body.name is not None:
         room.name = body.name
+        changed["name"] = body.name
     await db.commit()
+    if changed:
+        await dispatch(gw.room_update(room_id=room_id, **changed))
     return RoomResponse(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id)
 
 
@@ -135,6 +149,7 @@ async def delete_room(
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Room does not exist."}})
     await db.delete(room)
     await db.commit()
+    await dispatch(gw.room_delete(room_id=room_id))
 
 
 # --- Categories ---
@@ -150,6 +165,7 @@ async def create_category(
     db.add(cat)
     await db.flush()
     await db.commit()
+    await dispatch(gw.category_create(category_id=cat.id, name=cat.name, position=cat.position))
     return CategoryResponse(category_id=cat.id, name=cat.name, position=cat.position)
 
 
@@ -165,11 +181,16 @@ async def update_category(
     cat = result.scalar_one_or_none()
     if cat is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Category does not exist."}})
+    changed = {}
     if body.name is not None:
         cat.name = body.name
+        changed["name"] = body.name
     if body.position is not None:
         cat.position = body.position
+        changed["position"] = body.position
     await db.commit()
+    if changed:
+        await dispatch(gw.category_update(category_id=category_id, **changed))
     return CategoryResponse(category_id=cat.id, name=cat.name, position=cat.position)
 
 
@@ -186,6 +207,7 @@ async def delete_category(
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Category does not exist."}})
     await db.delete(cat)
     await db.commit()
+    await dispatch(gw.category_delete(category_id=category_id))
 
 
 # --- Threads ---
@@ -202,6 +224,7 @@ async def create_thread(
     db.add(thread)
     await db.flush()
     await db.commit()
+    await dispatch(gw.thread_create(thread_id=thread.id, parent_feed_id=feed_id, name=thread.name, parent_msg_id=thread.parent_msg_id))
     return ThreadResponse(thread_id=thread.id, parent_feed_id=feed_id, parent_msg_id=thread.parent_msg_id, name=thread.name, archived=thread.archived, locked=thread.locked)
 
 
@@ -216,13 +239,19 @@ async def update_thread(
     thread = result.scalar_one_or_none()
     if thread is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Thread does not exist."}})
+    changed = {}
     if body.name is not None:
         thread.name = body.name
+        changed["name"] = body.name
     if body.archived is not None:
         thread.archived = body.archived
+        changed["archived"] = body.archived
     if body.locked is not None:
         thread.locked = body.locked
+        changed["locked"] = body.locked
     await db.commit()
+    if changed:
+        await dispatch(gw.thread_update(thread_id=thread_id, **changed))
     return ThreadResponse(thread_id=thread.id, parent_feed_id=thread.feed_id, parent_msg_id=thread.parent_msg_id, name=thread.name, archived=thread.archived, locked=thread.locked)
 
 
@@ -239,6 +268,7 @@ async def delete_thread(
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Thread does not exist."}})
     await db.delete(thread)
     await db.commit()
+    await dispatch(gw.thread_delete(thread_id=thread_id))
 
 
 @router.put("/api/v1/threads/{thread_id}/subscribers/@me", status_code=204)

@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vox.api.deps import get_current_user, get_db
 from vox.auth.service import get_user_role_ids
 from vox.db.models import Ban, Invite, User
+from vox.gateway import events as gw
+from vox.gateway.dispatch import dispatch
 from vox.models.members import (
     BanRequest,
     BanResponse,
@@ -60,6 +62,7 @@ async def join_server(
     invite.uses += 1
     user.active = True
     await db.commit()
+    await dispatch(gw.member_join(user_id=user.id, display_name=user.display_name))
 
 
 @router.delete("/api/v1/members/@me", status_code=204)
@@ -69,6 +72,7 @@ async def leave_server(
 ):
     user.active = False
     await db.commit()
+    await dispatch(gw.member_leave(user_id=user.id))
 
 
 @router.patch("/api/v1/members/@me")
@@ -80,6 +84,7 @@ async def update_member(
     if body.nickname is not None:
         user.nickname = body.nickname
     await db.commit()
+    await dispatch(gw.member_update(user_id=user.id, nickname=user.nickname))
     role_ids = await get_user_role_ids(db, user.id)
     return MemberResponse(user_id=user.id, display_name=user.display_name, avatar=user.avatar, nickname=user.nickname, role_ids=role_ids)
 
@@ -97,6 +102,7 @@ async def kick_member(
         raise HTTPException(status_code=404, detail={"error": {"code": "USER_NOT_FOUND", "message": "User does not exist."}})
     target.active = False
     await db.commit()
+    await dispatch(gw.member_leave(user_id=user_id))
 
 
 # --- Bans ---
@@ -117,6 +123,7 @@ async def ban_member(
     ban = Ban(user_id=user_id, reason=body.reason, created_at=datetime.now(timezone.utc))
     db.add(ban)
     await db.commit()
+    await dispatch(gw.member_ban(user_id=user_id))
     return BanResponse(user_id=user_id, display_name=target.display_name, reason=body.reason)
 
 
@@ -129,6 +136,7 @@ async def unban_member(
     # TODO: check BAN_MEMBERS permission
     await db.execute(delete(Ban).where(Ban.user_id == user_id))
     await db.commit()
+    await dispatch(gw.member_unban(user_id=user_id))
 
 
 @router.get("/api/v1/bans")

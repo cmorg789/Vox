@@ -4,6 +4,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db
 from vox.db.models import PermissionOverride, Role, User, role_members
+from vox.gateway import events as gw
+from vox.gateway.dispatch import dispatch
 from vox.models.roles import (
     CreateRoleRequest,
     PermissionOverrideRequest,
@@ -37,6 +39,7 @@ async def create_role(
     db.add(role)
     await db.flush()
     await db.commit()
+    await dispatch(gw.role_create(role_id=role.id, name=role.name, color=role.color, permissions=role.permissions, position=role.position))
     return RoleResponse(role_id=role.id, name=role.name, color=role.color, permissions=role.permissions, position=role.position)
 
 
@@ -52,15 +55,22 @@ async def update_role(
     role = result.scalar_one_or_none()
     if role is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Role not found."}})
+    changed = {}
     if body.name is not None:
         role.name = body.name
+        changed["name"] = body.name
     if body.color is not None:
         role.color = body.color
+        changed["color"] = body.color
     if body.permissions is not None:
         role.permissions = body.permissions
+        changed["permissions"] = body.permissions
     if body.position is not None:
         role.position = body.position
+        changed["position"] = body.position
     await db.commit()
+    if changed:
+        await dispatch(gw.role_update(role_id=role_id, **changed))
     return RoleResponse(role_id=role.id, name=role.name, color=role.color, permissions=role.permissions, position=role.position)
 
 
@@ -77,6 +87,7 @@ async def delete_role(
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Role not found."}})
     await db.delete(role)
     await db.commit()
+    await dispatch(gw.role_delete(role_id=role_id))
 
 
 @router.put("/api/v1/members/{user_id}/roles/{role_id}", status_code=204)

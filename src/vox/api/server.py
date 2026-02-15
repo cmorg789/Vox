@@ -4,6 +4,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db
 from vox.db.models import Category, Config, Feed, PermissionOverride, Room, User
+from vox.gateway import events as gw
+from vox.gateway.dispatch import dispatch
 from vox.models.server import (
     CategoryInfo,
     FeedInfo,
@@ -52,13 +54,19 @@ async def update_server(
     _: User = Depends(get_current_user),
 ):
     # TODO: check MANAGE_SERVER permission
+    changed = {}
     if body.name is not None:
         await _set_config(db, "server_name", body.name)
+        changed["name"] = body.name
     if body.icon is not None:
         await _set_config(db, "server_icon", body.icon)
+        changed["icon"] = body.icon
     if body.description is not None:
         await _set_config(db, "server_description", body.description)
+        changed["description"] = body.description
     await db.commit()
+    if changed:
+        await dispatch(gw.server_update(**changed))
     return await get_server_info(db=db, _=_)
 
 

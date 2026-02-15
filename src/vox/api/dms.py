@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vox.api.deps import get_current_user, get_db
 from vox.api.messages import _msg_response, _snowflake
 from vox.db.models import DM, DMReadState, DMSettings, Message, User, dm_participants
+from vox.gateway import events as gw
+from vox.gateway.dispatch import dispatch
 from vox.models.dms import (
     DMListResponse,
     DMResponse,
@@ -60,7 +62,9 @@ async def open_dm(
         await db.execute(dm_participants.insert().values(dm_id=dm.id, user_id=user.id))
         await db.execute(dm_participants.insert().values(dm_id=dm.id, user_id=body.recipient_id))
         await db.commit()
-        return DMResponse(dm_id=dm.id, participant_ids=[user.id, body.recipient_id], is_group=False)
+        pids = [user.id, body.recipient_id]
+        await dispatch(gw.dm_create(dm_id=dm.id, participant_ids=pids, is_group=False), user_ids=pids)
+        return DMResponse(dm_id=dm.id, participant_ids=pids, is_group=False)
 
     elif body.recipient_ids is not None:
         # Group DM
@@ -71,6 +75,7 @@ async def open_dm(
         for uid in all_ids:
             await db.execute(dm_participants.insert().values(dm_id=dm.id, user_id=uid))
         await db.commit()
+        await dispatch(gw.dm_create(dm_id=dm.id, participant_ids=all_ids, is_group=True, name=body.name), user_ids=all_ids)
         return DMResponse(dm_id=dm.id, participant_ids=all_ids, is_group=True, name=body.name)
 
     raise HTTPException(status_code=400, detail={"error": {"code": "PROTOCOL_VERSION_MISMATCH", "message": "Provide recipient_id or recipient_ids."}})
@@ -114,12 +119,17 @@ async def update_group_dm(
     dm = result.scalar_one_or_none()
     if dm is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "DM not found."}})
+    changed = {}
     if body.name is not None:
         dm.name = body.name
+        changed["name"] = body.name
     if body.icon is not None:
         dm.icon = body.icon
+        changed["icon"] = body.icon
     await db.commit()
     pids = await _dm_participant_ids(db, dm.id)
+    if changed:
+        await dispatch(gw.dm_update(dm_id=dm_id, **changed), user_ids=pids)
     return DMResponse(dm_id=dm.id, participant_ids=pids, is_group=dm.is_group, name=dm.name)
 
 
@@ -132,6 +142,8 @@ async def add_dm_recipient(
 ):
     await db.execute(dm_participants.insert().values(dm_id=dm_id, user_id=user_id))
     await db.commit()
+    pids = await _dm_participant_ids(db, dm_id)
+    await dispatch(gw.dm_recipient_add(dm_id=dm_id, user_id=user_id), user_ids=pids)
 
 
 @router.delete("/api/v1/dms/{dm_id}/recipients/{user_id}", status_code=204)
@@ -141,8 +153,10 @@ async def remove_dm_recipient(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    pids = await _dm_participant_ids(db, dm_id)
     await db.execute(delete(dm_participants).where(dm_participants.c.dm_id == dm_id, dm_participants.c.user_id == user_id))
     await db.commit()
+    await dispatch(gw.dm_recipient_remove(dm_id=dm_id, user_id=user_id), user_ids=pids)
 
 
 @router.post("/api/v1/dms/{dm_id}/read", status_code=204)
@@ -159,6 +173,8 @@ async def send_read_receipt(
     else:
         db.add(DMReadState(user_id=user.id, dm_id=dm_id, last_read_msg_id=body.up_to_msg_id))
     await db.commit()
+    pids = await _dm_participant_ids(db, dm_id)
+    await dispatch(gw.dm_read_notify(dm_id=dm_id, user_id=user.id, up_to_msg_id=body.up_to_msg_id), user_ids=pids)
 
 
 # --- DM Messages ---
@@ -175,6 +191,8 @@ async def send_dm_message(
     msg = Message(id=msg_id, dm_id=dm_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to)
     db.add(msg)
     await db.commit()
+    pids = await _dm_participant_ids(db, dm_id)
+    await dispatch(gw.message_create(msg_id=msg_id, dm_id=dm_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to), user_ids=pids)
     return SendMessageResponse(msg_id=msg_id, timestamp=ts)
 
 
@@ -213,6 +231,8 @@ async def edit_dm_message(
     msg.body = body.body
     msg.edit_timestamp = int(time.time() * 1000)
     await db.commit()
+    pids = await _dm_participant_ids(db, dm_id)
+    await dispatch(gw.message_update(msg_id=msg.id, dm_id=dm_id, body=body.body, edit_timestamp=msg.edit_timestamp), user_ids=pids)
     return EditMessageResponse(msg_id=msg.id, edit_timestamp=msg.edit_timestamp)
 
 
@@ -231,6 +251,8 @@ async def delete_dm_message(
         raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "You can only delete your own DM messages."}})
     await db.delete(msg)
     await db.commit()
+    pids = await _dm_participant_ids(db, dm_id)
+    await dispatch(gw.message_delete(msg_id=msg_id, dm_id=dm_id), user_ids=pids)
 
 
 # --- DM Settings ---

@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db
 from vox.db.models import Config, Invite, User
+from vox.gateway import events as gw
+from vox.gateway.dispatch import dispatch
 from vox.models.invites import CreateInviteRequest, InvitePreviewResponse, InviteResponse
 
 router = APIRouter(prefix="/api/v1/invites", tags=["invites"])
@@ -33,6 +35,7 @@ async def create_invite(
     )
     db.add(invite)
     await db.commit()
+    await dispatch(gw.invite_create(code=code, creator_id=user.id, feed_id=body.feed_id))
     return InviteResponse(
         code=code,
         creator_id=user.id,
@@ -55,6 +58,7 @@ async def delete_invite(
         raise HTTPException(status_code=404, detail={"error": {"code": "INVITE_INVALID", "message": "Invite not found."}})
     await db.delete(invite)
     await db.commit()
+    await dispatch(gw.invite_delete(code=code))
 
 
 @router.get("/{code}")
