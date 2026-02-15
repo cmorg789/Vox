@@ -1,0 +1,28 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Rust
+target/
+
+# Virtual environments
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Testing
+.pytest_cache/
+
+# Database
+*.db
+*.sqlite3

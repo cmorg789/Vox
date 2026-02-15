@@ -1,0 +1,82 @@
+// VoxProtocol v1 -- Media Transport Binary Definitions
+//
+// Reference schema for the binary media frame format used over QUIC datagrams.
+// The REST API and WebSocket gateway use JSON -- these proto definitions cover
+// only the binary media transport layer.
+//
+// NOTE: The media frame header is a fixed-layout binary structure (22 bytes +
+// variable dependency descriptor), NOT protobuf-encoded. These messages serve
+// as a machine-readable reference for the wire format documented in MEDIA.md.
+
+syntax = "proto3";
+package vox.media.v1;
+
+option go_package = "vox/media/v1;voxmediapb";
+
+// ============================================================================
+// Media Types and Codecs (MEDIA.md Section 3-4)
+// ============================================================================
+
+// Media frame type field (8 bits).
+enum MediaType {
+  MEDIA_AUDIO   = 0;  // 0x00 -- Audio frame
+  MEDIA_VIDEO   = 1;  // 0x01 -- Video frame
+  MEDIA_SCREEN  = 2;  // 0x02 -- Screen share frame
+  MEDIA_FEC     = 3;  // 0x03 -- Forward error correction (reserved)
+  MEDIA_RTCP_FB = 4;  // 0x04 -- TWCC feedback report
+}
+
+// Codec ID field (8 bits).
+enum CodecId {
+  CODEC_NONE       = 0;  // 0x00 -- Reserved (unset)
+  CODEC_OPUS       = 1;  // 0x01 -- Opus (voice)
+  CODEC_AV1        = 2;  // 0x02 -- AV1 (video)
+  CODEC_AV1_SCREEN = 3;  // 0x03 -- AV1 screen profile (screen share)
+}
+
+// ============================================================================
+// Media Frame Header (MEDIA.md Section 2)
+// ============================================================================
+
+// Reference schema for the 22-byte fixed media frame header.
+// On the wire this is packed binary, not protobuf-encoded.
+message MediaFrameHeader {
+  uint32 version      = 1;  // 8 bits
+  MediaType type      = 2;  // 8 bits
+  CodecId codec       = 3;  // 8 bits
+  uint32 flags        = 4;  // 8 bits: [KEYFRAME, END_OF_FRAME, FEC, MARKER, HAS_DEP_DESC, RSV, RSV, RSV]
+  uint32 room_id      = 5;  // 32 bits
+  uint32 user_id      = 6;  // 32 bits
+  uint32 sequence     = 7;  // 32 bits
+  uint32 timestamp    = 8;  // 32 bits
+  uint32 spatial_id   = 9;  // 4 bits
+  uint32 temporal_id  = 10; // 4 bits
+  bool   dtx          = 11; // 1 bit
+}
+
+// ============================================================================
+// Dependency Descriptor (MEDIA.md Section 5)
+// ============================================================================
+
+// Frame dependency template, negotiated during voice_codec_neg (GATEWAY.md).
+message DependencyTemplate {
+  uint32 spatial_id                        = 1;
+  uint32 temporal_id                       = 2;
+  repeated uint32 decode_target_indications = 3;
+  repeated uint32 frame_diffs              = 4;
+  repeated uint32 chain_diffs              = 5;
+}
+
+// ============================================================================
+// TWCC Feedback Report (MEDIA.md Section 8)
+// ============================================================================
+
+// Transport-Wide Congestion Control feedback report.
+// Sent as MEDIA_RTCP_FB frames.
+message TwccReport {
+  uint32 base_sequence  = 1;  // First packet sequence number in this report
+  uint32 packet_count   = 2;  // Number of packets covered
+  uint32 reference_time = 3;  // Base receive time (64ms resolution)
+  bytes  packet_statuses = 4; // Bitmap: received / not received / received-with-delta
+  bytes  recv_deltas    = 5;  // Inter-arrival time deltas (250us or 1ms resolution)
+}

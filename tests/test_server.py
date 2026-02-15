@@ -1,0 +1,43 @@
+async def auth(client):
+    r = await client.post("/api/v1/auth/register", json={"username": "alice", "password": "test1234"})
+    return {"Authorization": f"Bearer {r.json()['token']}"}
+
+
+async def test_get_server_info(client):
+    h = await auth(client)
+    r = await client.get("/api/v1/server", headers=h)
+    assert r.status_code == 200
+    assert r.json()["name"] == "Vox Server"
+    assert r.json()["member_count"] == 1
+
+
+async def test_update_server(client):
+    h = await auth(client)
+    r = await client.patch("/api/v1/server", headers=h, json={"name": "My Community", "description": "Cool place"})
+    assert r.status_code == 200
+    assert r.json()["name"] == "My Community"
+    assert r.json()["description"] == "Cool place"
+
+
+async def test_layout_empty(client):
+    h = await auth(client)
+    r = await client.get("/api/v1/server/layout", headers=h)
+    assert r.status_code == 200
+    assert r.json()["categories"] == []
+    assert r.json()["feeds"] == []
+    assert r.json()["rooms"] == []
+
+
+async def test_layout_with_content(client):
+    h = await auth(client)
+
+    await client.post("/api/v1/categories", headers=h, json={"name": "General", "position": 0})
+    await client.post("/api/v1/feeds", headers=h, json={"name": "welcome", "type": "text", "category_id": 1})
+    await client.post("/api/v1/rooms", headers=h, json={"name": "Lounge", "type": "voice", "category_id": 1})
+
+    r = await client.get("/api/v1/server/layout", headers=h)
+    assert r.status_code == 200
+    assert len(r.json()["categories"]) == 1
+    assert len(r.json()["feeds"]) == 1
+    assert len(r.json()["rooms"]) == 1
+    assert r.json()["feeds"][0]["name"] == "welcome"

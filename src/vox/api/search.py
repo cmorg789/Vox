@@ -1,0 +1,38 @@
+from fastapi import APIRouter, Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from vox.api.deps import get_current_user, get_db
+from vox.api.messages import _msg_response
+from vox.db.models import Message, Pin, User
+from vox.models.messages import SearchResponse
+
+router = APIRouter(tags=["search"])
+
+
+@router.get("/api/v1/messages/search")
+async def search_messages(
+    query: str,
+    feed_id: int | None = None,
+    author_id: int | None = None,
+    before: int | None = None,
+    after: int | None = None,
+    has_file: bool | None = None,
+    pinned: bool | None = None,
+    limit: int = 25,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> SearchResponse:
+    stmt = select(Message).where(Message.body.ilike(f"%{query}%")).order_by(Message.id.desc()).limit(limit)
+    if feed_id is not None:
+        stmt = stmt.where(Message.feed_id == feed_id)
+    if author_id is not None:
+        stmt = stmt.where(Message.author_id == author_id)
+    if before is not None:
+        stmt = stmt.where(Message.id < before)
+    if after is not None:
+        stmt = stmt.where(Message.id > after)
+    if pinned is True:
+        stmt = stmt.join(Pin, Pin.msg_id == Message.id)
+    result = await db.execute(stmt)
+    return SearchResponse(results=[_msg_response(m) for m in result.scalars().all()])

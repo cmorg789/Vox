@@ -1,0 +1,262 @@
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from vox.api.deps import get_current_user, get_db
+from vox.db.models import Category, Feed, Room, Thread, User, feed_subscribers, thread_subscribers
+from vox.models.channels import (
+    CategoryResponse,
+    CreateCategoryRequest,
+    CreateFeedRequest,
+    CreateRoomRequest,
+    CreateThreadRequest,
+    FeedResponse,
+    RoomResponse,
+    ThreadResponse,
+    UpdateCategoryRequest,
+    UpdateFeedRequest,
+    UpdateRoomRequest,
+    UpdateThreadRequest,
+)
+
+router = APIRouter(tags=["channels"])
+
+
+# --- Feeds ---
+
+@router.get("/api/v1/feeds/{feed_id}")
+async def get_feed(
+    feed_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> FeedResponse:
+    result = await db.execute(select(Feed).where(Feed.id == feed_id))
+    feed = result.scalar_one_or_none()
+    if feed is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Feed does not exist."}})
+    return FeedResponse(feed_id=feed.id, name=feed.name, type=feed.type, topic=feed.topic, category_id=feed.category_id)
+
+
+@router.post("/api/v1/feeds", status_code=201)
+async def create_feed(
+    body: CreateFeedRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> FeedResponse:
+    # TODO: check MANAGE_SPACES permission
+    max_pos = (await db.execute(select(Feed.position).order_by(Feed.position.desc()).limit(1))).scalar() or 0
+    feed = Feed(name=body.name, type=body.type, category_id=body.category_id, position=max_pos + 1)
+    db.add(feed)
+    await db.flush()
+    await db.commit()
+    return FeedResponse(feed_id=feed.id, name=feed.name, type=feed.type, topic=feed.topic, category_id=feed.category_id)
+
+
+@router.patch("/api/v1/feeds/{feed_id}")
+async def update_feed(
+    feed_id: int,
+    body: UpdateFeedRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> FeedResponse:
+    # TODO: check MANAGE_SPACES permission
+    result = await db.execute(select(Feed).where(Feed.id == feed_id))
+    feed = result.scalar_one_or_none()
+    if feed is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Feed does not exist."}})
+    if body.name is not None:
+        feed.name = body.name
+    if body.topic is not None:
+        feed.topic = body.topic
+    await db.commit()
+    return FeedResponse(feed_id=feed.id, name=feed.name, type=feed.type, topic=feed.topic, category_id=feed.category_id)
+
+
+@router.delete("/api/v1/feeds/{feed_id}", status_code=204)
+async def delete_feed(
+    feed_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    # TODO: check MANAGE_SPACES permission
+    result = await db.execute(select(Feed).where(Feed.id == feed_id))
+    feed = result.scalar_one_or_none()
+    if feed is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Feed does not exist."}})
+    await db.delete(feed)
+    await db.commit()
+
+
+# --- Rooms ---
+
+@router.post("/api/v1/rooms", status_code=201)
+async def create_room(
+    body: CreateRoomRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> RoomResponse:
+    # TODO: check MANAGE_SPACES permission
+    max_pos = (await db.execute(select(Room.position).order_by(Room.position.desc()).limit(1))).scalar() or 0
+    room = Room(name=body.name, type=body.type, category_id=body.category_id, position=max_pos + 1)
+    db.add(room)
+    await db.flush()
+    await db.commit()
+    return RoomResponse(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id)
+
+
+@router.patch("/api/v1/rooms/{room_id}")
+async def update_room(
+    room_id: int,
+    body: UpdateRoomRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> RoomResponse:
+    # TODO: check MANAGE_SPACES permission
+    result = await db.execute(select(Room).where(Room.id == room_id))
+    room = result.scalar_one_or_none()
+    if room is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Room does not exist."}})
+    if body.name is not None:
+        room.name = body.name
+    await db.commit()
+    return RoomResponse(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id)
+
+
+@router.delete("/api/v1/rooms/{room_id}", status_code=204)
+async def delete_room(
+    room_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    # TODO: check MANAGE_SPACES permission
+    result = await db.execute(select(Room).where(Room.id == room_id))
+    room = result.scalar_one_or_none()
+    if room is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Room does not exist."}})
+    await db.delete(room)
+    await db.commit()
+
+
+# --- Categories ---
+
+@router.post("/api/v1/categories", status_code=201)
+async def create_category(
+    body: CreateCategoryRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> CategoryResponse:
+    # TODO: check MANAGE_SPACES permission
+    cat = Category(name=body.name, position=body.position)
+    db.add(cat)
+    await db.flush()
+    await db.commit()
+    return CategoryResponse(category_id=cat.id, name=cat.name, position=cat.position)
+
+
+@router.patch("/api/v1/categories/{category_id}")
+async def update_category(
+    category_id: int,
+    body: UpdateCategoryRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> CategoryResponse:
+    # TODO: check MANAGE_SPACES permission
+    result = await db.execute(select(Category).where(Category.id == category_id))
+    cat = result.scalar_one_or_none()
+    if cat is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Category does not exist."}})
+    if body.name is not None:
+        cat.name = body.name
+    if body.position is not None:
+        cat.position = body.position
+    await db.commit()
+    return CategoryResponse(category_id=cat.id, name=cat.name, position=cat.position)
+
+
+@router.delete("/api/v1/categories/{category_id}", status_code=204)
+async def delete_category(
+    category_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    # TODO: check MANAGE_SPACES permission
+    result = await db.execute(select(Category).where(Category.id == category_id))
+    cat = result.scalar_one_or_none()
+    if cat is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Category does not exist."}})
+    await db.delete(cat)
+    await db.commit()
+
+
+# --- Threads ---
+
+@router.post("/api/v1/feeds/{feed_id}/threads", status_code=201)
+async def create_thread(
+    feed_id: int,
+    body: CreateThreadRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> ThreadResponse:
+    # TODO: check CREATE_THREADS permission
+    thread = Thread(name=body.name, feed_id=feed_id, parent_msg_id=body.parent_msg_id)
+    db.add(thread)
+    await db.flush()
+    await db.commit()
+    return ThreadResponse(thread_id=thread.id, parent_feed_id=feed_id, parent_msg_id=thread.parent_msg_id, name=thread.name, archived=thread.archived, locked=thread.locked)
+
+
+@router.patch("/api/v1/threads/{thread_id}")
+async def update_thread(
+    thread_id: int,
+    body: UpdateThreadRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> ThreadResponse:
+    result = await db.execute(select(Thread).where(Thread.id == thread_id))
+    thread = result.scalar_one_or_none()
+    if thread is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Thread does not exist."}})
+    if body.name is not None:
+        thread.name = body.name
+    if body.archived is not None:
+        thread.archived = body.archived
+    if body.locked is not None:
+        thread.locked = body.locked
+    await db.commit()
+    return ThreadResponse(thread_id=thread.id, parent_feed_id=thread.feed_id, parent_msg_id=thread.parent_msg_id, name=thread.name, archived=thread.archived, locked=thread.locked)
+
+
+@router.delete("/api/v1/threads/{thread_id}", status_code=204)
+async def delete_thread(
+    thread_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    # TODO: check MANAGE_THREADS permission
+    result = await db.execute(select(Thread).where(Thread.id == thread_id))
+    thread = result.scalar_one_or_none()
+    if thread is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Thread does not exist."}})
+    await db.delete(thread)
+    await db.commit()
+
+
+@router.put("/api/v1/threads/{thread_id}/subscribers/@me", status_code=204)
+async def subscribe_thread(
+    thread_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    await db.execute(thread_subscribers.insert().values(thread_id=thread_id, user_id=user.id))
+    await db.commit()
+
+
+@router.delete("/api/v1/threads/{thread_id}/subscribers/@me", status_code=204)
+async def unsubscribe_thread(
+    thread_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    from sqlalchemy import delete
+    await db.execute(delete(thread_subscribers).where(thread_subscribers.c.thread_id == thread_id, thread_subscribers.c.user_id == user.id))
+    await db.commit()
