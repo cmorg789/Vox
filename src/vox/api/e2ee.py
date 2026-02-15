@@ -4,9 +4,12 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import Request
 
 from vox.api.deps import get_current_user, get_db
-from vox.db.models import Device, KeyBackup, OneTimePrekey, Prekey, User
+from vox.db.models import Device, KeyBackup, OneTimePrekey, Prekey, User, dm_participants
+from vox.gateway import events as gw
+from vox.gateway.dispatch import dispatch
 from vox.models.e2ee import (
     AddDeviceRequest,
     DevicePrekey,
@@ -108,11 +111,20 @@ async def remove_device(
 @router.post("/devices/pair", status_code=201)
 async def initiate_pairing(
     body: PairDeviceRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> PairDeviceResponse:
-    # TODO: relay device_pair_prompt via gateway
     pair_id = "pair_" + secrets.token_urlsafe(16)
+    await dispatch(
+        gw.device_pair_prompt(
+            device_name=body.device_name,
+            ip=request.client.host if request.client else "unknown",
+            location="",
+            pair_id=pair_id,
+        ),
+        user_ids=[user.id],
+    )
     return PairDeviceResponse(pair_id=pair_id)
 
 
@@ -123,8 +135,10 @@ async def respond_to_pairing(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    # TODO: relay approval/denial via gateway
-    pass
+    await dispatch(
+        gw.cpace_confirm(pair_id=pair_id, data="approved" if body.approved else "denied"),
+        user_ids=[user.id],
+    )
 
 
 @router.put("/backup", status_code=204)
@@ -168,4 +182,15 @@ async def reset_keys(
         await db.execute(delete(Prekey).where(Prekey.device_id == dev.id))
         await db.execute(delete(OneTimePrekey).where(OneTimePrekey.device_id == dev.id))
     await db.commit()
-    # TODO: broadcast key_reset_notify via gateway
+    result = await db.execute(
+        select(dm_participants.c.user_id)
+        .where(
+            dm_participants.c.dm_id.in_(
+                select(dm_participants.c.dm_id).where(dm_participants.c.user_id == user.id)
+            )
+        )
+        .where(dm_participants.c.user_id != user.id)
+    )
+    contact_ids = list(result.scalars().all())
+    if contact_ids:
+        await dispatch(gw.key_reset_notify(user_id=user.id), user_ids=contact_ids)
