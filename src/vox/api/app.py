@@ -81,9 +81,9 @@ def create_app(database_url: str) -> FastAPI:
     app.include_router(federation_router)
 
     @app.websocket("/gateway")
-    async def gateway_websocket(ws: WebSocket):
+    async def gateway_websocket(ws: WebSocket, compress: str | None = None):
         hub = get_hub()
-        conn = Connection(ws, hub)
+        conn = Connection(ws, hub, compress=compress)
         db_factory = get_session_factory()
         await conn.run(db_factory)
 

@@ -87,21 +87,26 @@ async def resolve_invite(
 
 @router.get("")
 async def list_invites(
+    limit: int = 100,
+    after: str | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Invite))
+    query = select(Invite).order_by(Invite.code).limit(limit)
+    if after is not None:
+        query = query.where(Invite.code > after)
+    result = await db.execute(query)
     invites = result.scalars().all()
-    return {
-        "invites": [
-            InviteResponse(
-                code=i.code,
-                creator_id=i.creator_id,
-                feed_id=i.feed_id,
-                max_uses=i.max_uses,
-                uses=i.uses,
-                expires_at=int(i.expires_at.timestamp()) if i.expires_at else None,
-            )
-            for i in invites
-        ]
-    }
+    items = [
+        InviteResponse(
+            code=i.code,
+            creator_id=i.creator_id,
+            feed_id=i.feed_id,
+            max_uses=i.max_uses,
+            uses=i.uses,
+            expires_at=int(i.expires_at.timestamp()) if i.expires_at else None,
+        )
+        for i in invites
+    ]
+    cursor = invites[-1].code if invites else None
+    return {"items": items, "cursor": cursor}

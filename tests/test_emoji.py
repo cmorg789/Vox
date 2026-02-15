@@ -10,7 +10,7 @@ async def test_create_and_list_emoji(client):
     assert r.json()["name"] == "pepethink"
 
     r = await client.get("/api/v1/emoji", headers=h)
-    assert len(r.json()["emoji"]) == 1
+    assert len(r.json()["items"]) == 1
 
 
 async def test_delete_emoji(client):
@@ -22,7 +22,7 @@ async def test_delete_emoji(client):
     assert r.status_code == 204
 
     r = await client.get("/api/v1/emoji", headers=h)
-    assert len(r.json()["emoji"]) == 0
+    assert len(r.json()["items"]) == 0
 
 
 async def test_create_and_list_stickers(client):
@@ -31,7 +31,7 @@ async def test_create_and_list_stickers(client):
     assert r.status_code == 201
 
     r = await client.get("/api/v1/stickers", headers=h)
-    assert len(r.json()["stickers"]) == 1
+    assert len(r.json()["items"]) == 1
 
 
 async def test_delete_sticker(client):

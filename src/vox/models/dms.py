@@ -17,7 +17,8 @@ class DMResponse(VoxModel):
 
 
 class DMListResponse(VoxModel):
-    dms: list[DMResponse]
+    items: list[DMResponse]
+    cursor: str | None = None
 
 
 class UpdateGroupDMRequest(BaseModel):

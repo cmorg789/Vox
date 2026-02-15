@@ -3,12 +3,14 @@
 import base64
 import json
 import time
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
 
+from vox.federation import client as fed_client
 from vox.federation import service as fed_service
 
 
@@ -238,7 +240,7 @@ async def test_relay_message_creates_dm_and_message(client):
 
     # Verify message was created
     r = await client.get("/api/v1/dms", headers=headers)
-    dms = r.json()["dms"]
+    dms = r.json()["items"]
     assert len(dms) == 1
 
     dm_id = dms[0]["dm_id"]
@@ -499,7 +501,7 @@ async def test_dm_outbound_relay(client):
     assert r.status_code == 204
 
     r = await client.get("/api/v1/dms", headers=headers)
-    dms = r.json()["dms"]
+    dms = r.json()["items"]
     assert len(dms) == 1
     dm_id = dms[0]["dm_id"]
 
@@ -589,3 +591,640 @@ async def test_block_endpoint(client):
             select(func.count()).select_from(FederationEntry).where(FederationEntry.entry == origin)
         )
         assert count.scalar() == 1
+
+
+# ---------------------------------------------------------------------------
+# Unit Tests: Federation Client
+# ---------------------------------------------------------------------------
+
+
+async def test_client_relay_typing_success(client):
+    """relay_typing returns True on success."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        with patch("vox.federation.client.send_federation_request", new_callable=AsyncMock, return_value=mock_resp) as mock_send:
+            result = await fed_client.relay_typing(db, "alice@test.local", "bob@remote.example")
+            assert result is True
+            mock_send.assert_called_once()
+
+
+async def test_client_relay_typing_invalid_domain(client):
+    """relay_typing returns False if no domain in address."""
+    from vox.db.engine import get_session_factory
+    await _register(client)
+    factory = get_session_factory()
+    async with factory() as db:
+        result = await fed_client.relay_typing(db, "alice@test.local", "no_at_sign")
+        assert result is False
+
+
+async def test_client_relay_read_receipt_success(client):
+    """relay_read_receipt returns True on success."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        with patch("vox.federation.client.send_federation_request", new_callable=AsyncMock, return_value=mock_resp):
+            result = await fed_client.relay_read_receipt(db, "alice@test.local", "bob@remote.example", 123)
+            assert result is True
+
+
+async def test_client_relay_read_receipt_invalid_domain(client):
+    """relay_read_receipt returns False if no domain in address."""
+    await _register(client)
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        result = await fed_client.relay_read_receipt(db, "a@test.local", "nodomain", 1)
+        assert result is False
+
+
+async def test_client_fetch_remote_prekeys_success(client):
+    """fetch_remote_prekeys returns JSON on success."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"keys": ["k1"]}
+
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        with patch("vox.federation.client.send_federation_request", new_callable=AsyncMock, return_value=mock_resp):
+            result = await fed_client.fetch_remote_prekeys(db, "alice@remote.example")
+            assert result == {"keys": ["k1"]}
+
+
+async def test_client_fetch_remote_prekeys_failure(client):
+    """fetch_remote_prekeys returns None on failure."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        with patch("vox.federation.client.send_federation_request", new_callable=AsyncMock, return_value=None):
+            result = await fed_client.fetch_remote_prekeys(db, "alice@remote.example")
+            assert result is None
+
+
+async def test_client_fetch_remote_prekeys_no_domain(client):
+    """fetch_remote_prekeys returns None for address without domain."""
+    await _register(client)
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        result = await fed_client.fetch_remote_prekeys(db, "nodomain")
+        assert result is None
+
+
+async def test_client_fetch_remote_profile_success(client):
+    """fetch_remote_profile returns JSON on success."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"display_name": "Alice"}
+
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        with patch("vox.federation.client.send_federation_request", new_callable=AsyncMock, return_value=mock_resp):
+            result = await fed_client.fetch_remote_profile(db, "alice@remote.example")
+            assert result == {"display_name": "Alice"}
+
+
+async def test_client_fetch_remote_profile_failure(client):
+    """fetch_remote_profile returns None on failure."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        with patch("vox.federation.client.send_federation_request", new_callable=AsyncMock, return_value=None):
+            result = await fed_client.fetch_remote_profile(db, "alice@remote.example")
+            assert result is None
+
+
+async def test_client_subscribe_presence_success(client):
+    """subscribe_presence returns True on success."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 204
+
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        with patch("vox.federation.client.send_federation_request", new_callable=AsyncMock, return_value=mock_resp):
+            result = await fed_client.subscribe_presence(db, "alice@remote.example")
+            assert result is True
+
+
+async def test_client_subscribe_presence_no_domain(client):
+    """subscribe_presence returns False for address without domain."""
+    await _register(client)
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        result = await fed_client.subscribe_presence(db, "nodomain")
+        assert result is False
+
+
+async def test_client_notify_presence_success(client):
+    """notify_presence returns True on success."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 204
+
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        with patch("vox.federation.client.send_federation_request", new_callable=AsyncMock, return_value=mock_resp):
+            result = await fed_client.notify_presence(db, "remote.example", "alice@test.local", "online")
+            assert result is True
+
+
+async def test_client_notify_presence_with_activity(client):
+    """notify_presence includes activity in body."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 204
+
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        with patch("vox.federation.client.send_federation_request", new_callable=AsyncMock, return_value=mock_resp) as mock_send:
+            result = await fed_client.notify_presence(db, "remote.example", "alice@test.local", "online", activity="Playing Vox")
+            assert result is True
+            call_args = mock_send.call_args
+            assert call_args[0][3]["activity"] == "Playing Vox"
+
+
+async def test_client_send_join_request_success(client):
+    """send_join_request returns response JSON on success."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"accepted": True}
+
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        with patch("vox.federation.client.send_federation_request", new_callable=AsyncMock, return_value=mock_resp):
+            result = await fed_client.send_join_request(db, "alice@test.local", "remote.example")
+            assert result == {"accepted": True}
+
+
+async def test_client_send_join_request_with_invite(client):
+    """send_join_request includes invite_code when provided."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"accepted": True}
+
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        with patch("vox.federation.client.send_federation_request", new_callable=AsyncMock, return_value=mock_resp) as mock_send:
+            result = await fed_client.send_join_request(db, "alice@test.local", "remote.example", invite_code="INV123")
+            assert result is not None
+            call_args = mock_send.call_args
+            assert call_args[0][3]["invite_code"] == "INV123"
+
+
+async def test_client_send_block_notification_success(client):
+    """send_block_notification returns True on success."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 204
+
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        with patch("vox.federation.client.send_federation_request", new_callable=AsyncMock, return_value=mock_resp):
+            result = await fed_client.send_block_notification(db, "remote.example", reason="spam")
+            assert result is True
+
+
+# ---------------------------------------------------------------------------
+# Unit Tests: Federation Service — additional coverage
+# ---------------------------------------------------------------------------
+
+
+async def test_sign_body_and_get_public_key(client):
+    """sign_body produces valid signature; get_public_key_b64 returns base64."""
+    await _register(client)
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        private_key = await fed_service.get_private_key(db)
+        pub_b64 = await fed_service.get_public_key_b64(db)
+        sig = fed_service.sign_body(b"test", private_key)
+        assert fed_service.verify_signature(b"test", sig, pub_b64) is True
+
+
+async def test_lookup_vox_host_success(client):
+    """lookup_vox_host returns host and port from mocked DNS."""
+    mock_rdata = MagicMock()
+    mock_rdata.target = "svc.example.com."
+    mock_rdata.params = {3: 8443}
+
+    mock_resolver = AsyncMock()
+    mock_resolver.resolve = AsyncMock(return_value=[mock_rdata])
+
+    with patch.dict("sys.modules", {"dns.asyncresolver": mock_resolver}):
+        with patch("vox.federation.service.dns.asyncresolver" if hasattr(fed_service, "dns") else "dns.asyncresolver", mock_resolver, create=True):
+            # Use direct patch on the module import inside the function
+            import dns.asyncresolver
+            with patch.object(dns.asyncresolver, "resolve", new_callable=AsyncMock, return_value=[mock_rdata]):
+                host, port = await fed_service.lookup_vox_host("example.com")
+                assert host == "svc.example.com"
+                assert port == 8443
+
+
+async def test_lookup_vox_host_exception(client):
+    """lookup_vox_host returns default on exception."""
+    with patch("dns.asyncresolver.resolve", new_callable=AsyncMock, side_effect=Exception("DNS error")):
+        host, port = await fed_service.lookup_vox_host("example.com")
+        assert host == "example.com"
+        assert port == 443
+
+
+async def test_check_federation_allowed_allowlist(client):
+    """Allowlist mode only allows listed domains."""
+    await _register(client)
+    from datetime import datetime, timezone
+    from vox.db.engine import get_session_factory
+    from vox.db.models import Config, FederationEntry
+    factory = get_session_factory()
+    async with factory() as db:
+        db.add(Config(key="federation_policy", value="allowlist"))
+        db.add(FederationEntry(entry="allow:allowed.example", created_at=datetime.now(timezone.utc)))
+        await db.commit()
+
+        # Allowed domain
+        assert await fed_service.check_federation_allowed(db, "allowed.example") is True
+        # Not-allowed domain
+        assert await fed_service.check_federation_allowed(db, "other.example") is False
+
+
+async def test_check_federation_allowed_outbound(client):
+    """Outbound direction checks remote policy."""
+    await _register(client)
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        with patch.object(fed_service, "lookup_vox_policy", new_callable=AsyncMock, return_value={"federation": "open"}):
+            assert await fed_service.check_federation_allowed(db, "any.domain", direction="outbound") is True
+        with patch.object(fed_service, "lookup_vox_policy", new_callable=AsyncMock, return_value={"federation": "closed"}):
+            assert await fed_service.check_federation_allowed(db, "any.domain", direction="outbound") is False
+
+
+async def test_cleanup_nonces(client):
+    """_cleanup_nonces removes expired nonces."""
+    fed_service._seen_nonces["old_nonce"] = time.time() - 700
+    fed_service._seen_nonces["fresh_nonce"] = time.time()
+    fed_service._last_nonce_cleanup = 0  # Force cleanup
+    fed_service._cleanup_nonces()
+    assert "old_nonce" not in fed_service._seen_nonces
+    assert "fresh_nonce" in fed_service._seen_nonces
+
+
+async def test_presence_subs(client):
+    """add_presence_sub and get_presence_subscribers work correctly."""
+    fed_service.add_presence_sub("domain1.example", "alice@test.local")
+    fed_service.add_presence_sub("domain2.example", "alice@test.local")
+    fed_service.add_presence_sub("domain1.example", "bob@test.local")
+
+    subs = fed_service.get_presence_subscribers("alice@test.local")
+    assert sorted(subs) == ["domain1.example", "domain2.example"]
+
+    subs_bob = fed_service.get_presence_subscribers("bob@test.local")
+    assert subs_bob == ["domain1.example"]
+
+    subs_nobody = fed_service.get_presence_subscribers("nobody@test.local")
+    assert subs_nobody == []
+
+
+async def test_send_federation_request_exception(client):
+    """send_federation_request returns None on exception."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        with patch.object(fed_service, "lookup_vox_host", new_callable=AsyncMock, side_effect=Exception("network error")):
+            result = await fed_service.send_federation_request(db, "remote.example", "/test", {"data": 1})
+            assert result is None
+
+
+async def test_send_federation_request_no_domain(client):
+    """send_federation_request returns None when no federation domain configured."""
+    await _register(client)
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    # No federation_domain in config
+    async with factory() as db:
+        with patch.object(fed_service, "lookup_vox_host", new_callable=AsyncMock, return_value=("remote.example", 443)):
+            result = await fed_service.send_federation_request(db, "remote.example", "/test", {"data": 1})
+            assert result is None
+
+
+async def test_send_federation_request_success(client):
+    """send_federation_request makes an HTTP request and returns the response."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+
+    mock_client = AsyncMock()
+    mock_client.request = AsyncMock(return_value=mock_resp)
+    mock_client.is_closed = False
+
+    async with factory() as db:
+        with patch.object(fed_service, "lookup_vox_host", new_callable=AsyncMock, return_value=("svc.remote.example", 443)):
+            with patch.object(fed_service, "_get_http_client", return_value=mock_client):
+                result = await fed_service.send_federation_request(db, "remote.example", "/test", {"data": 1})
+                assert result is not None
+                assert result.status_code == 200
+                mock_client.request.assert_called_once()
+                call_args = mock_client.request.call_args
+                assert call_args[0][0] == "POST"
+                assert "svc.remote.example" in call_args[0][1]
+
+
+async def test_send_federation_request_non_443_port(client):
+    """send_federation_request uses http:// for non-443 ports."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+
+    mock_client = AsyncMock()
+    mock_client.request = AsyncMock(return_value=mock_resp)
+    mock_client.is_closed = False
+
+    async with factory() as db:
+        with patch.object(fed_service, "lookup_vox_host", new_callable=AsyncMock, return_value=("svc.remote.example", 8080)):
+            with patch.object(fed_service, "_get_http_client", return_value=mock_client):
+                result = await fed_service.send_federation_request(db, "remote.example", "/test")
+                assert result is not None
+                call_args = mock_client.request.call_args
+                assert "http://" in call_args[0][1]
+
+
+async def test_lookup_vox_key_success(client):
+    """lookup_vox_key extracts public key from DNS TXT record."""
+    mock_rdata = MagicMock()
+    mock_rdata.to_text.return_value = '"v=vox1;p=ABCDEF123"'
+
+    with patch("dns.asyncresolver.resolve", new_callable=AsyncMock, return_value=[mock_rdata]):
+        result = await fed_service.lookup_vox_key("example.com")
+        assert result == "ABCDEF123"
+
+
+async def test_lookup_vox_key_failure(client):
+    """lookup_vox_key returns None on DNS failure."""
+    with patch("dns.asyncresolver.resolve", new_callable=AsyncMock, side_effect=Exception("DNS error")):
+        result = await fed_service.lookup_vox_key("example.com")
+        assert result is None
+
+
+async def test_lookup_vox_policy_success(client):
+    """lookup_vox_policy parses TXT record correctly."""
+    mock_rdata = MagicMock()
+    mock_rdata.to_text.return_value = '"federation=closed;version=1"'
+
+    with patch("dns.asyncresolver.resolve", new_callable=AsyncMock, return_value=[mock_rdata]):
+        result = await fed_service.lookup_vox_policy("example.com")
+        assert result["federation"] == "closed"
+        assert result["version"] == "1"
+
+
+async def test_lookup_vox_policy_failure(client):
+    """lookup_vox_policy returns default on DNS failure."""
+    with patch("dns.asyncresolver.resolve", new_callable=AsyncMock, side_effect=Exception("DNS error")):
+        result = await fed_service.lookup_vox_policy("example.com")
+        assert result == {"federation": "open"}
+
+
+async def test_verify_signature_for_origin(client):
+    """verify_signature_for_origin uses DNS lookup to get public key."""
+    private_key, pub_b64 = _generate_test_keypair()
+    body = b'{"test": true}'
+    sig = fed_service.sign_body(body, private_key)
+
+    with patch.object(fed_service, "lookup_vox_key", new_callable=AsyncMock, return_value=pub_b64):
+        assert await fed_service.verify_signature_for_origin(body, sig, "example.com") is True
+
+    with patch.object(fed_service, "lookup_vox_key", new_callable=AsyncMock, return_value=None):
+        assert await fed_service.verify_signature_for_origin(body, sig, "example.com") is False
+
+
+# ---------------------------------------------------------------------------
+# Endpoint Tests: Edge Cases
+# ---------------------------------------------------------------------------
+
+
+async def test_relay_message_origin_mismatch(client):
+    """relay/message rejects when sender domain != origin."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    body = {"from": "bob@other.example", "to": "alice@test.local", "opaque_blob": "data"}
+    r = await _fed_request(client, "POST", "/api/v1/federation/relay/message", body, private_key, pub_b64, origin="remote.example")
+    assert r.status_code == 403
+
+
+async def test_relay_message_recipient_not_found(client):
+    """relay/message returns 404 for unknown recipient."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    body = {"from": "bob@remote.example", "to": "nobody@test.local", "opaque_blob": "data"}
+    r = await _fed_request(client, "POST", "/api/v1/federation/relay/message", body, private_key, pub_b64)
+    assert r.status_code == 404
+
+
+async def test_relay_typing_recipient_not_found(client):
+    """relay/typing silently ignores unknown recipient (returns 204)."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    body = {"from": "bob@remote.example", "to": "nobody@test.local"}
+    r = await _fed_request(client, "POST", "/api/v1/federation/relay/typing", body, private_key, pub_b64)
+    assert r.status_code == 204
+
+
+async def test_relay_typing_no_dm(client):
+    """relay/typing silently ignores when no DM exists."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    # Don't create a DM first — register bob as federated but no DM
+    from vox.db.engine import get_session_factory
+    from vox.db.models import User
+    from datetime import datetime, timezone
+    factory = get_session_factory()
+    async with factory() as db:
+        fed_bob = User(username="bob@remote.example", display_name="bob", federated=True, home_domain="remote.example", active=True, created_at=datetime.now(timezone.utc))
+        db.add(fed_bob)
+        await db.commit()
+
+    body = {"from": "bob@remote.example", "to": "alice@test.local"}
+    r = await _fed_request(client, "POST", "/api/v1/federation/relay/typing", body, private_key, pub_b64)
+    assert r.status_code == 204
+
+
+async def test_relay_read_recipient_not_found(client):
+    """relay/read silently ignores unknown recipient."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    body = {"from": "bob@remote.example", "to": "nobody@test.local", "up_to_msg_id": 1}
+    r = await _fed_request(client, "POST", "/api/v1/federation/relay/read", body, private_key, pub_b64)
+    assert r.status_code == 204
+
+
+async def test_relay_read_no_dm(client):
+    """relay/read silently ignores when no DM exists."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    from vox.db.engine import get_session_factory
+    from vox.db.models import User
+    from datetime import datetime, timezone
+    factory = get_session_factory()
+    async with factory() as db:
+        fed_bob = User(username="bob@remote.example", display_name="bob", federated=True, home_domain="remote.example", active=True, created_at=datetime.now(timezone.utc))
+        db.add(fed_bob)
+        await db.commit()
+
+    body = {"from": "bob@remote.example", "to": "alice@test.local", "up_to_msg_id": 1}
+    r = await _fed_request(client, "POST", "/api/v1/federation/relay/read", body, private_key, pub_b64)
+    assert r.status_code == 204
+
+
+async def test_prekey_fetch_user_not_found(client):
+    """Prekey fetch for unknown user returns 404."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    r = await _fed_request(client, "GET", "/api/v1/federation/users/nobody@test.local/prekeys", {}, private_key, pub_b64)
+    assert r.status_code == 404
+
+
+async def test_presence_subscribe_user_not_found(client):
+    """Presence subscribe for unknown user returns 404."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    body = {"user_address": "nobody@test.local"}
+    r = await _fed_request(client, "POST", "/api/v1/federation/presence/subscribe", body, private_key, pub_b64)
+    assert r.status_code == 404
+
+
+async def test_presence_notify_no_federated_user(client):
+    """Presence notify for unknown federated user silently returns 204."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    body = {"user_address": "unknown@remote.example", "status": "online"}
+    r = await _fed_request(client, "POST", "/api/v1/federation/presence/notify", body, private_key, pub_b64)
+    assert r.status_code == 204
+
+
+async def test_join_no_federation_domain(client):
+    """Join fails 500 when federation domain not configured."""
+    # Register user but DON'T configure federation domain
+    token, user_id = await _register(client)
+    private_key, pub_b64 = _generate_test_keypair()
+
+    from vox.db.engine import get_session_factory
+    from vox.db.models import Config
+    factory = get_session_factory()
+    async with factory() as db:
+        priv_bytes = private_key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
+        priv_b64 = base64.b64encode(priv_bytes).decode()
+        db.add(Config(key="federation_private_key", value=priv_b64))
+        db.add(Config(key="federation_public_key", value=pub_b64))
+        await db.commit()
+
+    voucher = fed_service.create_voucher("user@remote.example", "test.local", private_key)
+    body = {"user_address": "user@remote.example", "voucher": voucher}
+    r = await _fed_request(client, "POST", "/api/v1/federation/join", body, private_key, pub_b64)
+    assert r.status_code == 500
+
+
+async def test_join_invalid_voucher(client):
+    """Join with invalid voucher returns 403."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    body = {"user_address": "user@remote.example", "voucher": "invalid_voucher_string"}
+    r = await _fed_request(client, "POST", "/api/v1/federation/join", body, private_key, pub_b64)
+    assert r.status_code == 403
+
+
+async def test_join_voucher_user_mismatch(client):
+    """Join with voucher for different user returns 403."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+    voucher = fed_service.create_voucher("alice@remote.example", "test.local", private_key)
+    body = {"user_address": "bob@remote.example", "voucher": voucher}
+    r = await _fed_request(client, "POST", "/api/v1/federation/join", body, private_key, pub_b64)
+    assert r.status_code == 403
+
+
+async def test_join_invite_maxed_out(client):
+    """Join with fully-used invite code returns 410."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+
+    from datetime import datetime, timezone
+    from vox.db.engine import get_session_factory
+    from vox.db.models import Invite
+    factory = get_session_factory()
+    async with factory() as db:
+        db.add(Invite(code="maxed", creator_id=user_id, max_uses=1, uses=1, created_at=datetime.now(timezone.utc)))
+        await db.commit()
+
+    voucher = fed_service.create_voucher("user@remote.example", "test.local", private_key)
+    body = {"user_address": "user@remote.example", "voucher": voucher, "invite_code": "maxed"}
+    r = await _fed_request(client, "POST", "/api/v1/federation/join", body, private_key, pub_b64)
+    assert r.status_code == 410
+
+
+async def test_join_banned_user(client):
+    """Join for banned federated user returns 403."""
+    headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+
+    from datetime import datetime, timezone
+    from vox.db.engine import get_session_factory
+    from vox.db.models import Ban, User
+    factory = get_session_factory()
+    async with factory() as db:
+        fed_user = User(username="banned@remote.example", display_name="banned", federated=True, home_domain="remote.example", active=True, created_at=datetime.now(timezone.utc))
+        db.add(fed_user)
+        await db.flush()
+        db.add(Ban(user_id=fed_user.id, reason="banned", created_at=datetime.now(timezone.utc)))
+        await db.commit()
+
+    voucher = fed_service.create_voucher("banned@remote.example", "test.local", private_key)
+    body = {"user_address": "banned@remote.example", "voucher": voucher}
+    r = await _fed_request(client, "POST", "/api/v1/federation/join", body, private_key, pub_b64)
+    assert r.status_code == 403
+
+
+async def test_config_helpers(client):
+    """_get_config and _set_config work correctly including update path."""
+    await _register(client)
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        # Get nonexistent key
+        val = await fed_service._get_config(db, "nonexistent_key")
+        assert val is None
+
+        # Set a key
+        await fed_service._set_config(db, "test_key", "value1")
+        await db.commit()
+
+        val = await fed_service._get_config(db, "test_key")
+        assert val == "value1"
+
+        # Update existing key
+        await fed_service._set_config(db, "test_key", "value2")
+        await db.commit()
+
+        val = await fed_service._get_config(db, "test_key")
+        assert val == "value2"

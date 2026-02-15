@@ -21,12 +21,19 @@ router = APIRouter(tags=["roles"])
 
 @router.get("/api/v1/roles")
 async def list_roles(
+    limit: int = 100,
+    after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Role).order_by(Role.position))
+    query = select(Role).order_by(Role.id).limit(limit)
+    if after is not None:
+        query = query.where(Role.id > after)
+    result = await db.execute(query)
     roles = result.scalars().all()
-    return {"roles": [RoleResponse(role_id=r.id, name=r.name, color=r.color, permissions=r.permissions, position=r.position) for r in roles]}
+    items = [RoleResponse(role_id=r.id, name=r.name, color=r.color, permissions=r.permissions, position=r.position) for r in roles]
+    cursor = str(roles[-1].id) if roles else None
+    return {"items": items, "cursor": cursor}
 
 
 @router.post("/api/v1/roles", status_code=201)

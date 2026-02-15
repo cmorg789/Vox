@@ -39,7 +39,7 @@ async def test_list_dms(client):
 
     r = await client.get("/api/v1/dms", headers=h1)
     assert r.status_code == 200
-    assert len(r.json()["dms"]) == 1
+    assert len(r.json()["items"]) == 1
 
 
 async def test_close_dm(client):
@@ -51,7 +51,7 @@ async def test_close_dm(client):
     assert r.status_code == 204
 
     r = await client.get("/api/v1/dms", headers=h1)
-    assert len(r.json()["dms"]) == 0
+    assert len(r.json()["items"]) == 0
 
 
 async def test_dm_messages(client):
@@ -98,3 +98,119 @@ async def test_update_group_dm(client):
     r = await client.patch(f"/api/v1/dms/{dm_id}", headers=h1, json={"name": "New Name"})
     assert r.status_code == 200
     assert r.json()["name"] == "New Name"
+
+
+async def test_add_dm_recipient(client):
+    h1, uid1, h2, uid2 = await setup(client)
+    r3 = await client.post("/api/v1/auth/register", json={"username": "charlie", "password": "test1234"})
+    uid3 = r3.json()["user_id"]
+
+    # Create group DM
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_ids": [uid2], "name": "Group"})
+    dm_id = r.json()["dm_id"]
+
+    # Add charlie
+    r = await client.put(f"/api/v1/dms/{dm_id}/recipients/{uid3}", headers=h1)
+    assert r.status_code == 204
+
+
+async def test_remove_dm_recipient(client):
+    h1, uid1, h2, uid2 = await setup(client)
+    r3 = await client.post("/api/v1/auth/register", json={"username": "charlie", "password": "test1234"})
+    uid3 = r3.json()["user_id"]
+
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_ids": [uid2, uid3], "name": "Group"})
+    dm_id = r.json()["dm_id"]
+
+    # Remove charlie
+    r = await client.delete(f"/api/v1/dms/{dm_id}/recipients/{uid3}", headers=h1)
+    assert r.status_code == 204
+
+
+async def test_edit_dm_message(client):
+    h1, uid1, h2, uid2 = await setup(client)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    dm_id = r.json()["dm_id"]
+
+    r = await client.post(f"/api/v1/dms/{dm_id}/messages", headers=h1, json={"body": "original"})
+    msg_id = r.json()["msg_id"]
+
+    # Edit own message
+    r = await client.patch(f"/api/v1/dms/{dm_id}/messages/{msg_id}", headers=h1, json={"body": "edited"})
+    assert r.status_code == 200
+    assert r.json()["edit_timestamp"] is not None
+
+
+async def test_edit_dm_message_not_found(client):
+    h1, uid1, h2, uid2 = await setup(client)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    dm_id = r.json()["dm_id"]
+
+    r = await client.patch(f"/api/v1/dms/{dm_id}/messages/999999", headers=h1, json={"body": "edited"})
+    assert r.status_code == 404
+    assert r.json()["detail"]["error"]["code"] == "MESSAGE_NOT_FOUND"
+
+
+async def test_edit_dm_message_wrong_author(client):
+    h1, uid1, h2, uid2 = await setup(client)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    dm_id = r.json()["dm_id"]
+
+    r = await client.post(f"/api/v1/dms/{dm_id}/messages", headers=h1, json={"body": "alice's msg"})
+    msg_id = r.json()["msg_id"]
+
+    # Bob tries to edit alice's message
+    r = await client.patch(f"/api/v1/dms/{dm_id}/messages/{msg_id}", headers=h2, json={"body": "hacked"})
+    assert r.status_code == 403
+    assert r.json()["detail"]["error"]["code"] == "FORBIDDEN"
+
+
+async def test_delete_dm_message(client):
+    h1, uid1, h2, uid2 = await setup(client)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    dm_id = r.json()["dm_id"]
+
+    r = await client.post(f"/api/v1/dms/{dm_id}/messages", headers=h1, json={"body": "to delete"})
+    msg_id = r.json()["msg_id"]
+
+    r = await client.delete(f"/api/v1/dms/{dm_id}/messages/{msg_id}", headers=h1)
+    assert r.status_code == 204
+
+
+async def test_delete_dm_message_not_found(client):
+    h1, uid1, h2, uid2 = await setup(client)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    dm_id = r.json()["dm_id"]
+
+    r = await client.delete(f"/api/v1/dms/{dm_id}/messages/999999", headers=h1)
+    assert r.status_code == 404
+
+
+async def test_delete_dm_message_wrong_author(client):
+    h1, uid1, h2, uid2 = await setup(client)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    dm_id = r.json()["dm_id"]
+
+    r = await client.post(f"/api/v1/dms/{dm_id}/messages", headers=h1, json={"body": "alice's msg"})
+    msg_id = r.json()["msg_id"]
+
+    r = await client.delete(f"/api/v1/dms/{dm_id}/messages/{msg_id}", headers=h2)
+    assert r.status_code == 403
+
+
+async def test_update_group_dm_not_found(client):
+    h1, uid1, h2, uid2 = await setup(client)
+
+    r = await client.patch("/api/v1/dms/99999", headers=h1, json={"name": "New"})
+    assert r.status_code == 404
+    assert r.json()["detail"]["error"]["code"] == "SPACE_NOT_FOUND"
+
+
+async def test_send_dm_message_invalid_attachment(client):
+    h1, uid1, h2, uid2 = await setup(client)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    dm_id = r.json()["dm_id"]
+
+    r = await client.post(f"/api/v1/dms/{dm_id}/messages", headers=h1, json={"body": "hi", "attachments": ["nonexistent_file_id"]})
+    assert r.status_code == 400
+    assert r.json()["detail"]["error"]["code"] == "INVALID_ATTACHMENT"

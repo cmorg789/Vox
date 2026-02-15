@@ -75,3 +75,62 @@ async def test_initiate_pairing(client):
     r = await client.post("/api/v1/keys/devices/pair", headers=h, json={"device_name": "Phone", "method": "cpace"})
     assert r.status_code == 201
     assert r.json()["pair_id"].startswith("pair_")
+
+
+async def test_upload_prekeys_no_device(client):
+    h, _ = await setup(client)
+    r = await client.put("/api/v1/keys/prekeys", headers=h, json={
+        "identity_key": "key", "signed_prekey": "spk", "one_time_prekeys": [],
+    })
+    assert r.status_code == 404
+
+
+async def test_upload_prekeys_update_existing(client):
+    h, _ = await setup(client)
+    await client.post("/api/v1/keys/devices", headers=h, json={"device_id": "dev1", "device_name": "Phone"})
+
+    # First upload
+    r = await client.put("/api/v1/keys/prekeys", headers=h, json={
+        "identity_key": "key1", "signed_prekey": "spk1", "one_time_prekeys": [],
+    })
+    assert r.status_code == 204
+
+    # Update existing prekeys
+    r = await client.put("/api/v1/keys/prekeys", headers=h, json={
+        "identity_key": "key2", "signed_prekey": "spk2", "one_time_prekeys": ["otp1"],
+    })
+    assert r.status_code == 204
+
+
+async def test_remove_device_not_found(client):
+    h, _ = await setup(client)
+    r = await client.delete("/api/v1/keys/devices/nonexistent", headers=h)
+    assert r.status_code == 404
+
+
+async def test_pairing_respond(client):
+    h, _ = await setup(client)
+    r = await client.post("/api/v1/keys/devices/pair", headers=h, json={"device_name": "Phone", "method": "cpace"})
+    pair_id = r.json()["pair_id"]
+
+    r = await client.post(f"/api/v1/keys/devices/pair/{pair_id}/respond", headers=h, json={"approved": True})
+    assert r.status_code == 204
+
+
+async def test_reset_keys(client):
+    h, uid = await setup(client)
+    await client.post("/api/v1/keys/devices", headers=h, json={"device_id": "dev1", "device_name": "Phone"})
+    await client.put("/api/v1/keys/prekeys", headers=h, json={
+        "identity_key": "key", "signed_prekey": "spk", "one_time_prekeys": ["otp1"],
+    })
+
+    r = await client.post("/api/v1/keys/reset", headers=h)
+    assert r.status_code == 204
+
+    # Prekeys should be gone
+    r2 = await client.post("/api/v1/auth/register", json={"username": "bob", "password": "test1234"})
+    h2 = {"Authorization": f"Bearer {r2.json()['token']}"}
+    r = await client.get(f"/api/v1/keys/prekeys/{uid}", headers=h2)
+    assert r.status_code == 200
+    # No prekeys for the device now
+    assert all(d["identity_key"] is None or d["one_time_prekey"] is None for d in r.json()["devices"]) or len(r.json()["devices"]) == 0

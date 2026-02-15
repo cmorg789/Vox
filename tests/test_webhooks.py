@@ -57,3 +57,25 @@ async def test_delete_webhook(client):
 
     r = await client.get("/api/v1/feeds/1/webhooks", headers=h)
     assert len(r.json()["webhooks"]) == 0
+
+
+async def test_update_webhook(client):
+    h = await setup(client)
+    r = await client.post("/api/v1/feeds/1/webhooks", headers=h, json={"name": "Old Name"})
+    wh_id = r.json()["webhook_id"]
+
+    r = await client.patch(f"/api/v1/webhooks/{wh_id}", headers=h, json={"name": "New Name", "avatar": "https://example.com/avatar.png"})
+    assert r.status_code == 200
+    assert r.json()["name"] == "New Name"
+
+
+async def test_update_webhook_not_found(client):
+    h = await setup(client)
+    r = await client.patch("/api/v1/webhooks/99999", headers=h, json={"name": "Ghost"})
+    assert r.status_code == 404
+
+
+async def test_delete_webhook_not_found(client):
+    h = await setup(client)
+    r = await client.delete("/api/v1/webhooks/99999", headers=h)
+    assert r.status_code == 404

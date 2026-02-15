@@ -187,3 +187,147 @@ async def test_stage_topic(client):
     r = await client.patch(f"/api/v1/rooms/{room_id}/stage/topic", headers=h, json={"topic": "AMA Session"})
     assert r.status_code == 200
     assert r.json()["topic"] == "AMA Session"
+
+
+# --- SFU Lifecycle ---
+
+
+async def test_init_sfu_and_stop_sfu(client):
+    """init_sfu creates SFU and stop_sfu clears it."""
+    from unittest.mock import MagicMock, patch
+    from vox.voice import service as voice_service
+
+    mock_sfu_class = MagicMock()
+    mock_sfu_instance = MagicMock()
+    mock_sfu_class.return_value = mock_sfu_instance
+
+    old_sfu = voice_service._sfu
+    voice_service._sfu = None
+    try:
+        with patch.object(voice_service, "SFU", mock_sfu_class):
+            voice_service.init_sfu("0.0.0.0:4444")
+            assert voice_service._sfu == mock_sfu_instance
+            mock_sfu_class.assert_called_once_with("0.0.0.0:4444")
+
+            voice_service.stop_sfu()
+            assert voice_service._sfu is None
+            mock_sfu_instance.stop.assert_called_once()
+    finally:
+        voice_service._sfu = old_sfu
+
+
+async def test_init_sfu_replaces_existing(client):
+    """init_sfu stops existing SFU before creating new one."""
+    from unittest.mock import MagicMock, patch
+    from vox.voice import service as voice_service
+
+    mock_sfu_class = MagicMock()
+    old_mock = MagicMock()
+    new_mock = MagicMock()
+    mock_sfu_class.side_effect = [new_mock]
+
+    old_sfu = voice_service._sfu
+    voice_service._sfu = old_mock
+    try:
+        with patch.object(voice_service, "SFU", mock_sfu_class):
+            voice_service.init_sfu("0.0.0.0:4445")
+            old_mock.stop.assert_called_once()
+            assert voice_service._sfu == new_mock
+    finally:
+        voice_service._sfu = old_sfu
+
+
+async def test_join_room_sfu_exception(client):
+    """join_room handles SFU add_room exception gracefully."""
+    from unittest.mock import MagicMock, patch
+    from vox.voice import service as voice_service
+
+    h = await _register(client)
+    room_id = await _create_room(client, h)
+
+    # Mock SFU to raise on add_room but succeed on admit_user
+    mock_sfu = MagicMock()
+    mock_sfu.add_room.side_effect = Exception("room exists")
+    mock_sfu.admit_user.return_value = None
+    mock_sfu.start.return_value = None
+
+    old_sfu = voice_service._sfu
+    voice_service._sfu = mock_sfu
+    try:
+        r = await client.post(f"/api/v1/rooms/{room_id}/voice/join", headers=h, json={})
+        assert r.status_code == 200
+        mock_sfu.add_room.assert_called_once()
+        mock_sfu.admit_user.assert_called_once()
+    finally:
+        voice_service._sfu = old_sfu
+
+
+async def test_leave_room_sfu_exception(client):
+    """leave_room handles SFU remove_user exception gracefully."""
+    from unittest.mock import MagicMock, patch
+    from vox.voice import service as voice_service
+
+    h = await _register(client)
+    room_id = await _create_room(client, h)
+
+    # Join first with working SFU
+    mock_sfu = MagicMock()
+    mock_sfu.add_room.return_value = None
+    mock_sfu.admit_user.return_value = None
+    mock_sfu.start.return_value = None
+
+    old_sfu = voice_service._sfu
+    voice_service._sfu = mock_sfu
+    try:
+        r = await client.post(f"/api/v1/rooms/{room_id}/voice/join", headers=h, json={})
+        assert r.status_code == 200
+
+        # Now make SFU raise on remove
+        mock_sfu.remove_user.side_effect = Exception("user not found")
+        mock_sfu.get_room_users.side_effect = Exception("room not found")
+
+        r = await client.post(f"/api/v1/rooms/{room_id}/voice/leave", headers=h)
+        assert r.status_code == 204
+    finally:
+        voice_service._sfu = old_sfu
+
+
+async def test_move_user_sfu_exceptions(client):
+    """move_user handles SFU exceptions in both leave and join phases."""
+    from unittest.mock import MagicMock, patch
+    from vox.voice import service as voice_service
+
+    h1 = await _register(client, "alice")
+    h2 = await _register(client, "bob")
+    room1 = await _create_room(client, h1, "Room1")
+    room2 = await _create_room(client, h1, "Room2")
+
+    mock_sfu = MagicMock()
+    mock_sfu.add_room.return_value = None
+    mock_sfu.admit_user.return_value = None
+    mock_sfu.start.return_value = None
+    # remove_user raises for the old room
+    mock_sfu.remove_user.side_effect = Exception("not found")
+    mock_sfu.get_room_users.side_effect = Exception("room error")
+
+    old_sfu = voice_service._sfu
+    voice_service._sfu = mock_sfu
+    try:
+        # First join bob to room1
+        mock_sfu.remove_user.side_effect = None
+        mock_sfu.get_room_users.side_effect = None
+        r = await client.post(f"/api/v1/rooms/{room1}/voice/join", headers=h2, json={})
+        assert r.status_code == 200
+
+        # Now make SFU raise for the move
+        mock_sfu.remove_user.side_effect = Exception("not found")
+        mock_sfu.get_room_users.side_effect = Exception("room error")
+        mock_sfu.add_room.side_effect = Exception("exists")
+
+        r = await client.post(
+            f"/api/v1/rooms/{room1}/voice/move", headers=h1,
+            json={"user_id": 2, "to_room_id": room2},
+        )
+        assert r.status_code == 204
+    finally:
+        voice_service._sfu = old_sfu

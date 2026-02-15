@@ -52,15 +52,21 @@ async def create_report(
 @router.get("/api/v1/reports")
 async def list_reports(
     status: str | None = None,
+    limit: int = 50,
+    after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(VIEW_REPORTS),
 ):
-    query = select(Report).order_by(Report.id.desc())
+    query = select(Report).order_by(Report.id).limit(limit)
     if status is not None:
         query = query.where(Report.status == status)
+    if after is not None:
+        query = query.where(Report.id > after)
     result = await db.execute(query)
     reports = result.scalars().all()
-    return {"reports": [{"report_id": r.id, "reporter_id": r.reporter_id, "reported_user_id": r.reported_user_id, "reason": r.reason, "status": r.status} for r in reports]}
+    items = [{"report_id": r.id, "reporter_id": r.reporter_id, "reported_user_id": r.reported_user_id, "reason": r.reason, "status": r.status} for r in reports]
+    cursor = str(reports[-1].id) if reports else None
+    return {"items": items, "cursor": cursor}
 
 
 @router.post("/api/v1/reports/{report_id}/resolve", status_code=204)
@@ -87,23 +93,28 @@ async def query_audit_log(
     actor_id: int | None = None,
     target_id: int | None = None,
     limit: int = 50,
+    after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(VIEW_AUDIT_LOG),
 ) -> AuditLogResponse:
-    query = select(AuditLog).order_by(AuditLog.id.desc()).limit(limit)
+    query = select(AuditLog).order_by(AuditLog.id).limit(limit)
     if event_type is not None:
         query = query.where(AuditLog.event_type.like(event_type.replace("*", "%")))
     if actor_id is not None:
         query = query.where(AuditLog.actor_id == actor_id)
     if target_id is not None:
         query = query.where(AuditLog.target_id == target_id)
+    if after is not None:
+        query = query.where(AuditLog.id > after)
     result = await db.execute(query)
-    entries = []
     import json
-    for e in result.scalars().all():
+    rows = result.scalars().all()
+    entries = []
+    for e in rows:
         meta = json.loads(e.extra) if e.extra else None
         entries.append(AuditLogEntry(entry_id=e.id, event_type=e.event_type, actor_id=e.actor_id, target_id=e.target_id, metadata=meta, timestamp=e.timestamp))
-    return AuditLogResponse(entries=entries)
+    cursor = str(rows[-1].id) if rows else None
+    return AuditLogResponse(entries=entries, cursor=cursor)
 
 
 # --- Admin ---

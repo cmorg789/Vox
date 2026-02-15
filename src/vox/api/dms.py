@@ -84,18 +84,28 @@ async def open_dm(
 
 @router.get("/api/v1/dms")
 async def list_dms(
+    limit: int = 100,
+    after: int | None = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> DMListResponse:
-    result = await db.execute(
-        select(DM).join(dm_participants, dm_participants.c.dm_id == DM.id).where(dm_participants.c.user_id == user.id)
+    query = (
+        select(DM)
+        .join(dm_participants, dm_participants.c.dm_id == DM.id)
+        .where(dm_participants.c.user_id == user.id)
+        .order_by(DM.id)
+        .limit(limit)
     )
+    if after is not None:
+        query = query.where(DM.id > after)
+    result = await db.execute(query)
     dms = result.scalars().all()
     items = []
     for dm in dms:
         pids = await _dm_participant_ids(db, dm.id)
         items.append(DMResponse(dm_id=dm.id, participant_ids=pids, is_group=dm.is_group, name=dm.name))
-    return DMListResponse(dms=items)
+    cursor = str(dms[-1].id) if dms else None
+    return DMListResponse(items=items, cursor=cursor)
 
 
 @router.delete("/api/v1/dms/{dm_id}", status_code=204)

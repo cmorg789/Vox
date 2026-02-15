@@ -19,6 +19,14 @@ from vox.gateway.hub import Hub, SessionState
 
 log = logging.getLogger(__name__)
 
+try:
+    import zstandard as zstd
+
+    _zstd_compressor = zstd.ZstdCompressor(level=3)
+except ImportError:  # pragma: no cover
+    zstd = None  # type: ignore[assignment]
+    _zstd_compressor = None  # type: ignore[assignment]
+
 HEARTBEAT_INTERVAL_MS = 45_000
 IDENTIFY_TIMEOUT_S = 30
 HEARTBEAT_TIMEOUT_FACTOR = 1.5
@@ -59,7 +67,7 @@ _CPACE_EVENT_MAP = {
 
 
 class Connection:
-    def __init__(self, ws: WebSocket, hub: Hub) -> None:
+    def __init__(self, ws: WebSocket, hub: Hub, compress: str | None = None) -> None:
         self.ws = ws
         self.hub = hub
         self.user_id: int = 0
@@ -71,11 +79,16 @@ class Connection:
         self.authenticated: bool = False
         self._replay_buffer: deque[dict[str, Any]] = deque(maxlen=REPLAY_BUFFER_SIZE)
         self._closed: bool = False
+        self._compress = compress == "zstd" and _zstd_compressor is not None
 
     async def send_json(self, data: dict[str, Any]) -> None:
         if not self._closed:
             try:
-                await self.ws.send_json(data)
+                if self._compress:
+                    raw = json.dumps(data).encode()
+                    await self.ws.send_bytes(_zstd_compressor.compress(raw))
+                else:
+                    await self.ws.send_json(data)
             except Exception:
                 self._closed = True
 

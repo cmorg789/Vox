@@ -303,6 +303,24 @@ def presence_update(user_id: int, status: str, **extra: Any) -> dict[str, Any]:
     return _event("presence_update", {"user_id": user_id, "status": status, **extra})
 
 
+# --- Friend/Block Events ---
+
+def friend_request(user_id: int, target_id: int) -> dict[str, Any]:
+    return _event("friend_request", {"user_id": user_id, "target_id": target_id})
+
+
+def friend_remove(user_id: int, target_id: int) -> dict[str, Any]:
+    return _event("friend_remove", {"user_id": user_id, "target_id": target_id})
+
+
+def block_add(user_id: int, target_id: int) -> dict[str, Any]:
+    return _event("block_add", {"user_id": user_id, "target_id": target_id})
+
+
+def block_remove(user_id: int, target_id: int) -> dict[str, Any]:
+    return _event("block_remove", {"user_id": user_id, "target_id": target_id})
+
+
 # --- Voice/Stage Events ---
 
 def voice_state_update(room_id: int, members: list[dict[str, Any]]) -> dict[str, Any]:

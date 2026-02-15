@@ -31,7 +31,7 @@ async def test_list_invites(client):
 
     r = await client.get("/api/v1/invites", headers=h)
     assert r.status_code == 200
-    assert len(r.json()["invites"]) == 2
+    assert len(r.json()["items"]) == 2
 
 
 async def test_delete_invite(client):

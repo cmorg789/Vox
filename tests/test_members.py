@@ -37,11 +37,81 @@ async def test_ban_and_unban(client):
 
     # List bans
     r = await client.get("/api/v1/bans", headers=h_admin)
-    assert len(r.json()["bans"]) == 1
+    assert len(r.json()["items"]) == 1
 
     # Unban
     r = await client.delete(f"/api/v1/bans/{uid_bob}", headers=h_admin)
     assert r.status_code == 204
 
     r = await client.get("/api/v1/bans", headers=h_admin)
-    assert len(r.json()["bans"]) == 0
+    assert len(r.json()["items"]) == 0
+
+
+async def test_list_members_pagination(client):
+    h, _ = await auth(client, "alice")
+    await auth(client, "bob")
+    r = await client.get("/api/v1/members?after=1", headers=h)
+    assert r.status_code == 200
+    for item in r.json()["items"]:
+        assert item["user_id"] > 1
+
+
+async def test_join_max_uses_invite(client):
+    h, uid = await auth(client, "alice")
+
+    from vox.db.engine import get_session_factory
+    from vox.db.models import Invite
+    from datetime import datetime, timezone
+    factory = get_session_factory()
+    async with factory() as db:
+        db.add(Invite(code="maxed", creator_id=uid, max_uses=1, uses=1, created_at=datetime.now(timezone.utc)))
+        await db.commit()
+
+    await auth(client, "bob")
+    h_bob = (await client.post("/api/v1/auth/login", json={"username": "bob", "password": "test1234"})).json()
+    h2 = {"Authorization": f"Bearer {h_bob['token']}"}
+    r = await client.post("/api/v1/members/@me/join", headers=h2, json={"invite_code": "maxed"})
+    assert r.status_code == 422
+
+
+async def test_join_banned_user(client):
+    h_admin, admin_uid = await auth(client, "admin")
+    _, uid_bob = await auth(client, "bob")
+
+    # Create invite
+    from vox.db.engine import get_session_factory
+    from vox.db.models import Invite
+    from datetime import datetime, timezone
+    factory = get_session_factory()
+    async with factory() as db:
+        db.add(Invite(code="valid", creator_id=admin_uid, max_uses=10, uses=0, created_at=datetime.now(timezone.utc)))
+        await db.commit()
+
+    # Ban bob
+    await client.put(f"/api/v1/bans/{uid_bob}", headers=h_admin, json={"reason": "bad"})
+
+    h_bob = {"Authorization": f"Bearer {(await client.post('/api/v1/auth/register', json={'username': 'charlie', 'password': 'test1234'})).json()['token']}"}
+    # Actually use bob's token - but bob is banned and inactive so can't log in easily
+    # Instead test with admin banning charlie then charlie trying to join
+    charlie_uid = 3
+    await client.put(f"/api/v1/bans/{charlie_uid}", headers=h_admin, json={"reason": "bad"})
+    r = await client.post("/api/v1/members/@me/join", headers=h_bob, json={"invite_code": "valid"})
+    assert r.status_code == 403
+
+
+async def test_leave_server(client):
+    h, _ = await auth(client, "alice")
+    r = await client.delete("/api/v1/members/@me", headers=h)
+    assert r.status_code == 204
+
+
+async def test_kick_member_not_found(client):
+    h, _ = await auth(client, "admin")
+    r = await client.delete("/api/v1/members/99999", headers=h)
+    assert r.status_code == 404
+
+
+async def test_ban_member_not_found(client):
+    h, _ = await auth(client, "admin")
+    r = await client.put("/api/v1/bans/99999", headers=h, json={"reason": "ghost"})
+    assert r.status_code == 404

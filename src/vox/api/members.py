@@ -139,13 +139,19 @@ async def unban_member(
 
 @router.get("/api/v1/bans")
 async def list_bans(
+    limit: int = 100,
+    after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(BAN_MEMBERS),
 ):
-    result = await db.execute(select(Ban))
+    query = select(Ban).order_by(Ban.user_id).limit(limit)
+    if after is not None:
+        query = query.where(Ban.user_id > after)
+    result = await db.execute(query)
     bans = result.scalars().all()
     items = []
     for b in bans:
         u = (await db.execute(select(User).where(User.id == b.user_id))).scalar_one_or_none()
         items.append(BanResponse(user_id=b.user_id, display_name=u.display_name if u else None, reason=b.reason))
-    return {"bans": items}
+    cursor = str(bans[-1].user_id) if bans else None
+    return {"items": items, "cursor": cursor}

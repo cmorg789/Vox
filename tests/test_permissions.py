@@ -291,7 +291,7 @@ async def test_permission_override_denies_send(client):
 
     # Get the @everyone role id
     r = await client.get("/api/v1/roles", headers=admin_h)
-    everyone_role = next(role for role in r.json()["roles"] if role["name"] == "@everyone")
+    everyone_role = next(role for role in r.json()["items"] if role["name"] == "@everyone")
 
     # Set deny SEND_MESSAGES override for @everyone on this feed
     r = await client.put(
@@ -315,7 +315,7 @@ async def test_permission_override_allows_send_for_specific_role(client):
     feed_id = r.json()["feed_id"]
 
     r = await client.get("/api/v1/roles", headers=admin_h)
-    everyone_role = next(role for role in r.json()["roles"] if role["name"] == "@everyone")
+    everyone_role = next(role for role in r.json()["items"] if role["name"] == "@everyone")
 
     # Deny SEND_MESSAGES for @everyone
     await client.put(
@@ -352,7 +352,7 @@ async def test_user_specific_override(client):
     feed_id = r.json()["feed_id"]
 
     r = await client.get("/api/v1/roles", headers=admin_h)
-    everyone_role = next(role for role in r.json()["roles"] if role["name"] == "@everyone")
+    everyone_role = next(role for role in r.json()["items"] if role["name"] == "@everyone")
 
     # Deny for @everyone role
     await client.put(

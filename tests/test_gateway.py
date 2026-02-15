@@ -595,3 +595,154 @@ class TestRelayHandlers:
                 ws.send_json({"type": "heartbeat"})
                 ack = ws.receive_json()
                 assert ack["type"] == "heartbeat_ack"
+
+    def test_cpace_new_device_key_with_nonce(self, app, db):
+        """CPace new_device_key relay includes nonce parameter."""
+        with TestClient(app) as tc:
+            resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            token = resp.json()["token"]
+
+            with tc.websocket_connect("/gateway") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({"type": "identify", "d": {"token": token}})
+                ws.receive_json()  # ready
+
+                ws.send_json({
+                    "type": "cpace_relay",
+                    "d": {
+                        "cpace_type": "new_device_key",
+                        "pair_id": "pair_456",
+                        "data": "keydata",
+                        "nonce": "abc123",
+                    }
+                })
+                event = ws.receive_json()
+                assert event["type"] == "cpace_new_device_key"
+                assert event["d"]["pair_id"] == "pair_456"
+                assert event["d"]["data"] == "keydata"
+                assert event["d"]["nonce"] == "abc123"
+
+    def test_presence_update_message(self, app, db):
+        """Presence update message dispatches presence_update event."""
+        with TestClient(app) as tc:
+            resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            token = resp.json()["token"]
+
+            with tc.websocket_connect("/gateway") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({"type": "identify", "d": {"token": token}})
+                ws.receive_json()  # ready
+
+                ws.send_json({
+                    "type": "presence_update",
+                    "d": {"status": "idle"}
+                })
+                event = ws.receive_json()
+                assert event["type"] == "presence_update"
+                assert event["d"]["status"] == "idle"
+
+
+class TestResumeReplayExhausted:
+    """Test resume with stale sequence number."""
+
+    def test_resume_stale_seq_replay_exhausted(self, app, db):
+        """Resume with last_seq older than replay buffer -> close 4010."""
+        from vox.gateway.hub import get_hub, SessionState
+        from collections import deque
+
+        with TestClient(app) as tc:
+            resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            token = resp.json()["token"]
+            headers = {"Authorization": f"Bearer {token}"}
+
+            # First connection: identify, get session_id
+            with tc.websocket_connect("/gateway") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({"type": "identify", "d": {"token": token}})
+                ready = ws.receive_json()
+                session_id = ready["d"]["session_id"]
+
+                # Generate some events so replay buffer has entries
+                tc.post("/api/v1/feeds", json={"name": "feed1", "type": "text"}, headers=headers)
+                ws.receive_json()  # seq=2
+                tc.post("/api/v1/feeds", json={"name": "feed2", "type": "text"}, headers=headers)
+                ws.receive_json()  # seq=3
+
+            # Now resume with last_seq=0 — oldest buffered is seq=1 (ready)
+            # This should succeed since seq=0 < oldest=1 but...
+            # Let's manipulate the hub to have a buffer starting at seq=50
+            hub = get_hub()
+            session = hub.get_session(session_id)
+            assert session is not None
+            # Clear buffer and add events with high seq numbers
+            session.replay_buffer = deque(maxlen=1000)
+            session.replay_buffer.append({"type": "test", "seq": 50})
+            session.replay_buffer.append({"type": "test", "seq": 51})
+
+            # Resume with last_seq=10, which is < oldest_seq=50 -> REPLAY_EXHAUSTED
+            with tc.websocket_connect("/gateway") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({
+                    "type": "resume",
+                    "d": {"token": token, "session_id": session_id, "last_seq": 10}
+                })
+                with pytest.raises(Exception):
+                    ws.receive_json()
+
+
+class TestVoiceStateUpdate:
+    """Test voice_state_update message in gateway."""
+
+    def test_voice_state_update_message(self, app, db):
+        """Send voice_state_update modifies voice state in DB."""
+        from unittest.mock import MagicMock, patch as _patch
+        from vox.voice import service as voice_service
+
+        with TestClient(app) as tc:
+            resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            token = resp.json()["token"]
+            headers = {"Authorization": f"Bearer {token}"}
+
+            # Create a voice room and join
+            room_resp = tc.post("/api/v1/rooms", json={"name": "Voice", "type": "voice"}, headers=headers)
+            room_id = room_resp.json()["room_id"]
+
+            join_resp = tc.post(f"/api/v1/rooms/{room_id}/voice/join", json={}, headers=headers)
+            assert join_resp.status_code == 200
+
+            with tc.websocket_connect("/gateway") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({"type": "identify", "d": {"token": token}})
+                ws.receive_json()  # ready
+
+                # Send voice state update
+                ws.send_json({
+                    "type": "voice_state_update",
+                    "d": {"self_mute": True, "self_deaf": False}
+                })
+                event = ws.receive_json()
+                assert event["type"] == "voice_state_update"
+                assert event["d"]["room_id"] == room_id
+                # Check that the mute flag is reflected
+                members = event["d"]["members"]
+                assert len(members) >= 1
+                me = [m for m in members if m["user_id"] == 1][0]
+                assert me["mute"] is True
+
+
+class TestGatewayCompression:
+    """Test zstd compression on send_event."""
+
+    def test_send_event_with_zstd_compression(self, app, db):
+        """Connecting with compress=zstd sends binary compressed frames."""
+        with TestClient(app) as tc:
+            resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            token = resp.json()["token"]
+
+            with tc.websocket_connect("/gateway?compress=zstd") as ws:
+                # Hello is sent via send_json, which uses compression if available
+                data = ws.receive_bytes()
+                import zstandard as zstd
+                decompressor = zstd.ZstdDecompressor()
+                hello = json.loads(decompressor.decompress(data))
+                assert hello["type"] == "hello"

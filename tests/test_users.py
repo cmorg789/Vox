@@ -36,15 +36,15 @@ async def test_friends(client):
     # List friends
     r = await client.get("/api/v1/users/@me/friends", headers={"Authorization": f"Bearer {token_a}"})
     assert r.status_code == 200
-    assert len(r.json()["friends"]) == 1
-    assert r.json()["friends"][0]["user_id"] == uid_b
+    assert len(r.json()["items"]) == 1
+    assert r.json()["items"][0]["user_id"] == uid_b
 
     # Remove friend
     r = await client.delete(f"/api/v1/users/@me/friends/{uid_b}", headers={"Authorization": f"Bearer {token_a}"})
     assert r.status_code == 204
 
     r = await client.get("/api/v1/users/@me/friends", headers={"Authorization": f"Bearer {token_a}"})
-    assert len(r.json()["friends"]) == 0
+    assert len(r.json()["items"]) == 0
 
 
 async def test_block_unblock(client):

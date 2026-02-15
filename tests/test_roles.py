@@ -12,7 +12,7 @@ async def test_create_and_list_roles(client):
 
     r = await client.get("/api/v1/roles", headers=h)
     assert r.status_code == 200
-    names = [role["name"] for role in r.json()["roles"]]
+    names = [role["name"] for role in r.json()["items"]]
     assert "Admin" in names
 
 
@@ -36,7 +36,7 @@ async def test_delete_role(client):
     assert r.status_code == 204
 
     r = await client.get("/api/v1/roles", headers=h)
-    names = [role["name"] for role in r.json()["roles"]]
+    names = [role["name"] for role in r.json()["items"]]
     assert "Temp" not in names
 
 
@@ -77,3 +77,77 @@ async def test_permission_overrides(client):
 
     r = await client.get("/api/v1/server/layout", headers=h)
     assert len(r.json()["feeds"][0]["permission_overrides"]) == 0
+
+
+async def test_permission_override_update_existing(client):
+    """Updating an existing feed permission override works."""
+    h, _ = await auth(client)
+    await client.post("/api/v1/feeds", headers=h, json={"name": "general", "type": "text"})
+
+    # Set initial override
+    r = await client.put("/api/v1/feeds/1/permissions/role/1", headers=h, json={"allow": 3, "deny": 12})
+    assert r.status_code == 204
+
+    # Update the same override
+    r = await client.put("/api/v1/feeds/1/permissions/role/1", headers=h, json={"allow": 7, "deny": 0})
+    assert r.status_code == 204
+
+    r = await client.get("/api/v1/server/layout", headers=h)
+    overrides = r.json()["feeds"][0]["permission_overrides"]
+    assert len(overrides) == 1
+    assert overrides[0]["allow"] == 7
+
+
+async def test_room_permission_overrides(client):
+    """Set and delete room permission overrides."""
+    h, _ = await auth(client)
+    r = await client.post("/api/v1/rooms", headers=h, json={"name": "Voice", "type": "voice"})
+    room_id = r.json()["room_id"]
+
+    # Set room override
+    r = await client.put(f"/api/v1/rooms/{room_id}/permissions/role/1", headers=h, json={"allow": 5, "deny": 10})
+    assert r.status_code == 204
+
+    # Update existing room override
+    r = await client.put(f"/api/v1/rooms/{room_id}/permissions/role/1", headers=h, json={"allow": 15, "deny": 0})
+    assert r.status_code == 204
+
+    # Delete room override
+    r = await client.delete(f"/api/v1/rooms/{room_id}/permissions/role/1", headers=h)
+    assert r.status_code == 204
+
+
+async def test_role_not_found(client):
+    """Operations on non-existent role return 404."""
+    h, _ = await auth(client)
+
+    r = await client.patch("/api/v1/roles/99999", headers=h, json={"name": "Ghost"})
+    assert r.status_code == 404
+
+    r = await client.delete("/api/v1/roles/99999", headers=h)
+    assert r.status_code == 404
+
+
+async def test_update_role_permissions_and_position(client):
+    """Update role permissions and position fields."""
+    h, _ = await auth(client)
+    r = await client.post("/api/v1/roles", headers=h, json={"name": "Mod", "permissions": 0, "position": 1})
+    role_id = r.json()["role_id"]
+
+    r = await client.patch(f"/api/v1/roles/{role_id}", headers=h, json={"permissions": 255, "position": 2})
+    assert r.status_code == 200
+    assert r.json()["permissions"] == 255
+    assert r.json()["position"] == 2
+
+
+async def test_list_roles_pagination(client):
+    """List roles with after cursor."""
+    h, _ = await auth(client)
+    await client.post("/api/v1/roles", headers=h, json={"name": "Role1", "permissions": 0, "position": 1})
+    await client.post("/api/v1/roles", headers=h, json={"name": "Role2", "permissions": 0, "position": 2})
+
+    r = await client.get("/api/v1/roles?after=1", headers=h)
+    assert r.status_code == 200
+    # Should not include roles with id <= 1
+    for item in r.json()["items"]:
+        assert item["role_id"] > 1

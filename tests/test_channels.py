@@ -122,3 +122,105 @@ async def test_update_thread(client):
     r = await client.patch(f"/api/v1/threads/{thread_id}", headers=h, json={"archived": True})
     assert r.status_code == 200
     assert r.json()["archived"] is True
+
+
+# --- Not Found errors ---
+
+async def test_update_feed_not_found(client):
+    h = await auth(client)
+    r = await client.patch("/api/v1/feeds/99999", headers=h, json={"name": "ghost"})
+    assert r.status_code == 404
+
+
+async def test_delete_feed_not_found(client):
+    h = await auth(client)
+    r = await client.delete("/api/v1/feeds/99999", headers=h)
+    assert r.status_code == 404
+
+
+async def test_update_room_not_found(client):
+    h = await auth(client)
+    r = await client.patch("/api/v1/rooms/99999", headers=h, json={"name": "ghost"})
+    assert r.status_code == 404
+
+
+async def test_delete_room_not_found(client):
+    h = await auth(client)
+    r = await client.delete("/api/v1/rooms/99999", headers=h)
+    assert r.status_code == 404
+
+
+async def test_update_category_not_found(client):
+    h = await auth(client)
+    r = await client.patch("/api/v1/categories/99999", headers=h, json={"name": "ghost"})
+    assert r.status_code == 404
+
+
+async def test_delete_category_not_found(client):
+    h = await auth(client)
+    r = await client.delete("/api/v1/categories/99999", headers=h)
+    assert r.status_code == 404
+
+
+async def test_update_category_position(client):
+    h = await auth(client)
+    r = await client.post("/api/v1/categories", headers=h, json={"name": "Cat", "position": 0})
+    cat_id = r.json()["category_id"]
+    r = await client.patch(f"/api/v1/categories/{cat_id}", headers=h, json={"position": 5})
+    assert r.status_code == 200
+    assert r.json()["position"] == 5
+
+
+# --- Thread operations ---
+
+async def test_update_thread_name_and_locked(client):
+    h = await auth(client)
+    await client.post("/api/v1/feeds", headers=h, json={"name": "general", "type": "text"})
+    r = await client.post("/api/v1/feeds/1/messages", headers=h, json={"body": "Hello"})
+    msg_id = r.json()["msg_id"]
+    r = await client.post("/api/v1/feeds/1/threads", headers=h, json={"parent_msg_id": msg_id, "name": "Discussion"})
+    thread_id = r.json()["thread_id"]
+
+    r = await client.patch(f"/api/v1/threads/{thread_id}", headers=h, json={"name": "Renamed", "locked": True})
+    assert r.status_code == 200
+    assert r.json()["name"] == "Renamed"
+    assert r.json()["locked"] is True
+
+
+async def test_update_thread_not_found(client):
+    h = await auth(client)
+    r = await client.patch("/api/v1/threads/99999", headers=h, json={"name": "ghost"})
+    assert r.status_code == 404
+
+
+async def test_delete_thread(client):
+    h = await auth(client)
+    await client.post("/api/v1/feeds", headers=h, json={"name": "general", "type": "text"})
+    r = await client.post("/api/v1/feeds/1/messages", headers=h, json={"body": "Hello"})
+    msg_id = r.json()["msg_id"]
+    r = await client.post("/api/v1/feeds/1/threads", headers=h, json={"parent_msg_id": msg_id, "name": "Temp"})
+    thread_id = r.json()["thread_id"]
+
+    r = await client.delete(f"/api/v1/threads/{thread_id}", headers=h)
+    assert r.status_code == 204
+
+
+async def test_delete_thread_not_found(client):
+    h = await auth(client)
+    r = await client.delete("/api/v1/threads/99999", headers=h)
+    assert r.status_code == 404
+
+
+async def test_thread_subscribe_unsubscribe(client):
+    h = await auth(client)
+    await client.post("/api/v1/feeds", headers=h, json={"name": "general", "type": "text"})
+    r = await client.post("/api/v1/feeds/1/messages", headers=h, json={"body": "Hello"})
+    msg_id = r.json()["msg_id"]
+    r = await client.post("/api/v1/feeds/1/threads", headers=h, json={"parent_msg_id": msg_id, "name": "Thread"})
+    thread_id = r.json()["thread_id"]
+
+    r = await client.put(f"/api/v1/threads/{thread_id}/subscribers/@me", headers=h)
+    assert r.status_code == 204
+
+    r = await client.delete(f"/api/v1/threads/{thread_id}/subscribers/@me", headers=h)
+    assert r.status_code == 204

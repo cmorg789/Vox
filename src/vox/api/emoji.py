@@ -16,11 +16,19 @@ router = APIRouter(tags=["emoji"])
 
 @router.get("/api/v1/emoji")
 async def list_emoji(
+    limit: int = 100,
+    after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Emoji))
-    return {"emoji": [EmojiResponse(emoji_id=e.id, name=e.name, creator_id=e.creator_id) for e in result.scalars().all()]}
+    query = select(Emoji).order_by(Emoji.id).limit(limit)
+    if after is not None:
+        query = query.where(Emoji.id > after)
+    result = await db.execute(query)
+    emoji = result.scalars().all()
+    items = [EmojiResponse(emoji_id=e.id, name=e.name, creator_id=e.creator_id) for e in emoji]
+    cursor = str(emoji[-1].id) if emoji else None
+    return {"items": items, "cursor": cursor}
 
 
 @router.post("/api/v1/emoji", status_code=201)
@@ -56,11 +64,19 @@ async def delete_emoji(
 
 @router.get("/api/v1/stickers")
 async def list_stickers(
+    limit: int = 100,
+    after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Sticker))
-    return {"stickers": [StickerResponse(sticker_id=s.id, name=s.name, creator_id=s.creator_id) for s in result.scalars().all()]}
+    query = select(Sticker).order_by(Sticker.id).limit(limit)
+    if after is not None:
+        query = query.where(Sticker.id > after)
+    result = await db.execute(query)
+    stickers = result.scalars().all()
+    items = [StickerResponse(sticker_id=s.id, name=s.name, creator_id=s.creator_id) for s in stickers]
+    cursor = str(stickers[-1].id) if stickers else None
+    return {"items": items, "cursor": cursor}
 
 
 @router.post("/api/v1/stickers", status_code=201)
