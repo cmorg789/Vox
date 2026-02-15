@@ -234,6 +234,16 @@ def emoji_delete(emoji_id: int) -> dict[str, Any]:
     return _event("emoji_delete", {"emoji_id": emoji_id})
 
 
+# --- Sticker Events ---
+
+def sticker_create(sticker_id: int, name: str, creator_id: int) -> dict[str, Any]:
+    return _event("sticker_create", {"sticker_id": sticker_id, "name": name, "creator_id": creator_id})
+
+
+def sticker_delete(sticker_id: int) -> dict[str, Any]:
+    return _event("sticker_delete", {"sticker_id": sticker_id})
+
+
 # --- Server Events ---
 
 def server_update(**changed: Any) -> dict[str, Any]:

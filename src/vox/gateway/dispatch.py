@@ -15,6 +15,7 @@ SYNCABLE_EVENTS: set[str] = {
     "room_create", "room_update", "room_delete",
     "category_create", "category_update", "category_delete",
     "emoji_create", "emoji_delete",
+    "sticker_create", "sticker_delete",
     "invite_create", "invite_delete",
 }
 

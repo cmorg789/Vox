@@ -73,6 +73,7 @@ async def create_sticker(
     db.add(sticker)
     await db.flush()
     await db.commit()
+    await dispatch(gw.sticker_create(sticker_id=sticker.id, name=sticker.name, creator_id=sticker.creator_id))
     return StickerResponse(sticker_id=sticker.id, name=sticker.name, creator_id=sticker.creator_id)
 
 
@@ -88,3 +89,4 @@ async def delete_sticker(
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Sticker not found."}})
     await db.delete(sticker)
     await db.commit()
+    await dispatch(gw.sticker_delete(sticker_id=sticker_id))

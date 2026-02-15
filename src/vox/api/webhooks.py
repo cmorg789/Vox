@@ -11,6 +11,8 @@ from vox.api.messages import _snowflake
 from vox.db.models import Message, User, Webhook
 from vox.permissions import MANAGE_WEBHOOKS
 from vox.models.bots import CreateWebhookRequest, ExecuteWebhookRequest, WebhookResponse
+from vox.gateway import events as gw
+from vox.gateway.dispatch import dispatch
 
 router = APIRouter(tags=["webhooks"])
 
@@ -89,3 +91,4 @@ async def execute_webhook(
     msg = Message(id=msg_id, feed_id=wh.feed_id, author_id=0, body=body.body, timestamp=ts)
     db.add(msg)
     await db.commit()
+    await dispatch(gw.message_create(msg_id=msg_id, feed_id=wh.feed_id, author_id=0, body=body.body, timestamp=ts))
