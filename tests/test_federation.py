@@ -527,9 +527,65 @@ async def test_federation_rate_limit_keyed_by_origin(client):
 
 
 async def test_block_endpoint(client):
-    """Block endpoint acknowledges with 204."""
+    """Block endpoint records blocklist entry, deactivates federated users, and logs audit."""
     headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
+
+    from vox.db.engine import get_session_factory
+    from vox.db.models import AuditLog, FederationEntry, User
+
+    origin = "remote.example"
+
+    # Create a federated user from the origin domain
+    from datetime import datetime, timezone
+
+    factory = get_session_factory()
+    async with factory() as db:
+        fed_user = User(
+            id=99999,
+            username="remoteuser",
+            password_hash="x",
+            display_name="Remote User",
+            federated=True,
+            home_domain=origin,
+            active=True,
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(fed_user)
+        await db.commit()
 
     body = {"reason": "spam"}
     r = await _fed_request(client, "POST", "/api/v1/federation/block", body, private_key, pub_b64)
     assert r.status_code == 204
+
+    # Verify origin added to blocklist
+    async with factory() as db:
+        from sqlalchemy import select
+
+        row = await db.execute(select(FederationEntry).where(FederationEntry.entry == origin))
+        entry = row.scalar_one_or_none()
+        assert entry is not None
+        assert entry.reason == "spam"
+
+        # Verify federated user deactivated
+        row = await db.execute(select(User).where(User.id == 99999))
+        u = row.scalar_one()
+        assert u.active is False
+
+        # Verify audit log entry
+        row = await db.execute(
+            select(AuditLog).where(AuditLog.event_type == "federation_block_received")
+        )
+        log = row.scalar_one()
+        assert "remote.example" in log.extra
+
+    # Second call is rejected because origin is now blocked — verify no duplicate entry
+    r = await _fed_request(client, "POST", "/api/v1/federation/block", body, private_key, pub_b64)
+    assert r.status_code == 403  # origin now blocked
+
+    async with factory() as db:
+        from sqlalchemy import func, select
+
+        count = await db.execute(
+            select(func.count()).select_from(FederationEntry).where(FederationEntry.entry == origin)
+        )
+        assert count.scalar() == 1

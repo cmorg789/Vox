@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
@@ -13,10 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vox.api.deps import get_db
 from vox.api.messages import _snowflake
 from vox.db.models import (
+    AuditLog,
     Ban,
     Config,
     DM,
     Device,
+    FederationEntry,
     Invite,
     Message,
     OneTimePrekey,
@@ -442,5 +445,30 @@ async def federation_block(
     origin: str = Depends(verify_federation_request),
     db: AsyncSession = Depends(get_db),
 ):
-    # Acknowledge block notification — no-op for now
-    pass
+    # Add origin to blocklist (idempotent — skip if already blocked)
+    existing = await db.execute(
+        select(FederationEntry).where(FederationEntry.entry == origin)
+    )
+    if existing.scalar_one_or_none() is None:
+        db.add(FederationEntry(
+            entry=origin,
+            reason=body.reason or "Remote server initiated block",
+            created_at=datetime.now(timezone.utc),
+        ))
+
+    # Deactivate all federated users from that domain
+    fed_users = await db.execute(
+        select(User).where(User.home_domain == origin, User.federated == True)
+    )
+    for u in fed_users.scalars().all():
+        u.active = False
+
+    # Audit log
+    db.add(AuditLog(
+        id=_snowflake(),
+        event_type="federation_block_received",
+        actor_id=0,
+        extra=json.dumps({"origin": origin, "reason": body.reason}),
+        timestamp=int(time.time() * 1000),
+    ))
+    await db.commit()
