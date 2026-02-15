@@ -97,6 +97,7 @@ async def assign_role(
 ):
     await db.execute(role_members.insert().values(role_id=role_id, user_id=user_id))
     await db.commit()
+    await dispatch(gw.role_assign(role_id=role_id, user_id=user_id))
 
 
 @router.delete("/api/v1/members/{user_id}/roles/{role_id}", status_code=204)
@@ -108,6 +109,7 @@ async def revoke_role(
 ):
     await db.execute(delete(role_members).where(role_members.c.role_id == role_id, role_members.c.user_id == user_id))
     await db.commit()
+    await dispatch(gw.role_revoke(role_id=role_id, user_id=user_id))
 
 
 # --- Permission Overrides ---

@@ -6,6 +6,8 @@ from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import Emoji, Sticker, User
 from vox.permissions import MANAGE_EMOJI
 from vox.models.emoji import EmojiResponse, StickerResponse
+from vox.gateway import events as gw
+from vox.gateway.dispatch import dispatch
 
 router = APIRouter(tags=["emoji"])
 
@@ -31,6 +33,7 @@ async def create_emoji(
     db.add(emoji)
     await db.flush()
     await db.commit()
+    await dispatch(gw.emoji_create(emoji_id=emoji.id, name=emoji.name, creator_id=emoji.creator_id))
     return EmojiResponse(emoji_id=emoji.id, name=emoji.name, creator_id=emoji.creator_id)
 
 
@@ -46,6 +49,7 @@ async def delete_emoji(
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Emoji not found."}})
     await db.delete(emoji)
     await db.commit()
+    await dispatch(gw.emoji_delete(emoji_id=emoji_id))
 
 
 # --- Stickers ---

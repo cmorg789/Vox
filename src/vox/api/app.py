@@ -52,6 +52,7 @@ def create_app(database_url: str) -> FastAPI:
     from vox.api.search import router as search_router
     from vox.api.files import router as files_router
     from vox.api.embeds import router as embeds_router
+    from vox.api.sync import router as sync_router
 
     app.include_router(auth_router)
     app.include_router(users_router)
@@ -72,6 +73,7 @@ def create_app(database_url: str) -> FastAPI:
     app.include_router(search_router)
     app.include_router(files_router)
     app.include_router(embeds_router)
+    app.include_router(sync_router)
 
     @app.websocket("/gateway")
     async def gateway_websocket(ws: WebSocket):

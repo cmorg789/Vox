@@ -216,6 +216,24 @@ def role_delete(role_id: int) -> dict[str, Any]:
     return _event("role_delete", {"role_id": role_id})
 
 
+def role_assign(role_id: int, user_id: int) -> dict[str, Any]:
+    return _event("role_assign", {"role_id": role_id, "user_id": user_id})
+
+
+def role_revoke(role_id: int, user_id: int) -> dict[str, Any]:
+    return _event("role_revoke", {"role_id": role_id, "user_id": user_id})
+
+
+# --- Emoji Events ---
+
+def emoji_create(emoji_id: int, name: str, creator_id: int) -> dict[str, Any]:
+    return _event("emoji_create", {"emoji_id": emoji_id, "name": name, "creator_id": creator_id})
+
+
+def emoji_delete(emoji_id: int) -> dict[str, Any]:
+    return _event("emoji_delete", {"emoji_id": emoji_id})
+
+
 # --- Server Events ---
 
 def server_update(**changed: Any) -> dict[str, Any]:

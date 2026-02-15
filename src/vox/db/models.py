@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -465,3 +465,18 @@ class RecoveryCode(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     code_hash: Mapped[str] = mapped_column(String(255))
     used: Mapped[bool] = mapped_column(Boolean, server_default="0")
+
+
+# --- Event Log (for sync) ---
+
+
+class EventLog(Base):
+    __tablename__ = "event_log"
+    __table_args__ = (
+        Index("ix_event_log_type_ts", "event_type", "timestamp"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)  # snowflake
+    event_type: Mapped[str] = mapped_column(String(255))
+    payload: Mapped[str] = mapped_column(Text)  # JSON
+    timestamp: Mapped[int] = mapped_column(BigInteger)  # unix ms
