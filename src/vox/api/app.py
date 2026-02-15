@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, WebSocket
 
@@ -6,6 +7,7 @@ from vox.db.engine import get_engine, get_session_factory, init_engine
 from vox.db.models import Base
 from vox.gateway.connection import Connection
 from vox.gateway.hub import get_hub, init_hub
+from vox.ratelimit import RateLimitMiddleware
 
 
 def create_app(database_url: str) -> FastAPI:
@@ -17,6 +19,8 @@ def create_app(database_url: str) -> FastAPI:
         engine = get_engine()
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+        # Ensure uploads directory exists
+        Path("uploads").mkdir(exist_ok=True)
         # Initialize the gateway hub
         init_hub()
         yield
@@ -24,6 +28,9 @@ def create_app(database_url: str) -> FastAPI:
         await engine.dispose()
 
     app = FastAPI(title="Vox", lifespan=lifespan)
+
+    # Rate limiting middleware
+    app.add_middleware(RateLimitMiddleware)
 
     # Register routers
     from vox.api.auth import router as auth_router
@@ -43,6 +50,7 @@ def create_app(database_url: str) -> FastAPI:
     from vox.api.voice import router as voice_router
     from vox.api.gateway_info import router as gateway_info_router
     from vox.api.search import router as search_router
+    from vox.api.files import router as files_router
 
     app.include_router(auth_router)
     app.include_router(users_router)
@@ -61,6 +69,7 @@ def create_app(database_url: str) -> FastAPI:
     app.include_router(voice_router)
     app.include_router(gateway_info_router)
     app.include_router(search_router)
+    app.include_router(files_router)
 
     @app.websocket("/gateway")
     async def gateway_websocket(ws: WebSocket):

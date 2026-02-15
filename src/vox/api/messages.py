@@ -3,9 +3,10 @@ import time
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from vox.api.deps import get_current_user, get_db, require_permission
-from vox.db.models import Message, Pin, Reaction, User
+from vox.db.models import File, Message, Pin, Reaction, User, message_attachments
 from vox.permissions import MANAGE_MESSAGES, READ_HISTORY, SEND_IN_THREADS, SEND_MESSAGES, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
@@ -38,6 +39,12 @@ def _snowflake() -> int:
 
 
 def _msg_response(m: Message) -> MessageResponse:
+    attachments = []
+    if m.attachments:
+        attachments = [
+            {"file_id": f.id, "name": f.name, "size": f.size, "mime": f.mime, "url": f.url}
+            for f in m.attachments
+        ]
     return MessageResponse(
         msg_id=m.id,
         feed_id=m.feed_id,
@@ -50,6 +57,7 @@ def _msg_response(m: Message) -> MessageResponse:
         edit_timestamp=m.edit_timestamp,
         federated=m.federated,
         author_address=m.author_address,
+        attachments=attachments,
     )
 
 
@@ -64,7 +72,7 @@ async def get_feed_messages(
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(READ_HISTORY, space_type="feed", space_id_param="feed_id"),
 ) -> MessageListResponse:
-    query = select(Message).where(Message.feed_id == feed_id, Message.thread_id == None).order_by(Message.id.desc()).limit(limit)
+    query = select(Message).options(selectinload(Message.attachments)).where(Message.feed_id == feed_id, Message.thread_id == None).order_by(Message.id.desc()).limit(limit)
     if before is not None:
         query = query.where(Message.id < before)
     if after is not None:
@@ -91,6 +99,13 @@ async def send_feed_message(
         reply_to=body.reply_to,
     )
     db.add(msg)
+    await db.flush()
+    if body.attachments:
+        for file_id in body.attachments:
+            f = (await db.execute(select(File).where(File.id == file_id))).scalar_one_or_none()
+            if f is None:
+                raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_ATTACHMENT", "message": f"File {file_id} not found."}})
+            await db.execute(message_attachments.insert().values(msg_id=msg_id, file_id=file_id))
     await db.commit()
     await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to))
     return SendMessageResponse(msg_id=msg_id, timestamp=ts)
@@ -162,7 +177,7 @@ async def get_thread_messages(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> MessageListResponse:
-    query = select(Message).where(Message.thread_id == thread_id).order_by(Message.id.desc()).limit(limit)
+    query = select(Message).options(selectinload(Message.attachments)).where(Message.thread_id == thread_id).order_by(Message.id.desc()).limit(limit)
     if before is not None:
         query = query.where(Message.id < before)
     if after is not None:
@@ -191,6 +206,13 @@ async def send_thread_message(
         reply_to=body.reply_to,
     )
     db.add(msg)
+    await db.flush()
+    if body.attachments:
+        for file_id in body.attachments:
+            f = (await db.execute(select(File).where(File.id == file_id))).scalar_one_or_none()
+            if f is None:
+                raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_ATTACHMENT", "message": f"File {file_id} not found."}})
+            await db.execute(message_attachments.insert().values(msg_id=msg_id, file_id=file_id))
     await db.commit()
     await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to))
     return SendMessageResponse(msg_id=msg_id, timestamp=ts)
@@ -260,6 +282,6 @@ async def list_pins(
     _: User = Depends(get_current_user),
 ) -> MessageListResponse:
     result = await db.execute(
-        select(Message).join(Pin, Pin.msg_id == Message.id).where(Pin.feed_id == feed_id)
+        select(Message).options(selectinload(Message.attachments)).join(Pin, Pin.msg_id == Message.id).where(Pin.feed_id == feed_id)
     )
     return MessageListResponse(messages=[_msg_response(m) for m in result.scalars().all()])

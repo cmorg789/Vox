@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from vox.api.deps import get_current_user, get_db
 from vox.api.messages import _msg_response
@@ -23,7 +24,7 @@ async def search_messages(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> SearchResponse:
-    stmt = select(Message).where(Message.body.ilike(f"%{query}%")).order_by(Message.id.desc()).limit(limit)
+    stmt = select(Message).options(selectinload(Message.attachments)).where(Message.body.ilike(f"%{query}%")).order_by(Message.id.desc()).limit(limit)
     if feed_id is not None:
         stmt = stmt.where(Message.feed_id == feed_id)
     if author_id is not None:

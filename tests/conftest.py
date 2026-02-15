@@ -4,6 +4,7 @@ from httpx import ASGITransport, AsyncClient
 from vox.api.app import create_app
 from vox.db.engine import get_engine
 from vox.db.models import Base
+from vox.ratelimit import reset as reset_ratelimit
 
 
 @pytest.fixture()
@@ -20,6 +21,13 @@ async def db(app):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _clear_ratelimit():
+    reset_ratelimit()
+    yield
+    reset_ratelimit()
 
 
 @pytest.fixture()

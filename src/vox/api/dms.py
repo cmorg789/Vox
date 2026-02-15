@@ -4,10 +4,11 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from vox.api.deps import get_current_user, get_db
 from vox.api.messages import _msg_response, _snowflake
-from vox.db.models import DM, DMReadState, DMSettings, Message, User, dm_participants
+from vox.db.models import DM, DMReadState, DMSettings, File, Message, User, dm_participants, message_attachments
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.dms import (
@@ -190,6 +191,13 @@ async def send_dm_message(
     ts = int(time.time() * 1000)
     msg = Message(id=msg_id, dm_id=dm_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to)
     db.add(msg)
+    await db.flush()
+    if body.attachments:
+        for file_id in body.attachments:
+            f = (await db.execute(select(File).where(File.id == file_id))).scalar_one_or_none()
+            if f is None:
+                raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_ATTACHMENT", "message": f"File {file_id} not found."}})
+            await db.execute(message_attachments.insert().values(msg_id=msg_id, file_id=file_id))
     await db.commit()
     pids = await _dm_participant_ids(db, dm_id)
     await dispatch(gw.message_create(msg_id=msg_id, dm_id=dm_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to), user_ids=pids)
@@ -205,7 +213,7 @@ async def get_dm_messages(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> MessageListResponse:
-    query = select(Message).where(Message.dm_id == dm_id).order_by(Message.id.desc()).limit(limit)
+    query = select(Message).options(selectinload(Message.attachments)).where(Message.dm_id == dm_id).order_by(Message.id.desc()).limit(limit)
     if before is not None:
         query = query.where(Message.id < before)
     if after is not None:
