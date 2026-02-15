@@ -4,7 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db
 from vox.auth.service import authenticate, create_session, create_user, get_user_role_ids
-from vox.db.models import TOTPSecret, User, WebAuthnCredential, RecoveryCode
+from sqlalchemy import func
+
+from vox.db.models import Role, TOTPSecret, User, WebAuthnCredential, RecoveryCode, role_members
 from vox.models.auth import (
     LoginRequest,
     LoginResponse,
@@ -13,6 +15,7 @@ from vox.models.auth import (
     RegisterRequest,
     RegisterResponse,
 )
+from vox.permissions import ADMINISTRATOR, EVERYONE_DEFAULTS
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -24,7 +27,23 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)) ->
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail={"error": {"code": "AUTH_FAILED", "message": "Username already taken."}})
 
+    # Ensure @everyone base role exists (position=0)
+    everyone = (await db.execute(select(Role).where(Role.position == 0))).scalar_one_or_none()
+    first_user = everyone is None
+    if first_user:
+        everyone = Role(name="@everyone", position=0, permissions=EVERYONE_DEFAULTS)
+        db.add(everyone)
+        await db.flush()
+
     user, token = await create_user(db, body.username, body.password, body.display_name)
+
+    # First registered user is the server owner — grant ADMINISTRATOR
+    if first_user:
+        admin_role = Role(name="Admin", position=1, permissions=ADMINISTRATOR)
+        db.add(admin_role)
+        await db.flush()
+        await db.execute(role_members.insert().values(role_id=admin_role.id, user_id=user.id))
+
     await db.commit()
 
     return RegisterResponse(user_id=user.id, token=token)

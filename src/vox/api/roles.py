@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vox.api.deps import get_current_user, get_db
+from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import PermissionOverride, Role, User, role_members
+from vox.permissions import MANAGE_ROLES
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.roles import (
@@ -32,9 +33,8 @@ async def list_roles(
 async def create_role(
     body: CreateRoleRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_ROLES),
 ) -> RoleResponse:
-    # TODO: check MANAGE_ROLES permission
     role = Role(name=body.name, color=body.color, permissions=body.permissions, position=body.position)
     db.add(role)
     await db.flush()
@@ -48,9 +48,8 @@ async def update_role(
     role_id: int,
     body: UpdateRoleRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_ROLES),
 ) -> RoleResponse:
-    # TODO: check MANAGE_ROLES permission
     result = await db.execute(select(Role).where(Role.id == role_id))
     role = result.scalar_one_or_none()
     if role is None:
@@ -78,9 +77,8 @@ async def update_role(
 async def delete_role(
     role_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_ROLES),
 ):
-    # TODO: check MANAGE_ROLES permission
     result = await db.execute(select(Role).where(Role.id == role_id))
     role = result.scalar_one_or_none()
     if role is None:
@@ -95,9 +93,8 @@ async def assign_role(
     user_id: int,
     role_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_ROLES),
 ):
-    # TODO: check MANAGE_ROLES permission
     await db.execute(role_members.insert().values(role_id=role_id, user_id=user_id))
     await db.commit()
 
@@ -107,9 +104,8 @@ async def revoke_role(
     user_id: int,
     role_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_ROLES),
 ):
-    # TODO: check MANAGE_ROLES permission
     await db.execute(delete(role_members).where(role_members.c.role_id == role_id, role_members.c.user_id == user_id))
     await db.commit()
 
@@ -123,9 +119,8 @@ async def set_feed_permission_override(
     target_id: int,
     body: PermissionOverrideRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_ROLES),
 ):
-    # TODO: check MANAGE_ROLES permission
     result = await db.execute(
         select(PermissionOverride).where(
             PermissionOverride.space_type == "feed",

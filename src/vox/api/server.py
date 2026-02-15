@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vox.api.deps import get_current_user, get_db
+from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import Category, Config, Feed, PermissionOverride, Room, User
+from vox.permissions import MANAGE_SERVER
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.server import (
@@ -51,9 +52,8 @@ async def get_server_info(
 async def update_server(
     body: UpdateServerRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_SERVER),
 ):
-    # TODO: check MANAGE_SERVER permission
     changed = {}
     if body.name is not None:
         await _set_config(db, "server_name", body.name)

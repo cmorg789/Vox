@@ -4,9 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vox.api.deps import get_current_user, get_db
+from vox.api.deps import get_current_user, get_db, require_permission
 from vox.auth.service import get_user_role_ids
 from vox.db.models import Ban, Invite, User
+from vox.permissions import BAN_MEMBERS, KICK_MEMBERS
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.members import (
@@ -93,9 +94,8 @@ async def update_member(
 async def kick_member(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(KICK_MEMBERS),
 ):
-    # TODO: check KICK_MEMBERS permission
     result = await db.execute(select(User).where(User.id == user_id))
     target = result.scalar_one_or_none()
     if target is None:
@@ -112,9 +112,8 @@ async def ban_member(
     user_id: int,
     body: BanRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(BAN_MEMBERS),
 ) -> BanResponse:
-    # TODO: check BAN_MEMBERS permission
     result = await db.execute(select(User).where(User.id == user_id))
     target = result.scalar_one_or_none()
     if target is None:
@@ -131,9 +130,8 @@ async def ban_member(
 async def unban_member(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(BAN_MEMBERS),
 ):
-    # TODO: check BAN_MEMBERS permission
     await db.execute(delete(Ban).where(Ban.user_id == user_id))
     await db.commit()
     await dispatch(gw.member_unban(user_id=user_id))
@@ -142,9 +140,8 @@ async def unban_member(
 @router.get("/api/v1/bans")
 async def list_bans(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(BAN_MEMBERS),
 ):
-    # TODO: check BAN_MEMBERS permission
     result = await db.execute(select(Ban))
     bans = result.scalars().all()
     items = []

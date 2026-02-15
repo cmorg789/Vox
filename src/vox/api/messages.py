@@ -4,8 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vox.api.deps import get_current_user, get_db
+from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import Message, Pin, Reaction, User
+from vox.permissions import MANAGE_MESSAGES, READ_HISTORY, SEND_IN_THREADS, SEND_MESSAGES, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.messages import (
@@ -61,9 +62,8 @@ async def get_feed_messages(
     before: int | None = None,
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(READ_HISTORY, space_type="feed", space_id_param="feed_id"),
 ) -> MessageListResponse:
-    # TODO: check READ_HISTORY permission
     query = select(Message).where(Message.feed_id == feed_id, Message.thread_id == None).order_by(Message.id.desc()).limit(limit)
     if before is not None:
         query = query.where(Message.id < before)
@@ -78,9 +78,8 @@ async def send_feed_message(
     feed_id: int,
     body: SendMessageRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = require_permission(SEND_MESSAGES, space_type="feed", space_id_param="feed_id"),
 ) -> SendMessageResponse:
-    # TODO: check SEND_MESSAGES permission
     msg_id = _snowflake()
     ts = int(time.time() * 1000)
     msg = Message(
@@ -129,10 +128,11 @@ async def delete_feed_message(
     msg = result.scalar_one_or_none()
     if msg is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "MESSAGE_NOT_FOUND", "message": "Message does not exist."}})
-    # Author or MANAGE_MESSAGES permission can delete
-    # TODO: check MANAGE_MESSAGES permission for non-authors
+    # Author can always delete own messages; others need MANAGE_MESSAGES
     if msg.author_id != user.id:
-        raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Insufficient permissions."}})
+        resolved = await resolve_permissions(db, user.id, space_type="feed", space_id=feed_id)
+        if not has_permission(resolved, MANAGE_MESSAGES):
+            raise HTTPException(status_code=403, detail={"error": {"code": "MISSING_PERMISSIONS", "message": "You lack the required permissions."}})
     await db.delete(msg)
     await db.commit()
     await dispatch(gw.message_delete(msg_id=msg_id, feed_id=feed_id))
@@ -143,9 +143,8 @@ async def bulk_delete_messages(
     feed_id: int,
     body: BulkDeleteRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_MESSAGES, space_type="feed", space_id_param="feed_id"),
 ):
-    # TODO: check MANAGE_MESSAGES permission
     await db.execute(delete(Message).where(Message.id.in_(body.msg_ids), Message.feed_id == feed_id))
     await db.commit()
     await dispatch(gw.message_bulk_delete(feed_id=feed_id, msg_ids=body.msg_ids))
@@ -178,9 +177,8 @@ async def send_thread_message(
     thread_id: int,
     body: SendMessageRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = require_permission(SEND_IN_THREADS, space_type="feed", space_id_param="feed_id"),
 ) -> SendMessageResponse:
-    # TODO: check SEND_IN_THREADS permission
     msg_id = _snowflake()
     ts = int(time.time() * 1000)
     msg = Message(

@@ -12,7 +12,8 @@ async def test_create_and_list_roles(client):
 
     r = await client.get("/api/v1/roles", headers=h)
     assert r.status_code == 200
-    assert len(r.json()["roles"]) == 1
+    names = [role["name"] for role in r.json()["roles"]]
+    assert "Admin" in names
 
 
 async def test_update_role(client):
@@ -35,7 +36,8 @@ async def test_delete_role(client):
     assert r.status_code == 204
 
     r = await client.get("/api/v1/roles", headers=h)
-    assert len(r.json()["roles"]) == 0
+    names = [role["name"] for role in r.json()["roles"]]
+    assert "Temp" not in names
 
 
 async def test_assign_and_revoke_role(client):

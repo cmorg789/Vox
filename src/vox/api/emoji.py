@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vox.api.deps import get_current_user, get_db
+from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import Emoji, Sticker, User
+from vox.permissions import MANAGE_EMOJI
 from vox.models.emoji import EmojiResponse, StickerResponse
 
 router = APIRouter(tags=["emoji"])
@@ -24,9 +25,8 @@ async def list_emoji(
 async def create_emoji(
     name: str,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = require_permission(MANAGE_EMOJI),
 ) -> EmojiResponse:
-    # TODO: check MANAGE_EMOJI permission, handle multipart file upload
     emoji = Emoji(name=name, creator_id=user.id, image="")  # image set via file upload
     db.add(emoji)
     await db.flush()
@@ -38,9 +38,8 @@ async def create_emoji(
 async def delete_emoji(
     emoji_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_EMOJI),
 ):
-    # TODO: check MANAGE_EMOJI permission
     result = await db.execute(select(Emoji).where(Emoji.id == emoji_id))
     emoji = result.scalar_one_or_none()
     if emoji is None:
@@ -64,9 +63,8 @@ async def list_stickers(
 async def create_sticker(
     name: str,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = require_permission(MANAGE_EMOJI),
 ) -> StickerResponse:
-    # TODO: check MANAGE_EMOJI permission, handle multipart file upload
     sticker = Sticker(name=name, creator_id=user.id, image="")
     db.add(sticker)
     await db.flush()
@@ -78,9 +76,8 @@ async def create_sticker(
 async def delete_sticker(
     sticker_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_EMOJI),
 ):
-    # TODO: check MANAGE_EMOJI permission
     result = await db.execute(select(Sticker).where(Sticker.id == sticker_id))
     sticker = result.scalar_one_or_none()
     if sticker is None:

@@ -6,9 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vox.api.deps import get_current_user, get_db
+from vox.api.deps import get_current_user, get_db, require_permission
 from vox.api.messages import _snowflake
 from vox.db.models import Message, User, Webhook
+from vox.permissions import MANAGE_WEBHOOKS
 from vox.models.bots import CreateWebhookRequest, ExecuteWebhookRequest, WebhookResponse
 
 router = APIRouter(tags=["webhooks"])
@@ -19,9 +20,8 @@ async def create_webhook(
     feed_id: int,
     body: CreateWebhookRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_WEBHOOKS),
 ) -> WebhookResponse:
-    # TODO: check MANAGE_WEBHOOKS permission
     token = "whk_" + secrets.token_urlsafe(32)
     wh = Webhook(feed_id=feed_id, name=body.name, avatar=body.avatar, token=token, created_at=datetime.now(timezone.utc))
     db.add(wh)
@@ -45,9 +45,8 @@ async def update_webhook(
     webhook_id: int,
     body: CreateWebhookRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_WEBHOOKS),
 ) -> WebhookResponse:
-    # TODO: check MANAGE_WEBHOOKS permission
     result = await db.execute(select(Webhook).where(Webhook.id == webhook_id))
     wh = result.scalar_one_or_none()
     if wh is None:
@@ -63,9 +62,8 @@ async def update_webhook(
 async def delete_webhook(
     webhook_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_WEBHOOKS),
 ):
-    # TODO: check MANAGE_WEBHOOKS permission
     result = await db.execute(select(Webhook).where(Webhook.id == webhook_id))
     wh = result.scalar_one_or_none()
     if wh is None:

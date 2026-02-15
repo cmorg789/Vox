@@ -37,7 +37,7 @@ async def test_login(client):
     assert data["token"].startswith("vox_sess_")
     assert data["user_id"] == 1
     assert data["display_name"] == "Alice"
-    assert data["roles"] == []
+    assert isinstance(data["roles"], list)
 
 
 async def test_login_wrong_password(client):

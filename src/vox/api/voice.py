@@ -3,8 +3,9 @@ import secrets
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vox.api.deps import get_current_user, get_db
+from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import User
+from vox.permissions import CONNECT, MOVE_MEMBERS, STAGE_MODERATOR
 from vox.models.voice import (
     StageInviteRequest,
     StageInviteResponseRequest,
@@ -24,9 +25,8 @@ async def join_voice(
     room_id: int,
     body: VoiceJoinRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = require_permission(CONNECT, space_type="room", space_id_param="room_id"),
 ) -> VoiceJoinResponse:
-    # TODO: check CONNECT permission, track voice state, integrate with SFU
     media_token = "media_" + secrets.token_urlsafe(32)
     return VoiceJoinResponse(media_url="quic://localhost:4443", media_token=media_token, members=[])
 
@@ -46,9 +46,8 @@ async def kick_from_voice(
     room_id: int,
     body: VoiceKickRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MOVE_MEMBERS, space_type="room", space_id_param="room_id"),
 ):
-    # TODO: check MOVE_MEMBERS/MUTE_MEMBERS permission
     pass
 
 
@@ -57,9 +56,8 @@ async def move_to_room(
     room_id: int,
     body: VoiceMoveRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MOVE_MEMBERS, space_type="room", space_id_param="room_id"),
 ):
-    # TODO: check MOVE_MEMBERS permission
     pass
 
 
@@ -80,9 +78,8 @@ async def stage_invite_to_speak(
     room_id: int,
     body: StageInviteRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(STAGE_MODERATOR, space_type="room", space_id_param="room_id"),
 ):
-    # TODO: check STAGE_MODERATOR permission
     pass
 
 
@@ -101,9 +98,8 @@ async def stage_revoke_speaker(
     room_id: int,
     body: StageRevokeRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(STAGE_MODERATOR, space_type="room", space_id_param="room_id"),
 ):
-    # TODO: check STAGE_MODERATOR permission
     pass
 
 

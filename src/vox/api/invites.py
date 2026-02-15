@@ -5,8 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vox.api.deps import get_current_user, get_db
+from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import Config, Invite, User
+from vox.permissions import CREATE_INVITES
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.invites import CreateInviteRequest, InvitePreviewResponse, InviteResponse
@@ -18,9 +19,8 @@ router = APIRouter(prefix="/api/v1/invites", tags=["invites"])
 async def create_invite(
     body: CreateInviteRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = require_permission(CREATE_INVITES),
 ) -> InviteResponse:
-    # TODO: check CREATE_INVITES permission
     code = secrets.token_urlsafe(8)
     expires_at = None
     if body.max_age is not None:

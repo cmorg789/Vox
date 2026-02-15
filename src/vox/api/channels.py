@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vox.api.deps import get_current_user, get_db
+from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import Category, Feed, Room, Thread, User, feed_subscribers, thread_subscribers
+from vox.permissions import CREATE_THREADS, MANAGE_SPACES, MANAGE_THREADS
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.channels import (
@@ -43,9 +44,8 @@ async def get_feed(
 async def create_feed(
     body: CreateFeedRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_SPACES),
 ) -> FeedResponse:
-    # TODO: check MANAGE_SPACES permission
     max_pos = (await db.execute(select(Feed.position).order_by(Feed.position.desc()).limit(1))).scalar() or 0
     feed = Feed(name=body.name, type=body.type, category_id=body.category_id, position=max_pos + 1)
     db.add(feed)
@@ -60,9 +60,8 @@ async def update_feed(
     feed_id: int,
     body: UpdateFeedRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_SPACES),
 ) -> FeedResponse:
-    # TODO: check MANAGE_SPACES permission
     result = await db.execute(select(Feed).where(Feed.id == feed_id))
     feed = result.scalar_one_or_none()
     if feed is None:
@@ -84,9 +83,8 @@ async def update_feed(
 async def delete_feed(
     feed_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_SPACES),
 ):
-    # TODO: check MANAGE_SPACES permission
     result = await db.execute(select(Feed).where(Feed.id == feed_id))
     feed = result.scalar_one_or_none()
     if feed is None:
@@ -102,9 +100,8 @@ async def delete_feed(
 async def create_room(
     body: CreateRoomRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_SPACES),
 ) -> RoomResponse:
-    # TODO: check MANAGE_SPACES permission
     max_pos = (await db.execute(select(Room.position).order_by(Room.position.desc()).limit(1))).scalar() or 0
     room = Room(name=body.name, type=body.type, category_id=body.category_id, position=max_pos + 1)
     db.add(room)
@@ -119,9 +116,8 @@ async def update_room(
     room_id: int,
     body: UpdateRoomRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_SPACES),
 ) -> RoomResponse:
-    # TODO: check MANAGE_SPACES permission
     result = await db.execute(select(Room).where(Room.id == room_id))
     room = result.scalar_one_or_none()
     if room is None:
@@ -140,9 +136,8 @@ async def update_room(
 async def delete_room(
     room_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_SPACES),
 ):
-    # TODO: check MANAGE_SPACES permission
     result = await db.execute(select(Room).where(Room.id == room_id))
     room = result.scalar_one_or_none()
     if room is None:
@@ -158,9 +153,8 @@ async def delete_room(
 async def create_category(
     body: CreateCategoryRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_SPACES),
 ) -> CategoryResponse:
-    # TODO: check MANAGE_SPACES permission
     cat = Category(name=body.name, position=body.position)
     db.add(cat)
     await db.flush()
@@ -174,9 +168,8 @@ async def update_category(
     category_id: int,
     body: UpdateCategoryRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_SPACES),
 ) -> CategoryResponse:
-    # TODO: check MANAGE_SPACES permission
     result = await db.execute(select(Category).where(Category.id == category_id))
     cat = result.scalar_one_or_none()
     if cat is None:
@@ -198,9 +191,8 @@ async def update_category(
 async def delete_category(
     category_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_SPACES),
 ):
-    # TODO: check MANAGE_SPACES permission
     result = await db.execute(select(Category).where(Category.id == category_id))
     cat = result.scalar_one_or_none()
     if cat is None:
@@ -217,9 +209,8 @@ async def create_thread(
     feed_id: int,
     body: CreateThreadRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(CREATE_THREADS, space_type="feed", space_id_param="feed_id"),
 ) -> ThreadResponse:
-    # TODO: check CREATE_THREADS permission
     thread = Thread(name=body.name, feed_id=feed_id, parent_msg_id=body.parent_msg_id)
     db.add(thread)
     await db.flush()
@@ -259,9 +250,8 @@ async def update_thread(
 async def delete_thread(
     thread_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_THREADS),
 ):
-    # TODO: check MANAGE_THREADS permission
     result = await db.execute(select(Thread).where(Thread.id == thread_id))
     thread = result.scalar_one_or_none()
     if thread is None:
