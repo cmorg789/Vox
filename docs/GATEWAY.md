@@ -92,15 +92,22 @@ All events carry a `seq` field for resume tracking.
 | `role_create` | Role created |
 | `role_update` | Role modified |
 | `role_delete` | Role deleted |
+| `role_assign` | Role assigned to user |
+| `role_revoke` | Role removed from user |
 | `server_update` | Server settings changed |
 | `invite_create` | Invite created |
 | `invite_delete` | Invite deleted |
 | `presence_update` | User presence changed |
 | `typing_start` | User started typing |
+| `friend_request` | Friend added |
+| `friend_remove` | Friend removed |
+| `block_add` | User blocked |
+| `block_remove` | User unblocked |
 | `voice_state_update` | Voice state changed |
 | `voice_codec_neg` | Codec negotiation |
 | `stage_request` | User requested to speak |
 | `stage_invite` | User invited to speak |
+| `stage_invite_decline` | User declined stage invite |
 | `stage_revoke` | Speaker revoked |
 | `stage_topic_update` | Stage topic changed |
 | `dm_create` | New DM opened |
@@ -119,6 +126,8 @@ All events carry a `seq` field for resume tracking.
 | `cpace_new_device_key` | Encrypted new device public key |
 | `key_reset_notify` | User's key changed |
 | `media_token_refresh` | New media token before expiry |
+| `sticker_create` | Sticker created |
+| `sticker_delete` | Sticker deleted |
 | `interaction_create` | User triggered bot interaction |
 
 ## 4. Connection Flow
@@ -430,9 +439,13 @@ Message events are used for both feed messages and DM messages. Each event conta
 | `role_create` | Role object |
 | `role_update` | `role_id` + changed fields |
 | `role_delete` | `role_id` |
+| `role_assign` | `role_id`, `user_id` |
+| `role_revoke` | `role_id`, `user_id` |
 | `server_update` | Changed fields |
 | `invite_create` | Invite object |
 | `invite_delete` | `code` |
+| `sticker_create` | `sticker_id`, `name`, `creator_id` |
+| `sticker_delete` | `sticker_id` |
 
 ### Presence Events
 
@@ -450,6 +463,7 @@ Message events are used for both feed messages and DM messages. Each event conta
 | `stage_request` | `room_id`, `user_id` |
 | `stage_invite` | `room_id`, `user_id` |
 | `stage_revoke` | `room_id`, `user_id` |
+| `stage_invite_decline` | `room_id`, `user_id` |
 | `stage_topic_update` | `room_id`, `topic` |
 | `media_token_refresh` | `room_id`, `media_token` |
 
@@ -462,6 +476,15 @@ Message events are used for both feed messages and DM messages. Each event conta
 | `dm_recipient_add` | `dm_id`, `user_id` |
 | `dm_recipient_remove` | `dm_id`, `user_id` |
 | `dm_read_notify` | `dm_id`, `user_id`, `up_to_msg_id` |
+
+### User Relationship Events
+
+| Event | Key Fields |
+|---|---|
+| `friend_request` | `user_id`, `target_id` |
+| `friend_remove` | `user_id`, `target_id` |
+| `block_add` | `user_id`, `target_id` |
+| `block_remove` | `user_id`, `target_id` |
 
 ### E2E Encryption Events
 

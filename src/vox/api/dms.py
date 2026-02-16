@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from vox.api.deps import get_current_user, get_db
 from vox.api.messages import _handle_slash_command, _msg_response, _snowflake
-from vox.db.models import DM, DMReadState, DMSettings, File, Message, User, dm_participants, message_attachments
+from vox.db.models import DM, DMReadState, DMSettings, File, Message, Reaction, User, dm_participants, message_attachments
 from vox.limits import limits
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
@@ -91,11 +91,11 @@ async def open_dm(
         return DMResponse(dm_id=dm.id, participant_ids=pids, is_group=False)
 
     elif body.recipient_ids is not None:
-        # Group DM
+        # Group DM - deduplicate recipient list
         dm = DM(is_group=True, name=body.name, created_at=datetime.now(timezone.utc))
         db.add(dm)
         await db.flush()
-        all_ids = [user.id] + body.recipient_ids
+        all_ids = list(dict.fromkeys([user.id] + body.recipient_ids))
         for uid in all_ids:
             await db.execute(dm_participants.insert().values(dm_id=dm.id, user_id=uid))
         await db.commit()
@@ -173,8 +173,11 @@ async def add_dm_recipient(
     dm_id: int,
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    caller: User = Depends(get_current_user),
 ):
+    pids = await _dm_participant_ids(db, dm_id)
+    if caller.id not in pids:
+        raise HTTPException(status_code=403, detail={"error": {"code": "NOT_DM_PARTICIPANT", "message": "You are not a participant in this DM."}})
     await db.execute(dm_participants.insert().values(dm_id=dm_id, user_id=user_id))
     await db.commit()
     pids = await _dm_participant_ids(db, dm_id)
@@ -186,9 +189,11 @@ async def remove_dm_recipient(
     dm_id: int,
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    caller: User = Depends(get_current_user),
 ):
     pids = await _dm_participant_ids(db, dm_id)
+    if caller.id not in pids:
+        raise HTTPException(status_code=403, detail={"error": {"code": "NOT_DM_PARTICIPANT", "message": "You are not a participant in this DM."}})
     await db.execute(delete(dm_participants).where(dm_participants.c.dm_id == dm_id, dm_participants.c.user_id == user_id))
     await db.commit()
     await dispatch(gw.dm_recipient_remove(dm_id=dm_id, user_id=user_id), user_ids=pids)
@@ -321,6 +326,44 @@ async def delete_dm_message(
     await db.commit()
     pids = await _dm_participant_ids(db, dm_id)
     await dispatch(gw.message_delete(msg_id=msg_id, dm_id=dm_id), user_ids=pids)
+
+
+# --- DM Reactions ---
+
+@router.put("/api/v1/dms/{dm_id}/messages/{msg_id}/reactions/{emoji}/@me", status_code=204)
+async def add_dm_reaction(
+    dm_id: int,
+    msg_id: int,
+    emoji: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+    pids = await _dm_participant_ids(db, dm_id)
+    if user.id not in pids:
+        raise HTTPException(status_code=403, detail={"error": {"code": "NOT_DM_PARTICIPANT", "message": "You are not a participant in this DM."}})
+    stmt = sqlite_insert(Reaction).values(msg_id=msg_id, user_id=user.id, emoji=emoji).on_conflict_do_nothing()
+    await db.execute(stmt)
+    await db.commit()
+    await dispatch(gw.message_reaction_add(msg_id=msg_id, user_id=user.id, emoji=emoji), user_ids=pids)
+
+
+@router.delete("/api/v1/dms/{dm_id}/messages/{msg_id}/reactions/{emoji}/@me", status_code=204)
+async def remove_dm_reaction(
+    dm_id: int,
+    msg_id: int,
+    emoji: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    pids = await _dm_participant_ids(db, dm_id)
+    if user.id not in pids:
+        raise HTTPException(status_code=403, detail={"error": {"code": "NOT_DM_PARTICIPANT", "message": "You are not a participant in this DM."}})
+    await db.execute(
+        delete(Reaction).where(Reaction.msg_id == msg_id, Reaction.user_id == user.id, Reaction.emoji == emoji)
+    )
+    await db.commit()
+    await dispatch(gw.message_reaction_remove(msg_id=msg_id, user_id=user.id, emoji=emoji), user_ids=pids)
 
 
 # --- DM Settings ---
