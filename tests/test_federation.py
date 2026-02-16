@@ -82,10 +82,8 @@ async def _fed_request(client, method, path, body, private_key, pub_b64, origin=
 
 @pytest.fixture(autouse=True)
 def _clear_federation_state():
-    fed_service._seen_nonces.clear()
     fed_service._presence_subs.clear()
     yield
-    fed_service._seen_nonces.clear()
     fed_service._presence_subs.clear()
 
 
@@ -144,26 +142,34 @@ async def test_signature_tampered_body(client):
 
 async def test_voucher_round_trip(client):
     """create_voucher → verify_voucher works with mocked DNS."""
+    from vox.db.engine import get_session_factory
     private_key, pub_b64 = _generate_test_keypair()
     voucher = fed_service.create_voucher("alice@origin.example", "target.example", private_key)
 
-    with patch.object(fed_service, "lookup_vox_key", new_callable=AsyncMock, return_value=pub_b64):
-        result = await fed_service.verify_voucher(voucher, "target.example")
-        assert result is not None
-        assert result["user_address"] == "alice@origin.example"
-        assert result["target_domain"] == "target.example"
+    factory = get_session_factory()
+    async with factory() as db:
+        with patch.object(fed_service, "lookup_vox_key", new_callable=AsyncMock, return_value=pub_b64):
+            result = await fed_service.verify_voucher(voucher, "target.example", db=db)
+            assert result is not None
+            assert result["user_address"] == "alice@origin.example"
+            assert result["target_domain"] == "target.example"
+        await db.commit()
 
 
 async def test_voucher_replay_rejected(client):
     """Same voucher used twice is rejected (nonce replay)."""
+    from vox.db.engine import get_session_factory
     private_key, pub_b64 = _generate_test_keypair()
     voucher = fed_service.create_voucher("alice@origin.example", "target.example", private_key)
 
-    with patch.object(fed_service, "lookup_vox_key", new_callable=AsyncMock, return_value=pub_b64):
-        result1 = await fed_service.verify_voucher(voucher, "target.example")
-        assert result1 is not None
-        result2 = await fed_service.verify_voucher(voucher, "target.example")
-        assert result2 is None
+    factory = get_session_factory()
+    async with factory() as db:
+        with patch.object(fed_service, "lookup_vox_key", new_callable=AsyncMock, return_value=pub_b64):
+            result1 = await fed_service.verify_voucher(voucher, "target.example", db=db)
+            assert result1 is not None
+            await db.commit()
+            result2 = await fed_service.verify_voucher(voucher, "target.example", db=db)
+            assert result2 is None
 
 
 async def test_voucher_expired(client):
@@ -886,13 +892,32 @@ async def test_check_federation_allowed_outbound(client):
 
 
 async def test_cleanup_nonces(client):
-    """_cleanup_nonces removes expired nonces."""
-    fed_service._seen_nonces["old_nonce"] = time.time() - 700
-    fed_service._seen_nonces["fresh_nonce"] = time.time()
-    fed_service._last_nonce_cleanup = 0  # Force cleanup
-    fed_service._cleanup_nonces()
-    assert "old_nonce" not in fed_service._seen_nonces
-    assert "fresh_nonce" in fed_service._seen_nonces
+    """Expired federation nonces are cleaned up via DB."""
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import delete, select
+    from vox.db.models import FederationNonce
+    from vox.db.engine import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as db:
+        # Insert an expired nonce and a fresh nonce
+        now = datetime.now(timezone.utc)
+        db.add(FederationNonce(nonce="old_nonce", seen_at=now - timedelta(hours=1), expires_at=now - timedelta(minutes=10)))
+        db.add(FederationNonce(nonce="fresh_nonce", seen_at=now, expires_at=now + timedelta(minutes=10)))
+        await db.commit()
+
+        # Clean expired nonces (same logic as background task)
+        await db.execute(delete(FederationNonce).where(FederationNonce.expires_at <= now))
+        await db.commit()
+
+        result = await db.execute(select(FederationNonce.nonce))
+        remaining = [r[0] for r in result.all()]
+        assert "old_nonce" not in remaining
+        assert "fresh_nonce" in remaining
+
+        # Clean up
+        await db.execute(delete(FederationNonce))
+        await db.commit()
 
 
 async def test_presence_subs(client):

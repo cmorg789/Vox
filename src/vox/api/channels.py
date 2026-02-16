@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
@@ -44,12 +45,14 @@ async def get_feed(
 async def create_feed(
     body: CreateFeedRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = require_permission(MANAGE_SPACES),
+    actor: User = require_permission(MANAGE_SPACES),
 ) -> FeedResponse:
     max_pos = (await db.execute(select(Feed.position).order_by(Feed.position.desc()).limit(1))).scalar() or 0
     feed = Feed(name=body.name, type=body.type, category_id=body.category_id, position=max_pos + 1)
     db.add(feed)
     await db.flush()
+    from vox.audit import write_audit
+    await write_audit(db, "feed.create", actor_id=actor.id, target_id=feed.id)
     await db.commit()
     await dispatch(gw.feed_create(feed_id=feed.id, name=feed.name, type=feed.type, category_id=feed.category_id))
     return FeedResponse(feed_id=feed.id, name=feed.name, type=feed.type, topic=feed.topic, category_id=feed.category_id)
@@ -83,12 +86,14 @@ async def update_feed(
 async def delete_feed(
     feed_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = require_permission(MANAGE_SPACES),
+    actor: User = require_permission(MANAGE_SPACES),
 ):
     result = await db.execute(select(Feed).where(Feed.id == feed_id))
     feed = result.scalar_one_or_none()
     if feed is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Feed does not exist."}})
+    from vox.audit import write_audit
+    await write_audit(db, "feed.delete", actor_id=actor.id, target_id=feed_id)
     await db.delete(feed)
     await db.commit()
     await dispatch(gw.feed_delete(feed_id=feed_id))
@@ -100,12 +105,14 @@ async def delete_feed(
 async def create_room(
     body: CreateRoomRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = require_permission(MANAGE_SPACES),
+    actor: User = require_permission(MANAGE_SPACES),
 ) -> RoomResponse:
     max_pos = (await db.execute(select(Room.position).order_by(Room.position.desc()).limit(1))).scalar() or 0
     room = Room(name=body.name, type=body.type, category_id=body.category_id, position=max_pos + 1)
     db.add(room)
     await db.flush()
+    from vox.audit import write_audit
+    await write_audit(db, "room.create", actor_id=actor.id, target_id=room.id)
     await db.commit()
     await dispatch(gw.room_create(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id))
     return RoomResponse(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id)
@@ -136,12 +143,14 @@ async def update_room(
 async def delete_room(
     room_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = require_permission(MANAGE_SPACES),
+    actor: User = require_permission(MANAGE_SPACES),
 ):
     result = await db.execute(select(Room).where(Room.id == room_id))
     room = result.scalar_one_or_none()
     if room is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Room does not exist."}})
+    from vox.audit import write_audit
+    await write_audit(db, "room.delete", actor_id=actor.id, target_id=room_id)
     await db.delete(room)
     await db.commit()
     await dispatch(gw.room_delete(room_id=room_id))
@@ -224,7 +233,7 @@ async def update_thread(
     thread_id: int,
     body: UpdateThreadRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_THREADS),
 ) -> ThreadResponse:
     result = await db.execute(select(Thread).where(Thread.id == thread_id))
     thread = result.scalar_one_or_none()
@@ -267,7 +276,7 @@ async def subscribe_thread(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    await db.execute(thread_subscribers.insert().values(thread_id=thread_id, user_id=user.id))
+    await db.execute(sqlite_insert(thread_subscribers).values(thread_id=thread_id, user_id=user.id).on_conflict_do_nothing())
     await db.commit()
 
 

@@ -328,7 +328,7 @@ async def confirm_2fa_setup(
 
         challenge_id = body.attestation.get("challenge_id", "")
         credential_id, public_key = await verify_webauthn_registration(
-            challenge_id, body.attestation
+            db, challenge_id, body.attestation
         )
 
         cred = WebAuthnCredential(
@@ -363,6 +363,7 @@ async def confirm_2fa_setup(
 @router.delete("/2fa")
 async def remove_2fa(
     body: MFARemoveRequest,
+    authorization: str = Header(),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -403,6 +404,21 @@ async def remove_2fa(
     )
     if totp_left.scalar_one_or_none() is None and webauthn_left.first() is None:
         await db.execute(delete(RecoveryCode).where(RecoveryCode.user_id == user.id))
+
+    # Invalidate all other sessions for this user (keep current session)
+    from vox.db.models import Session as DBSession
+    current_token = None
+    if authorization.startswith("Bearer "):
+        current_token = authorization[7:]
+    elif authorization.startswith("Bot "):
+        current_token = authorization[4:]
+    if current_token:
+        await db.execute(
+            delete(DBSession).where(
+                DBSession.user_id == user.id,
+                DBSession.token != current_token,
+            )
+        )
 
     await db.commit()
     return {"success": True}
@@ -506,20 +522,23 @@ async def webauthn_login(
     if body.user_handle:
         assertion["response"]["userHandle"] = body.user_handle
 
-    # We need a challenge_id - extract from the credential_id's associated challenge
-    # The client should include this; for now we check all active challenges for this user
-    from vox.auth.mfa import _webauthn_challenges
-    challenge_id = None
-    for cid, cdata in _webauthn_challenges.items():
-        if cdata.get("user_id") == user.id and cdata.get("type") == "authentication":
-            challenge_id = cid
-            break
-
-    if challenge_id is None:
+    # Find the most recent pending authentication challenge for this user
+    from vox.db.models import WebAuthnChallenge
+    now = datetime.now(timezone.utc)
+    challenge_result = await db.execute(
+        select(WebAuthnChallenge).where(
+            WebAuthnChallenge.user_id == user.id,
+            WebAuthnChallenge.challenge_type == "authentication",
+            WebAuthnChallenge.expires_at > now,
+        ).order_by(WebAuthnChallenge.expires_at.desc()).limit(1)
+    )
+    challenge_row = challenge_result.scalar_one_or_none()
+    if challenge_row is None:
         raise HTTPException(
             status_code=401,
             detail={"error": {"code": "WEBAUTHN_FAILED", "message": "No pending WebAuthn challenge."}},
         )
+    challenge_id = challenge_row.id
 
     await verify_webauthn_authentication(db, challenge_id, assertion)
 

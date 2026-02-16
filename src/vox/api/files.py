@@ -40,6 +40,7 @@ async def upload_file(
     file_name = name or file.filename or "upload"
     file_mime = mime or file.content_type or "application/octet-stream"
 
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     dest = UPLOAD_DIR / file_id
     dest.write_bytes(content)
 

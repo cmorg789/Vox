@@ -99,7 +99,7 @@ async def respond_to_interaction(
 
     if body.ephemeral:
         # Dispatch message_create only to the invoking user (not stored)
-        msg_id = _snowflake()
+        msg_id = await _snowflake()
         ts = int(time.time() * 1000)
         await dispatch(
             gw.message_create(
@@ -114,7 +114,7 @@ async def respond_to_interaction(
         )
     else:
         # Create a real message in the feed/dm
-        msg_id = _snowflake()
+        msg_id = await _snowflake()
         ts = int(time.time() * 1000)
         msg = Message(
             id=msg_id,

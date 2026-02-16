@@ -721,7 +721,9 @@ async def test_login_2fa_recovery_no_code(client):
 
 async def test_webauthn_registration_options(client):
     """generate_webauthn_registration returns challenge_id and options."""
-    from vox.auth.mfa import generate_webauthn_registration, _webauthn_challenges
+    from vox.auth.mfa import generate_webauthn_registration
+    from vox.db.models import WebAuthnChallenge
+    from sqlalchemy import select
 
     token, user_id = await _register_and_get_token(client)
 
@@ -731,11 +733,14 @@ async def test_webauthn_registration_options(client):
         challenge_id, options = await generate_webauthn_registration(db, user_id, "alice")
         assert challenge_id
         assert "publicKey" in options or "rp" in options or isinstance(options, dict)
-        assert challenge_id in _webauthn_challenges
-        assert _webauthn_challenges[challenge_id]["type"] == "registration"
+        result = await db.execute(select(WebAuthnChallenge).where(WebAuthnChallenge.id == challenge_id))
+        challenge_row = result.scalar_one_or_none()
+        assert challenge_row is not None
+        assert challenge_row.challenge_type == "registration"
 
-    # Clean up
-    _webauthn_challenges.pop(challenge_id, None)
+        # Clean up
+        await db.delete(challenge_row)
+        await db.commit()
 
 
 async def test_webauthn_verify_registration_invalid_challenge(client):
@@ -744,10 +749,13 @@ async def test_webauthn_verify_registration_invalid_challenge(client):
     from fastapi import HTTPException
     import pytest as _pytest
 
-    with _pytest.raises(HTTPException) as exc_info:
-        await verify_webauthn_registration("nonexistent_challenge", {})
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.detail["error"]["code"] == "WEBAUTHN_FAILED"
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        with _pytest.raises(HTTPException) as exc_info:
+            await verify_webauthn_registration(db, "nonexistent_challenge", {})
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail["error"]["code"] == "WEBAUTHN_FAILED"
 
 
 async def test_webauthn_authentication_no_credentials(client):
@@ -785,8 +793,9 @@ async def test_webauthn_verify_authentication_invalid_challenge(client):
 async def test_webauthn_authentication_options(client):
     """generate_webauthn_authentication returns options when credentials exist."""
     from datetime import datetime, timezone
-    from vox.auth.mfa import generate_webauthn_authentication, _webauthn_challenges
-    from vox.db.models import WebAuthnCredential
+    from vox.auth.mfa import generate_webauthn_authentication
+    from vox.db.models import WebAuthnChallenge, WebAuthnCredential
+    from sqlalchemy import select
 
     token, user_id = await _register_and_get_token(client)
 
@@ -807,11 +816,14 @@ async def test_webauthn_authentication_options(client):
         challenge_id, options = await generate_webauthn_authentication(db, user_id)
         assert challenge_id
         assert isinstance(options, dict)
-        assert challenge_id in _webauthn_challenges
-        assert _webauthn_challenges[challenge_id]["type"] == "authentication"
+        result = await db.execute(select(WebAuthnChallenge).where(WebAuthnChallenge.id == challenge_id))
+        challenge_row = result.scalar_one_or_none()
+        assert challenge_row is not None
+        assert challenge_row.challenge_type == "authentication"
 
-    # Clean up
-    _webauthn_challenges.pop(challenge_id, None)
+        # Clean up
+        await db.delete(challenge_row)
+        await db.commit()
 
 
 async def test_validate_mfa_ticket_invalid_prefix(client):

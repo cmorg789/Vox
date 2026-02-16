@@ -69,7 +69,11 @@ async def test_resolve_embed_fallback_title(client):
 async def test_resolve_embed_fetch_failure(client):
     h = await setup(client)
 
-    with patch("vox.api.embeds.httpx.AsyncClient") as mock_client_cls:
+    def fake_getaddrinfo(host, port, *a, **kw):
+        return [(2, 1, 6, '', ('93.184.216.34', 0))]
+
+    with patch("vox.api.embeds.httpx.AsyncClient") as mock_client_cls, \
+         patch("vox.api.embeds.socket.getaddrinfo", fake_getaddrinfo):
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)

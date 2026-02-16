@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db
 from vox.auth.service import get_user_role_ids
 from vox.db.models import User, blocks, friends
-from vox.limits import PAGE_LIMIT_FRIENDS
+from vox.limits import limits
 from vox.gateway import events
 from vox.gateway.dispatch import dispatch
 from vox.models.users import (
@@ -15,6 +16,12 @@ from vox.models.users import (
 )
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
+
+
+@router.get("/{user_id}/presence")
+async def get_user_presence(user_id: int, _: User = Depends(get_current_user)):
+    from vox.gateway.hub import get_hub
+    return get_hub().get_presence(user_id)
 
 
 @router.get("/{user_id}")
@@ -54,7 +61,9 @@ async def block_user(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    await db.execute(blocks.insert().values(user_id=user.id, blocked_id=user_id))
+    if user_id == user.id:
+        raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_TARGET", "message": "You cannot block yourself."}})
+    await db.execute(sqlite_insert(blocks).values(user_id=user.id, blocked_id=user_id).on_conflict_do_nothing())
     await db.commit()
     await dispatch(events.block_add(user_id=user.id, target_id=user_id), user_ids=[user.id, user_id])
 
@@ -72,11 +81,12 @@ async def unblock_user(
 
 @router.get("/@me/friends")
 async def list_friends(
-    limit: int = Query(default=100, ge=1, le=PAGE_LIMIT_FRIENDS),
+    limit: int = Query(default=100, ge=1, le=1000),
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    limit = min(limit, limits.page_limit_friends)
     query = (
         select(User)
         .join(friends, friends.c.friend_id == User.id)
@@ -102,7 +112,9 @@ async def add_friend(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    await db.execute(friends.insert().values(user_id=user.id, friend_id=user_id))
+    if user_id == user.id:
+        raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_TARGET", "message": "You cannot add yourself as a friend."}})
+    await db.execute(sqlite_insert(friends).values(user_id=user.id, friend_id=user_id).on_conflict_do_nothing())
     await db.commit()
     await dispatch(events.friend_request(user_id=user.id, target_id=user_id), user_ids=[user.id, user_id])
 

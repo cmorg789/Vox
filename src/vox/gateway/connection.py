@@ -180,7 +180,13 @@ class Connection:
                     seq=self.seq,
                 )
                 self.hub.save_session(self.session_id, state)
-                self.hub.disconnect(self)
+                await self.hub.disconnect(self)
+                # If no remaining sessions, broadcast offline and clear presence
+                async with self.hub._lock:
+                    has_connections = self.user_id in self.hub.connections
+                if not has_connections:
+                    self.hub.clear_presence(self.user_id)
+                    await self.hub.broadcast(events.presence_update(user_id=self.user_id, status="offline"))
 
     async def _handle_identify(self, data: dict[str, Any], db_factory: Any) -> None:
         token = data.get("token", "")
@@ -202,8 +208,9 @@ class Connection:
 
             # Read server config from DB
             from vox.api.server import _get_config
-            server_name = await _get_config(db, "server_name") or "Vox Server"
-            server_icon = await _get_config(db, "server_icon")
+            from vox.db.models import ConfigKey
+            server_name = await _get_config(db, ConfigKey.SERVER_NAME) or "Vox Server"
+            server_icon = await _get_config(db, ConfigKey.SERVER_ICON)
 
         self.user_id = user.id
         self.session_id = "sess_" + secrets.token_hex(12)
@@ -225,6 +232,17 @@ class Connection:
             protocol_version=protocol_version,
         )
         await self.send_event(ready_event)
+
+        # Set initial presence and broadcast to other users
+        self.hub.set_presence(self.user_id, {"status": "online"})
+        other_ids = [uid for uid in self.hub.connections if uid != self.user_id]
+        if other_ids:
+            await self.hub.broadcast(events.presence_update(user_id=self.user_id, status="online"), user_ids=other_ids)
+
+        # Send current presence snapshot to newly connected client
+        for uid, pdata in self.hub.presence.items():
+            if uid != self.user_id:
+                await self.send_event(events.presence_update(**pdata))
 
     async def _handle_resume(self, data: dict[str, Any], db_factory: Any) -> None:
         token = data.get("token", "")
@@ -312,10 +330,19 @@ class Connection:
                 await dispatch(evt)
 
             elif msg_type == "presence_update":
-                from vox.gateway.dispatch import dispatch
                 status = data.get("status", "online")
-                evt = events.presence_update(user_id=self.user_id, status=status)
-                await dispatch(evt)
+                custom_status = data.get("custom_status")
+                activity = data.get("activity")
+                presence_data: dict[str, Any] = {"status": status}
+                if custom_status is not None:
+                    presence_data["custom_status"] = custom_status
+                if activity is not None:
+                    presence_data["activity"] = activity
+                self.hub.set_presence(self.user_id, presence_data)
+                # If invisible, broadcast offline to others
+                broadcast_status = "offline" if status == "invisible" else status
+                broadcast_data = {**presence_data, "status": broadcast_status}
+                await self.hub.broadcast(events.presence_update(user_id=self.user_id, **broadcast_data))
 
             elif msg_type == "voice_state_update":
                 from vox.gateway.dispatch import dispatch

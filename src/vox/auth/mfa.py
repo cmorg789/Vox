@@ -13,12 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
 from webauthn.helpers.structs import PublicKeyCredentialDescriptor
 
-from vox.db.models import Config, RecoveryCode, Session, WebAuthnCredential
+from vox.db.models import Config, ConfigKey, RecoveryCode, Session, WebAuthnChallenge, WebAuthnCredential
 
 _ph = PasswordHasher()
 
-# In-memory WebAuthn challenge storage (single-process limitation)
-_webauthn_challenges: dict[str, dict] = {}
+_CHALLENGE_TTL_MINUTES = 5
 
 
 # --- TOTP ---
@@ -157,15 +156,60 @@ async def _get_webauthn_config(db: AsyncSession) -> tuple[str, str]:
     """Get WebAuthn RP ID and origin from Config table."""
     rp_id = "localhost"
     origin = "http://localhost:8000"
-    result = await db.execute(select(Config).where(Config.key == "webauthn_rp_id"))
+    result = await db.execute(select(Config).where(Config.key == ConfigKey.WEBAUTHN_RP_ID))
     row = result.scalar_one_or_none()
     if row:
         rp_id = row.value
-    result = await db.execute(select(Config).where(Config.key == "webauthn_origin"))
+    result = await db.execute(select(Config).where(Config.key == ConfigKey.WEBAUTHN_ORIGIN))
     row = result.scalar_one_or_none()
     if row:
         origin = row.value
     return rp_id, origin
+
+
+# --- WebAuthn Challenge DB helpers ---
+
+
+async def _store_challenge(
+    db: AsyncSession,
+    challenge_id: str,
+    user_id: int,
+    challenge_type: str,
+    challenge_data: dict,
+) -> None:
+    """Store a WebAuthn challenge in the database."""
+    row = WebAuthnChallenge(
+        id=challenge_id,
+        user_id=user_id,
+        challenge_type=challenge_type,
+        challenge_data=json.dumps(challenge_data),
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=_CHALLENGE_TTL_MINUTES),
+    )
+    db.add(row)
+    await db.flush()
+
+
+async def _pop_challenge(
+    db: AsyncSession,
+    challenge_id: str,
+    expected_type: str,
+) -> dict | None:
+    """Retrieve and delete a WebAuthn challenge from the database. Returns None if expired/missing."""
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(WebAuthnChallenge).where(
+            WebAuthnChallenge.id == challenge_id,
+            WebAuthnChallenge.challenge_type == expected_type,
+            WebAuthnChallenge.expires_at > now,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    data = json.loads(row.challenge_data)
+    await db.delete(row)
+    await db.flush()
+    return data
 
 
 # --- WebAuthn Registration ---
@@ -199,24 +243,24 @@ async def generate_webauthn_registration(
     challenge_id = secrets.token_urlsafe(16)
     options_json = json.loads(webauthn.options_to_json(options))
 
-    _webauthn_challenges[challenge_id] = {
-        "challenge": options.challenge,
+    await _store_challenge(db, challenge_id, user_id, "registration", {
+        "challenge": bytes_to_base64url(options.challenge),
         "rp_id": rp_id,
         "origin": origin,
-        "type": "registration",
         "user_id": user_id,
-    }
+    })
 
     return challenge_id, options_json
 
 
 async def verify_webauthn_registration(
+    db: AsyncSession,
     challenge_id: str,
     attestation: dict,
 ) -> tuple[str, str]:
     """Verify WebAuthn registration response. Returns (credential_id, public_key)."""
-    challenge_data = _webauthn_challenges.pop(challenge_id, None)
-    if challenge_data is None or challenge_data["type"] != "registration":
+    challenge_data = await _pop_challenge(db, challenge_id, "registration")
+    if challenge_data is None:
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": "WEBAUTHN_FAILED", "message": "Invalid or expired challenge."}},
@@ -225,7 +269,7 @@ async def verify_webauthn_registration(
     try:
         verification = webauthn.verify_registration_response(
             credential=attestation,
-            expected_challenge=challenge_data["challenge"],
+            expected_challenge=base64url_to_bytes(challenge_data["challenge"]),
             expected_rp_id=challenge_data["rp_id"],
             expected_origin=challenge_data["origin"],
         )
@@ -273,13 +317,12 @@ async def generate_webauthn_authentication(
     challenge_id = secrets.token_urlsafe(16)
     options_json = json.loads(webauthn.options_to_json(options))
 
-    _webauthn_challenges[challenge_id] = {
-        "challenge": options.challenge,
+    await _store_challenge(db, challenge_id, user_id, "authentication", {
+        "challenge": bytes_to_base64url(options.challenge),
         "rp_id": rp_id,
         "origin": origin,
-        "type": "authentication",
         "user_id": user_id,
-    }
+    })
 
     return challenge_id, options_json
 
@@ -290,8 +333,8 @@ async def verify_webauthn_authentication(
     assertion: dict,
 ) -> int:
     """Verify WebAuthn authentication response. Returns user_id."""
-    challenge_data = _webauthn_challenges.pop(challenge_id, None)
-    if challenge_data is None or challenge_data["type"] != "authentication":
+    challenge_data = await _pop_challenge(db, challenge_id, "authentication")
+    if challenge_data is None:
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": "WEBAUTHN_FAILED", "message": "Invalid or expired challenge."}},
@@ -313,13 +356,13 @@ async def verify_webauthn_authentication(
         )
 
     try:
-        webauthn.verify_authentication_response(
+        verification = webauthn.verify_authentication_response(
             credential=assertion,
-            expected_challenge=challenge_data["challenge"],
+            expected_challenge=base64url_to_bytes(challenge_data["challenge"]),
             expected_rp_id=challenge_data["rp_id"],
             expected_origin=challenge_data["origin"],
             credential_public_key=base64url_to_bytes(cred.public_key),
-            credential_current_sign_count=0,
+            credential_current_sign_count=cred.sign_count,
         )
     except Exception:
         raise HTTPException(
@@ -327,7 +370,8 @@ async def verify_webauthn_authentication(
             detail={"error": {"code": "WEBAUTHN_FAILED", "message": "WebAuthn authentication failed."}},
         )
 
-    # Update last_used_at
+    # Update sign count and last_used_at
+    cred.sign_count = verification.new_sign_count
     cred.last_used_at = datetime.now(timezone.utc)
     await db.flush()
 

@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives.serialization import (
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vox.db.models import Config, FederationEntry
+from vox.db.models import Config, ConfigKey, FederationEntry, FederationNonce
 
 # ---------------------------------------------------------------------------
 # Config helpers (same pattern as server.py)
@@ -51,8 +51,8 @@ async def _set_config(db: AsyncSession, key: str, value: str) -> None:
 async def get_or_create_keypair(
     db: AsyncSession,
 ) -> tuple[Ed25519PrivateKey, Ed25519PublicKey]:
-    priv_b64 = await _get_config(db, "federation_private_key")
-    pub_b64 = await _get_config(db, "federation_public_key")
+    priv_b64 = await _get_config(db, ConfigKey.FEDERATION_PRIVATE_KEY)
+    pub_b64 = await _get_config(db, ConfigKey.FEDERATION_PUBLIC_KEY)
 
     if priv_b64 and pub_b64:
         priv_bytes = base64.b64decode(priv_b64)
@@ -63,8 +63,8 @@ async def get_or_create_keypair(
     priv_bytes = private_key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
     pub_bytes = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
 
-    await _set_config(db, "federation_private_key", base64.b64encode(priv_bytes).decode())
-    await _set_config(db, "federation_public_key", base64.b64encode(pub_bytes).decode())
+    await _set_config(db, ConfigKey.FEDERATION_PRIVATE_KEY, base64.b64encode(priv_bytes).decode())
+    await _set_config(db, ConfigKey.FEDERATION_PUBLIC_KEY, base64.b64encode(pub_bytes).decode())
     await db.commit()
 
     return private_key, private_key.public_key()
@@ -178,7 +178,7 @@ async def check_federation_allowed(
         return False
 
     if direction == "inbound":
-        policy = await _get_config(db, "federation_policy")
+        policy = await _get_config(db, ConfigKey.FEDERATION_POLICY)
         if policy == "closed":
             return False
         if policy == "allowlist":
@@ -198,29 +198,12 @@ async def check_federation_allowed(
 
 
 async def get_our_domain(db: AsyncSession) -> str | None:
-    return await _get_config(db, "federation_domain")
+    return await _get_config(db, ConfigKey.FEDERATION_DOMAIN)
 
 
 # ---------------------------------------------------------------------------
 # Voucher System
 # ---------------------------------------------------------------------------
-
-_seen_nonces: dict[str, float] = {}
-_NONCE_CLEANUP_INTERVAL = 600  # 10 minutes
-_last_nonce_cleanup: float = 0.0
-
-
-def _cleanup_nonces() -> None:
-    global _last_nonce_cleanup
-    now = time.time()
-    if now - _last_nonce_cleanup < _NONCE_CLEANUP_INTERVAL:
-        return
-    _last_nonce_cleanup = now
-    cutoff = now - 600
-    expired = [k for k, v in _seen_nonces.items() if v < cutoff]
-    for k in expired:
-        del _seen_nonces[k]
-
 
 def create_voucher(
     user_address: str,
@@ -242,7 +225,7 @@ def create_voucher(
     return f"{payload_b64}.{sig}"
 
 
-async def verify_voucher(voucher: str, expected_target: str) -> dict | None:
+async def verify_voucher(voucher: str, expected_target: str, db: AsyncSession | None = None) -> dict | None:
     try:
         parts = voucher.split(".", 1)
         if len(parts) != 2:
@@ -256,14 +239,18 @@ async def verify_voucher(voucher: str, expected_target: str) -> dict | None:
             return None
 
         # Check expiry
-        if time.time() > payload.get("expires_at", 0):
+        now = time.time()
+        if now > payload.get("expires_at", 0):
             return None
 
-        # Check nonce replay
-        _cleanup_nonces()
+        # Check nonce replay via DB
         nonce = payload.get("nonce", "")
-        if nonce in _seen_nonces:
-            return None
+        if db is not None:
+            existing = await db.execute(
+                select(FederationNonce).where(FederationNonce.nonce == nonce)
+            )
+            if existing.scalar_one_or_none() is not None:
+                return None
 
         # Verify signature using origin's public key
         user_address = payload.get("user_address", "")
@@ -276,8 +263,17 @@ async def verify_voucher(voucher: str, expected_target: str) -> dict | None:
         if not verify_signature(payload_bytes, sig_b64, pub_b64):
             return None
 
-        # Mark nonce as seen
-        _seen_nonces[nonce] = time.time()
+        # Mark nonce as seen in DB
+        if db is not None:
+            from datetime import datetime, timedelta, timezone
+            nonce_row = FederationNonce(
+                nonce=nonce,
+                seen_at=datetime.now(timezone.utc),
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+            )
+            db.add(nonce_row)
+            await db.flush()
+
         return payload
 
     except Exception:
@@ -317,6 +313,14 @@ def _get_http_client() -> httpx.AsyncClient:
     if _http_client is None or _http_client.is_closed:
         _http_client = httpx.AsyncClient(timeout=10.0)
     return _http_client
+
+
+async def close_http_client() -> None:
+    """Close the federation HTTP client to prevent resource leaks."""
+    global _http_client
+    if _http_client is not None and not _http_client.is_closed:
+        await _http_client.aclose()
+        _http_client = None
 
 
 async def send_federation_request(

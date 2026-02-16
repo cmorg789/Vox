@@ -182,10 +182,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def _resolve_key(self, request: Request, path: str) -> str:
         ip = request.client.host if request.client else "unknown"
 
-        # Federation endpoints are keyed by X-Vox-Origin header
+        # Federation endpoints are keyed by IP + X-Vox-Origin header
         if path.startswith("/api/v1/federation"):
             origin = request.headers.get("x-vox-origin", ip)
-            return f"fed:{origin}"
+            return f"fed:{ip}:{origin}"
 
         # Webhook execution is always IP-keyed
         if path.startswith("/api/v1/webhooks/") and "/execute" in path:

@@ -17,7 +17,7 @@ async def _insert_event(event_type: str, payload: dict, timestamp: int | None = 
     factory = get_session_factory()
     async with factory() as session:
         entry = EventLog(
-            id=_snowflake(),
+            id=await _snowflake(),
             event_type=event_type,
             payload=json.dumps(payload),
             timestamp=timestamp or int(time.time() * 1000),
@@ -159,7 +159,8 @@ async def test_emoji_dispatch_events(client):
     """Verify emoji create/delete dispatch events end up in sync."""
     h, uid = await auth(client)
 
-    r = await client.post("/api/v1/emoji", headers=h, params={"name": "test_emoji"})
+    import io
+    r = await client.post("/api/v1/emoji", headers=h, data={"name": "test_emoji"}, files={"image": ("test.png", io.BytesIO(b"fake"), "image/png")})
     assert r.status_code == 201
     emoji_id = r.json()["emoji_id"]
 

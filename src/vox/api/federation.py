@@ -29,6 +29,7 @@ from vox.db.models import (
     dm_participants,
 )
 from vox.federation.deps import verify_federation_request
+from vox.db.models import ConfigKey
 from vox.federation.service import (
     _get_config,
     add_presence_sub,
@@ -155,7 +156,7 @@ async def relay_message(
     sender = await _find_or_create_federated_user(db, body.from_)
     dm = await _find_or_create_dm(db, sender.id, recipient.id)
 
-    msg_id = _snowflake()
+    msg_id = await _snowflake()
     ts = int(time.time() * 1000)
     msg = Message(
         id=msg_id,
@@ -367,14 +368,14 @@ async def federation_join(
     db: AsyncSession = Depends(get_db),
 ) -> FederationJoinResponse:
     # Verify voucher
-    our_domain = await _get_config(db, "federation_domain")
+    our_domain = await _get_config(db, ConfigKey.FEDERATION_DOMAIN)
     if our_domain is None:
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": "FED_NOT_CONFIGURED", "message": "Federation domain not configured."}},
         )
 
-    voucher_data = await verify_voucher(body.voucher, our_domain)
+    voucher_data = await verify_voucher(body.voucher, our_domain, db=db)
     if voucher_data is None:
         raise HTTPException(
             status_code=403,
@@ -429,7 +430,7 @@ async def federation_join(
     await db.commit()
 
     # Build server info
-    server_name = await _get_config(db, "server_name") or "Vox Server"
+    server_name = await _get_config(db, ConfigKey.SERVER_NAME) or "Vox Server"
     server_info = {"name": server_name, "domain": our_domain}
 
     return FederationJoinResponse(
@@ -465,7 +466,7 @@ async def federation_block(
 
     # Audit log
     db.add(AuditLog(
-        id=_snowflake(),
+        id=await _snowflake(),
         event_type="federation_block_received",
         actor_id=0,
         extra=json.dumps({"origin": origin, "reason": body.reason}),

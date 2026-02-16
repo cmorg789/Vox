@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vox.db.models import Config, Room, StageSpeaker, VoiceState
+from vox.db.models import Config, ConfigKey, Room, StageSpeaker, VoiceState
 from vox.models.voice import VoiceMemberData
 
 try:
@@ -87,6 +87,7 @@ async def join_room(
     user_id: int,
     self_mute: bool = False,
     self_deaf: bool = False,
+    flush_only: bool = False,
 ) -> tuple[str, list[VoiceMemberData]]:
     # Check not already in a voice room
     existing = await db.execute(select(VoiceState).where(VoiceState.user_id == user_id))
@@ -118,7 +119,8 @@ async def join_room(
     sfu.admit_user(room_id, user_id, token)
 
     members = await get_room_members(db, room_id)
-    await db.commit()
+    if not flush_only:
+        await db.commit()
     return token, members
 
 
@@ -152,10 +154,10 @@ async def move_user(
     self_mute: bool = False,
     self_deaf: bool = False,
 ) -> tuple[str, list[VoiceMemberData]]:
-    # Remove from old room without the "already in voice" check interfering
+    # Remove from old room - flush only, don't commit yet
     await db.execute(delete(VoiceState).where(VoiceState.user_id == user_id, VoiceState.room_id == from_room_id))
     await db.execute(delete(StageSpeaker).where(StageSpeaker.user_id == user_id, StageSpeaker.room_id == from_room_id))
-    await db.commit()
+    await db.flush()
 
     sfu = get_sfu()
     try:
@@ -168,11 +170,13 @@ async def move_user(
     except Exception:
         pass
 
-    # Join new room
-    return await join_room(db, to_room_id, user_id, self_mute, self_deaf)
+    # Join new room with flush_only, then commit atomically
+    token, members = await join_room(db, to_room_id, user_id, self_mute, self_deaf, flush_only=True)
+    await db.commit()
+    return token, members
 
 
 async def get_media_url(db: AsyncSession) -> str:
-    result = await db.execute(select(Config).where(Config.key == "media_url"))
+    result = await db.execute(select(Config).where(Config.key == ConfigKey.MEDIA_URL))
     row = result.scalar_one_or_none()
     return row.value if row else "quic://localhost:4443"

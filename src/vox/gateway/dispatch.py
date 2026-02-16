@@ -44,7 +44,7 @@ async def _persist_event(event_type: str, data: dict[str, Any]) -> None:
     factory = get_session_factory()
     async with factory() as session:
         entry = EventLog(
-            id=_snowflake(),
+            id=await _snowflake(),
             event_type=event_type,
             payload=json.dumps(data),
             timestamp=int(time.time() * 1000),

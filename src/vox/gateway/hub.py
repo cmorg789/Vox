@@ -34,17 +34,22 @@ class Hub:
         self.connections: dict[int, set[Connection]] = {}
         # session_id -> preserved session state for resume
         self.sessions: dict[str, SessionState] = {}
+        # In-memory presence (RAM-only, never persisted to DB)
+        self.presence: dict[int, dict[str, Any]] = {}
+        # Lock for connection/presence state mutations
+        self._lock = asyncio.Lock()
 
     def connect(self, conn: Connection) -> None:
         self.connections.setdefault(conn.user_id, set()).add(conn)
         log.info("Hub: user %d connected (session %s)", conn.user_id, conn.session_id)
 
-    def disconnect(self, conn: Connection) -> None:
-        conns = self.connections.get(conn.user_id)
-        if conns:
-            conns.discard(conn)
-            if not conns:
-                del self.connections[conn.user_id]
+    async def disconnect(self, conn: Connection) -> None:
+        async with self._lock:
+            conns = self.connections.get(conn.user_id)
+            if conns:
+                conns.discard(conn)
+                if not conns:
+                    del self.connections[conn.user_id]
         log.info("Hub: user %d disconnected (session %s)", conn.user_id, conn.session_id)
 
     def save_session(self, session_id: str, state: SessionState) -> None:
@@ -83,6 +88,17 @@ class Hub:
     async def broadcast_all(self, event: dict[str, Any]) -> None:
         """Send event to all connected users."""
         await self.broadcast(event, user_ids=None)
+
+    def set_presence(self, user_id: int, data: dict[str, Any]) -> None:
+        self.presence[user_id] = {"user_id": user_id, **data}
+
+    def get_presence(self, user_id: int) -> dict[str, Any]:
+        if user_id in self.connections and user_id in self.presence:
+            return self.presence[user_id]
+        return {"user_id": user_id, "status": "offline"}
+
+    def clear_presence(self, user_id: int) -> None:
+        self.presence.pop(user_id, None)
 
     @property
     def connected_user_ids(self) -> set[int]:

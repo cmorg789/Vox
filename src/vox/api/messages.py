@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 import httpx
@@ -8,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import Bot, BotCommand, Feed, File, Message, Pin, Reaction, Thread, User, message_attachments
-from vox.limits import PAGE_LIMIT_MESSAGES
+from vox.limits import limits
 from vox.permissions import MANAGE_MESSAGES, MANAGE_SPACES, READ_HISTORY, SEND_IN_THREADS, SEND_MESSAGES, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
@@ -28,17 +29,19 @@ router = APIRouter(tags=["messages"])
 # Simple snowflake: 42-bit timestamp (ms) + 22-bit sequence
 _seq = 0
 _last_ts = 0
+_snowflake_lock = asyncio.Lock()
 
 
-def _snowflake() -> int:
+async def _snowflake() -> int:
     global _seq, _last_ts
-    ts = int(time.time() * 1000)
-    if ts == _last_ts:
-        _seq += 1
-    else:
-        _seq = 0
-        _last_ts = ts
-    return (ts << 22) | (_seq & 0x3FFFFF)
+    async with _snowflake_lock:
+        ts = int(time.time() * 1000)
+        if ts == _last_ts:
+            _seq += 1
+        else:
+            _seq = 0
+            _last_ts = ts
+        return (ts << 22) | (_seq & 0x3FFFFF)
 
 
 def _msg_response(m: Message) -> MessageResponse:
@@ -134,7 +137,7 @@ async def _handle_slash_command(
                     data = resp.json()
                     if data.get("body"):
                         # Create message from bot response
-                        msg_id = _snowflake()
+                        msg_id = await _snowflake()
                         ts = int(time.time() * 1000)
                         msg = Message(
                             id=msg_id,
@@ -167,12 +170,13 @@ async def _handle_slash_command(
 @router.get("/api/v1/feeds/{feed_id}/messages")
 async def get_feed_messages(
     feed_id: int,
-    limit: int = Query(default=50, ge=1, le=PAGE_LIMIT_MESSAGES),
+    limit: int = Query(default=50, ge=1, le=1000),
     before: int | None = None,
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(READ_HISTORY, space_type="feed", space_id_param="feed_id"),
 ) -> MessageListResponse:
+    limit = min(limit, limits.page_limit_messages)
     query = select(Message).options(selectinload(Message.attachments)).where(Message.feed_id == feed_id, Message.thread_id == None).order_by(Message.id.desc()).limit(limit)
     if before is not None:
         query = query.where(Message.id < before)
@@ -204,7 +208,7 @@ async def send_feed_message(
     intercepted = await _handle_slash_command(body.body, user, feed_id=feed_id, dm_id=None, db=db)
     if intercepted is not None:
         return intercepted
-    msg_id = _snowflake()
+    msg_id = await _snowflake()
     ts = int(time.time() * 1000)
     msg = Message(
         id=msg_id,
@@ -305,12 +309,17 @@ async def bulk_delete_messages(
 async def get_thread_messages(
     feed_id: int,
     thread_id: int,
-    limit: int = Query(default=50, ge=1, le=PAGE_LIMIT_MESSAGES),
+    limit: int = Query(default=50, ge=1, le=1000),
     before: int | None = None,
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> MessageListResponse:
+    # Validate thread exists and belongs to feed
+    thread = (await db.execute(select(Thread).where(Thread.id == thread_id))).scalar_one_or_none()
+    if thread is None or thread.feed_id != feed_id:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Thread does not exist in this feed."}})
+    limit = min(limit, limits.page_limit_messages)
     query = select(Message).options(selectinload(Message.attachments)).where(Message.thread_id == thread_id).order_by(Message.id.desc()).limit(limit)
     if before is not None:
         query = query.where(Message.id < before)
@@ -328,11 +337,17 @@ async def send_thread_message(
     db: AsyncSession = Depends(get_db),
     user: User = require_permission(SEND_IN_THREADS, space_type="feed", space_id_param="feed_id"),
 ) -> SendMessageResponse:
+    # Validate thread exists, belongs to feed, and is not locked
+    thread = (await db.execute(select(Thread).where(Thread.id == thread_id))).scalar_one_or_none()
+    if thread is None or thread.feed_id != feed_id:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Thread does not exist in this feed."}})
+    if thread.locked:
+        raise HTTPException(status_code=403, detail={"error": {"code": "THREAD_LOCKED", "message": "This thread is locked."}})
     # Slash command interception
     intercepted = await _handle_slash_command(body.body, user, feed_id=feed_id, dm_id=None, db=db)
     if intercepted is not None:
         return intercepted
-    msg_id = _snowflake()
+    msg_id = await _snowflake()
     ts = int(time.time() * 1000)
     msg = Message(
         id=msg_id,
@@ -393,7 +408,7 @@ async def pin_message(
     feed_id: int,
     msg_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_MESSAGES, space_type="feed", space_id_param="feed_id"),
 ):
     from datetime import datetime, timezone
     db.add(Pin(feed_id=feed_id, msg_id=msg_id, pinned_at=datetime.now(timezone.utc)))
@@ -406,7 +421,7 @@ async def unpin_message(
     feed_id: int,
     msg_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_MESSAGES, space_type="feed", space_id_param="feed_id"),
 ):
     await db.execute(delete(Pin).where(Pin.feed_id == feed_id, Pin.msg_id == msg_id))
     await db.commit()

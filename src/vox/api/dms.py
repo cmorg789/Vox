@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 from vox.api.deps import get_current_user, get_db
 from vox.api.messages import _handle_slash_command, _msg_response, _snowflake
 from vox.db.models import DM, DMReadState, DMSettings, File, Message, User, dm_participants, message_attachments
-from vox.limits import PAGE_LIMIT_DMS, PAGE_LIMIT_MESSAGES
+from vox.limits import limits
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.dms import (
@@ -58,6 +58,28 @@ async def open_dm(
                 pids = await _dm_participant_ids(db, dm.id)
                 return DMResponse(dm_id=dm.id, participant_ids=pids, is_group=False)
 
+        # Block check — recipient has blocked sender
+        from vox.db.models import blocks, friends
+        block_check = await db.execute(
+            select(blocks.c.user_id).where(blocks.c.user_id == body.recipient_id, blocks.c.blocked_id == user.id)
+        )
+        if block_check.scalar_one_or_none() is not None:
+            raise HTTPException(status_code=403, detail={"error": {"code": "USER_BLOCKED", "message": "You cannot DM this user."}})
+
+        # DM permission check
+        settings_result = await db.execute(select(DMSettings).where(DMSettings.user_id == body.recipient_id))
+        dm_settings = settings_result.scalar_one_or_none()
+        dm_perm = dm_settings.dm_permission if dm_settings else "everyone"
+
+        if dm_perm == "nobody":
+            raise HTTPException(status_code=403, detail={"error": {"code": "DM_PERMISSION_DENIED", "message": "This user does not accept DMs."}})
+        elif dm_perm == "friends_only":
+            friend_check = await db.execute(
+                select(friends.c.user_id).where(friends.c.user_id == body.recipient_id, friends.c.friend_id == user.id)
+            )
+            if friend_check.scalar_one_or_none() is None:
+                raise HTTPException(status_code=403, detail={"error": {"code": "DM_PERMISSION_DENIED", "message": "This user only accepts DMs from friends."}})
+
         dm = DM(is_group=False, created_at=datetime.now(timezone.utc))
         db.add(dm)
         await db.flush()
@@ -85,11 +107,12 @@ async def open_dm(
 
 @router.get("/api/v1/dms")
 async def list_dms(
-    limit: int = Query(default=100, ge=1, le=PAGE_LIMIT_DMS),
+    limit: int = Query(default=100, ge=1, le=1000),
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> DMListResponse:
+    limit = min(limit, limits.page_limit_dms)
     query = (
         select(DM)
         .join(dm_participants, dm_participants.c.dm_id == DM.id)
@@ -202,7 +225,7 @@ async def send_dm_message(
     intercepted = await _handle_slash_command(body.body, user, feed_id=None, dm_id=dm_id, db=db)
     if intercepted is not None:
         return intercepted
-    msg_id = _snowflake()
+    msg_id = await _snowflake()
     ts = int(time.time() * 1000)
     msg = Message(id=msg_id, dm_id=dm_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to)
     db.add(msg)
@@ -220,7 +243,7 @@ async def send_dm_message(
     # Outbound federation relay for federated participants
     try:
         from vox.federation.client import relay_dm_message
-        from vox.federation.service import get_our_domain
+        from vox.federation.service import check_federation_allowed, get_our_domain
 
         our_domain = await get_our_domain(db)
         if our_domain:
@@ -229,6 +252,8 @@ async def send_dm_message(
             )
             for participant in participants.scalars().all():
                 if participant.federated and participant.home_domain:
+                    if not await check_federation_allowed(db, participant.home_domain, "outbound"):
+                        continue  # Skip blocked domains
                     from_address = f"{user.username}@{our_domain}"
                     to_address = participant.username  # Already user@domain for fed users
                     await relay_dm_message(db, from_address, to_address, body.body or "")
@@ -241,12 +266,13 @@ async def send_dm_message(
 @router.get("/api/v1/dms/{dm_id}/messages")
 async def get_dm_messages(
     dm_id: int,
-    limit: int = Query(default=50, ge=1, le=PAGE_LIMIT_MESSAGES),
+    limit: int = Query(default=50, ge=1, le=1000),
     before: int | None = None,
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> MessageListResponse:
+    limit = min(limit, limits.page_limit_messages)
     query = select(Message).options(selectinload(Message.attachments)).where(Message.dm_id == dm_id).order_by(Message.id.desc()).limit(limit)
     if before is not None:
         query = query.where(Message.id < before)

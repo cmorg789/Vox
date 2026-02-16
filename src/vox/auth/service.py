@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from vox.db.models import Session, User, role_members
 
 _ph = PasswordHasher()
+_DUMMY_HASH = _ph.hash("__dummy__")
 
 TOKEN_PREFIX = "vox_sess_"
 SESSION_LIFETIME_DAYS = 30
@@ -68,6 +69,8 @@ async def authenticate(
     )
     user = result.scalar_one_or_none()
     if user is None or user.password_hash is None:
+        # Perform dummy hash verification to prevent timing attacks
+        verify_password(_DUMMY_HASH, password)
         return None
     if not verify_password(user.password_hash, password):
         return None
@@ -105,3 +108,11 @@ async def get_user_role_ids(db: AsyncSession, user_id: int) -> list[int]:
         select(role_members.c.role_id).where(role_members.c.user_id == user_id)
     )
     return list(result.scalars().all())
+
+
+async def cleanup_expired_sessions(db: AsyncSession) -> None:
+    """Delete all expired sessions."""
+    from sqlalchemy import delete
+    now = datetime.now(timezone.utc)
+    await db.execute(delete(Session).where(Session.expires_at <= now))
+    await db.commit()

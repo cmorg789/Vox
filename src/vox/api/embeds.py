@@ -1,7 +1,10 @@
+import ipaddress
 import re
+import socket
+from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from vox.api.deps import get_current_user
 from vox.db.models import User
@@ -10,6 +13,38 @@ from vox.models.messages import EmbedResponse, ResolveEmbedRequest
 router = APIRouter(tags=["embeds"])
 
 _MAX_RESPONSE_SIZE = 1 * 1024 * 1024  # 1MB
+_ALLOWED_SCHEMES = {"http", "https"}
+
+
+def _validate_url(url: str) -> str:
+    """Validate URL to prevent SSRF: reject private/loopback/link-local IPs."""
+    parsed = urlparse(url)
+    if parsed.scheme not in _ALLOWED_SCHEMES:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "INVALID_URL", "message": "Only http and https URLs are allowed."}},
+        )
+    hostname = parsed.hostname
+    if not hostname:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "INVALID_URL", "message": "URL must contain a hostname."}},
+        )
+    try:
+        addrinfos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "INVALID_URL", "message": "Could not resolve hostname."}},
+        )
+    for family, _type, _proto, _canonname, sockaddr in addrinfos:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": "INVALID_URL", "message": "URLs pointing to private/internal addresses are not allowed."}},
+            )
+    return url
 
 
 def _extract_meta(html: str) -> dict[str, str | None]:
@@ -66,6 +101,7 @@ async def resolve_embed(
     body: ResolveEmbedRequest,
     _: User = Depends(get_current_user),
 ) -> EmbedResponse:
+    _validate_url(body.url)
     try:
         async with httpx.AsyncClient(follow_redirects=True) as client:
             resp = await client.get(body.url, timeout=5.0, headers={"User-Agent": "VoxBot/1.0"})

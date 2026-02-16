@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -11,6 +12,29 @@ from vox.ratelimit import RateLimitMiddleware
 from vox.voice.service import stop_sfu
 
 
+async def _periodic_cleanup(db_factory):
+    """Background task: clean expired sessions and federation nonces hourly."""
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            from vox.auth.service import cleanup_expired_sessions
+            from vox.db.models import FederationNonce
+            from sqlalchemy import delete
+            from datetime import datetime, timezone
+
+            async with db_factory() as db:
+                await cleanup_expired_sessions(db)
+
+            async with db_factory() as db:
+                now = datetime.now(timezone.utc)
+                await db.execute(
+                    delete(FederationNonce).where(FederationNonce.expires_at <= now)
+                )
+                await db.commit()
+        except Exception:
+            pass  # Best-effort cleanup
+
+
 def create_app(database_url: str) -> FastAPI:
     init_engine(database_url)
 
@@ -22,11 +46,26 @@ def create_app(database_url: str) -> FastAPI:
             await conn.run_sync(Base.metadata.create_all)
         # Ensure uploads directory exists
         Path("uploads").mkdir(exist_ok=True)
+        # Load runtime-configurable limits from DB
+        from vox.limits import load_limits
+        async with get_session_factory()() as db:
+            await load_limits(db)
         # Initialize the gateway hub
         init_hub()
+        # Start background cleanup task
+        cleanup_task = asyncio.create_task(_periodic_cleanup(get_session_factory()))
         yield
+        # Cancel background cleanup
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
         # Shutdown SFU
         stop_sfu()
+        # Close federation HTTP client
+        from vox.federation.service import close_http_client
+        await close_http_client()
         # Dispose engine on shutdown
         await engine.dispose()
 

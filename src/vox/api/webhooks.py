@@ -86,7 +86,7 @@ async def execute_webhook(
     wh = result.scalar_one_or_none()
     if wh is None:
         raise HTTPException(status_code=422, detail={"error": {"code": "WEBHOOK_TOKEN_INVALID", "message": "Webhook token is invalid."}})
-    msg_id = _snowflake()
+    msg_id = await _snowflake()
     ts = int(time.time() * 1000)
     msg = Message(id=msg_id, feed_id=wh.feed_id, author_id=0, body=body.body, timestamp=ts)
     db.add(msg)
