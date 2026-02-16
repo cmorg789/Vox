@@ -1248,8 +1248,8 @@ Requires `MANAGE_MESSAGES` permission.
 #### Add/Remove Reaction
 
 ```
-PUT /api/v1/feeds/{feed_id}/messages/{msg_id}/reactions/{emoji}/@me
-DELETE /api/v1/feeds/{feed_id}/messages/{msg_id}/reactions/{emoji}/@me
+PUT /api/v1/feeds/{feed_id}/messages/{msg_id}/reactions/{emoji}
+DELETE /api/v1/feeds/{feed_id}/messages/{msg_id}/reactions/{emoji}
 ```
 
 Requires `ADD_REACTIONS` permission (for add).
@@ -1445,6 +1445,15 @@ DELETE /api/v1/dms/{dm_id}/messages/{msg_id} // Delete message
 ```
 
 Request and response formats are identical to the feed message endpoints.
+
+#### Add/Remove DM Reaction
+
+```
+PUT /api/v1/dms/{dm_id}/messages/{msg_id}/reactions/{emoji}
+DELETE /api/v1/dms/{dm_id}/messages/{msg_id}/reactions/{emoji}
+```
+
+Caller must be a DM participant. Returns `204 No Content`.
 
 ### Files
 

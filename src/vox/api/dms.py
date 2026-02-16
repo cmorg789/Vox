@@ -330,7 +330,7 @@ async def delete_dm_message(
 
 # --- DM Reactions ---
 
-@router.put("/api/v1/dms/{dm_id}/messages/{msg_id}/reactions/{emoji}/@me", status_code=204)
+@router.put("/api/v1/dms/{dm_id}/messages/{msg_id}/reactions/{emoji}", status_code=204)
 async def add_dm_reaction(
     dm_id: int,
     msg_id: int,
@@ -342,13 +342,16 @@ async def add_dm_reaction(
     pids = await _dm_participant_ids(db, dm_id)
     if user.id not in pids:
         raise HTTPException(status_code=403, detail={"error": {"code": "NOT_DM_PARTICIPANT", "message": "You are not a participant in this DM."}})
+    msg = (await db.execute(select(Message).where(Message.id == msg_id, Message.dm_id == dm_id))).scalar_one_or_none()
+    if msg is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "MESSAGE_NOT_FOUND", "message": "Message does not exist."}})
     stmt = sqlite_insert(Reaction).values(msg_id=msg_id, user_id=user.id, emoji=emoji).on_conflict_do_nothing()
     await db.execute(stmt)
     await db.commit()
     await dispatch(gw.message_reaction_add(msg_id=msg_id, user_id=user.id, emoji=emoji), user_ids=pids)
 
 
-@router.delete("/api/v1/dms/{dm_id}/messages/{msg_id}/reactions/{emoji}/@me", status_code=204)
+@router.delete("/api/v1/dms/{dm_id}/messages/{msg_id}/reactions/{emoji}", status_code=204)
 async def remove_dm_reaction(
     dm_id: int,
     msg_id: int,
@@ -359,6 +362,9 @@ async def remove_dm_reaction(
     pids = await _dm_participant_ids(db, dm_id)
     if user.id not in pids:
         raise HTTPException(status_code=403, detail={"error": {"code": "NOT_DM_PARTICIPANT", "message": "You are not a participant in this DM."}})
+    msg = (await db.execute(select(Message).where(Message.id == msg_id, Message.dm_id == dm_id))).scalar_one_or_none()
+    if msg is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "MESSAGE_NOT_FOUND", "message": "Message does not exist."}})
     await db.execute(
         delete(Reaction).where(Reaction.msg_id == msg_id, Reaction.user_id == user.id, Reaction.emoji == emoji)
     )

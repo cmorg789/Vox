@@ -382,6 +382,9 @@ async def add_reaction(
     user: User = Depends(get_current_user),
 ):
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+    msg = (await db.execute(select(Message).where(Message.id == msg_id, Message.feed_id == feed_id))).scalar_one_or_none()
+    if msg is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "MESSAGE_NOT_FOUND", "message": "Message does not exist."}})
     stmt = sqlite_insert(Reaction).values(msg_id=msg_id, user_id=user.id, emoji=emoji).on_conflict_do_nothing()
     await db.execute(stmt)
     await db.commit()
@@ -396,6 +399,9 @@ async def remove_reaction(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    msg = (await db.execute(select(Message).where(Message.id == msg_id, Message.feed_id == feed_id))).scalar_one_or_none()
+    if msg is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "MESSAGE_NOT_FOUND", "message": "Message does not exist."}})
     await db.execute(
         delete(Reaction).where(Reaction.msg_id == msg_id, Reaction.user_id == user.id, Reaction.emoji == emoji)
     )
