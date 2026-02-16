@@ -1,5 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from vox.limits import AVATAR_MAX, BIO_MAX, DISPLAY_NAME_MAX
 from vox.models.base import VoxModel
 
 
@@ -12,9 +13,9 @@ class UserResponse(VoxModel):
 
 
 class UpdateProfileRequest(BaseModel):
-    display_name: str | None = None
-    avatar: str | None = None
-    bio: str | None = None
+    display_name: str | None = Field(default=None, max_length=DISPLAY_NAME_MAX)
+    avatar: str | None = Field(default=None, max_length=AVATAR_MAX)
+    bio: str | None = Field(default=None, max_length=BIO_MAX)
 
 
 class FriendResponse(VoxModel):

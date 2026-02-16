@@ -1,12 +1,13 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from vox.limits import DM_ICON_MAX, DM_NAME_MAX, GROUP_DM_RECIPIENTS_MAX
 from vox.models.base import VoxModel
 
 
 class OpenDMRequest(BaseModel):
     recipient_id: int | None = None  # 1:1
-    recipient_ids: list[int] | None = None  # group
-    name: str | None = None  # group only
+    recipient_ids: list[int] | None = Field(default=None, max_length=GROUP_DM_RECIPIENTS_MAX)  # group
+    name: str | None = Field(default=None, max_length=DM_NAME_MAX)  # group only
 
 
 class DMResponse(VoxModel):
@@ -22,8 +23,8 @@ class DMListResponse(VoxModel):
 
 
 class UpdateGroupDMRequest(BaseModel):
-    name: str | None = None
-    icon: str | None = None
+    name: str | None = Field(default=None, max_length=DM_NAME_MAX)
+    icon: str | None = Field(default=None, max_length=DM_ICON_MAX)
 
 
 class ReadReceiptRequest(BaseModel):

@@ -1,5 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from vox.limits import BULK_DELETE_MAX, MESSAGE_BODY_MAX
 from vox.models.base import VoxModel
 
 
@@ -8,7 +9,7 @@ class MentionData(BaseModel):
 
 
 class SendMessageRequest(BaseModel):
-    body: str
+    body: str = Field(max_length=MESSAGE_BODY_MAX)
     reply_to: int | None = None
     mentions: list[MentionData] | None = None
     embeds: list | None = None
@@ -17,7 +18,7 @@ class SendMessageRequest(BaseModel):
 
 
 class EditMessageRequest(BaseModel):
-    body: str
+    body: str = Field(max_length=MESSAGE_BODY_MAX)
 
 
 class SendMessageResponse(VoxModel):
@@ -54,7 +55,7 @@ class MessageListResponse(VoxModel):
 
 
 class BulkDeleteRequest(BaseModel):
-    msg_ids: list[int]
+    msg_ids: list[int] = Field(max_length=BULK_DELETE_MAX)
 
 
 # --- Search ---

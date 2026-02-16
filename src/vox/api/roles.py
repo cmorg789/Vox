@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
+from vox.api.members import get_highest_role_position
 from vox.db.models import PermissionOverride, Role, User, role_members
-from vox.permissions import MANAGE_ROLES
+from vox.limits import PAGE_LIMIT_ROLES
+from vox.permissions import ADMINISTRATOR, MANAGE_ROLES, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.roles import (
@@ -21,7 +23,7 @@ router = APIRouter(tags=["roles"])
 
 @router.get("/api/v1/roles")
 async def list_roles(
-    limit: int = 100,
+    limit: int = Query(default=100, ge=1, le=PAGE_LIMIT_ROLES),
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
@@ -55,12 +57,21 @@ async def update_role(
     role_id: int,
     body: UpdateRoleRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = require_permission(MANAGE_ROLES),
+    actor: User = require_permission(MANAGE_ROLES),
 ) -> RoleResponse:
     result = await db.execute(select(Role).where(Role.id == role_id))
     role = result.scalar_one_or_none()
     if role is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Role not found."}})
+    # Administrators bypass hierarchy; others cannot edit roles at or above their rank
+    resolved = await resolve_permissions(db, actor.id)
+    if not has_permission(resolved, ADMINISTRATOR):
+        actor_pos = await get_highest_role_position(db, actor.id)
+        if role.position <= actor_pos:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": "ROLE_HIERARCHY", "message": "You cannot edit a role at or above your own rank."}},
+            )
     changed = {}
     if body.name is not None:
         role.name = body.name
@@ -100,8 +111,20 @@ async def assign_role(
     user_id: int,
     role_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = require_permission(MANAGE_ROLES),
+    actor: User = require_permission(MANAGE_ROLES),
 ):
+    # Administrators bypass hierarchy; others cannot assign roles at or above their rank
+    role = (await db.execute(select(Role).where(Role.id == role_id))).scalar_one_or_none()
+    if role is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Role not found."}})
+    resolved = await resolve_permissions(db, actor.id)
+    if not has_permission(resolved, ADMINISTRATOR):
+        actor_pos = await get_highest_role_position(db, actor.id)
+        if role.position <= actor_pos:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": "ROLE_HIERARCHY", "message": "You cannot assign a role at or above your own rank."}},
+            )
     await db.execute(role_members.insert().values(role_id=role_id, user_id=user_id))
     await db.commit()
     await dispatch(gw.role_assign(role_id=role_id, user_id=user_id))
@@ -112,8 +135,20 @@ async def revoke_role(
     user_id: int,
     role_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = require_permission(MANAGE_ROLES),
+    actor: User = require_permission(MANAGE_ROLES),
 ):
+    # Administrators bypass hierarchy; others cannot revoke roles at or above their rank
+    role = (await db.execute(select(Role).where(Role.id == role_id))).scalar_one_or_none()
+    if role is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Role not found."}})
+    resolved = await resolve_permissions(db, actor.id)
+    if not has_permission(resolved, ADMINISTRATOR):
+        actor_pos = await get_highest_role_position(db, actor.id)
+        if role.position <= actor_pos:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": "ROLE_HIERARCHY", "message": "You cannot revoke a role at or above your own rank."}},
+            )
     await db.execute(delete(role_members).where(role_members.c.role_id == role_id, role_members.c.user_id == user_id))
     await db.commit()
     await dispatch(gw.role_revoke(role_id=role_id, user_id=user_id))

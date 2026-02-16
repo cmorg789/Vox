@@ -1,12 +1,13 @@
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import Config, Invite, User
+from vox.limits import PAGE_LIMIT_INVITES
 from vox.permissions import CREATE_INVITES
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
@@ -87,7 +88,7 @@ async def resolve_invite(
 
 @router.get("")
 async def list_invites(
-    limit: int = 100,
+    limit: int = Query(default=100, ge=1, le=PAGE_LIMIT_INVITES),
     after: str | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),

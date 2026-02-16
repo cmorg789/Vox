@@ -1,5 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from vox.limits import CHANNEL_NAME_MAX, CHANNEL_NAME_MIN, TOPIC_MAX
 from vox.models.base import VoxModel
 
 
@@ -7,12 +8,12 @@ from vox.models.base import VoxModel
 
 
 class CreateCategoryRequest(BaseModel):
-    name: str
+    name: str = Field(min_length=CHANNEL_NAME_MIN, max_length=CHANNEL_NAME_MAX)
     position: int
 
 
 class UpdateCategoryRequest(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=CHANNEL_NAME_MAX)
     position: int | None = None
 
 
@@ -26,15 +27,15 @@ class CategoryResponse(VoxModel):
 
 
 class CreateFeedRequest(BaseModel):
-    name: str
+    name: str = Field(min_length=CHANNEL_NAME_MIN, max_length=CHANNEL_NAME_MAX)
     type: str  # text, forum, announcement
     category_id: int | None = None
     permission_overrides: list | None = None
 
 
 class UpdateFeedRequest(BaseModel):
-    name: str | None = None
-    topic: str | None = None
+    name: str | None = Field(default=None, max_length=CHANNEL_NAME_MAX)
+    topic: str | None = Field(default=None, max_length=TOPIC_MAX)
 
 
 class FeedResponse(VoxModel):
@@ -50,14 +51,14 @@ class FeedResponse(VoxModel):
 
 
 class CreateRoomRequest(BaseModel):
-    name: str
+    name: str = Field(min_length=CHANNEL_NAME_MIN, max_length=CHANNEL_NAME_MAX)
     type: str  # voice, stage
     category_id: int | None = None
     permission_overrides: list | None = None
 
 
 class UpdateRoomRequest(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=CHANNEL_NAME_MAX)
 
 
 class RoomResponse(VoxModel):
@@ -72,11 +73,11 @@ class RoomResponse(VoxModel):
 
 class CreateThreadRequest(BaseModel):
     parent_msg_id: int
-    name: str
+    name: str = Field(min_length=CHANNEL_NAME_MIN, max_length=CHANNEL_NAME_MAX)
 
 
 class UpdateThreadRequest(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=CHANNEL_NAME_MAX)
     archived: bool | None = None
     locked: bool | None = None
 

@@ -1,5 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from vox.limits import ADMIN_REASON_MAX, REPORT_DESCRIPTION_MAX, REPORT_REASON_MAX
 from vox.models.base import VoxModel
 
 
@@ -18,8 +19,8 @@ class CreateReportRequest(BaseModel):
     msg_id: int | None = None
     dm_id: int | None = None
     messages: list[ReportMessageData] | None = None
-    reason: str  # harassment, spam, illegal_content, threats, other
-    description: str | None = None
+    reason: str = Field(max_length=REPORT_REASON_MAX)  # harassment, spam, illegal_content, threats, other
+    description: str | None = Field(default=None, max_length=REPORT_DESCRIPTION_MAX)
 
 
 class ResolveReportRequest(BaseModel):
@@ -52,4 +53,4 @@ class AuditLogResponse(VoxModel):
 
 class Admin2FAResetRequest(BaseModel):
     target_user_id: int
-    reason: str
+    reason: str = Field(max_length=ADMIN_REASON_MAX)

@@ -4,6 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fastapi import Header, Response
+from sqlalchemy.ext.asyncio import AsyncSession as AsyncSessionType
+
 from vox.api.deps import get_current_user, get_db
 from vox.auth.mfa import (
     create_setup_session,
@@ -574,3 +577,26 @@ async def login_federation(
         display_name=user.display_name,
         roles=role_ids,
     )
+
+
+# --- Logout ---
+
+
+@router.post("/logout", status_code=204)
+async def logout(
+    authorization: str = Header(),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Invalidate the current session token."""
+    if authorization.startswith("Bearer "):
+        token = authorization[7:]
+    elif authorization.startswith("Bot "):
+        token = authorization[4:]
+    else:
+        return Response(status_code=204)
+
+    from vox.db.models import Session as DBSession
+    await db.execute(delete(DBSession).where(DBSession.token == token, DBSession.user_id == user.id))
+    await db.commit()
+    return Response(status_code=204)

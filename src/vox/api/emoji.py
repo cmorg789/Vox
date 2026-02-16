@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import Emoji, Sticker, User
+from vox.limits import PAGE_LIMIT_EMOJI, PAGE_LIMIT_STICKERS
 from vox.permissions import MANAGE_EMOJI
 from vox.models.emoji import EmojiResponse, StickerResponse
 from vox.gateway import events as gw
@@ -16,7 +17,7 @@ router = APIRouter(tags=["emoji"])
 
 @router.get("/api/v1/emoji")
 async def list_emoji(
-    limit: int = 100,
+    limit: int = Query(default=100, ge=1, le=PAGE_LIMIT_EMOJI),
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
@@ -64,7 +65,7 @@ async def delete_emoji(
 
 @router.get("/api/v1/stickers")
 async def list_stickers(
-    limit: int = 100,
+    limit: int = Query(default=100, ge=1, le=PAGE_LIMIT_STICKERS),
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),

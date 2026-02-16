@@ -17,7 +17,7 @@ async def test_register_duplicate(client):
     })
     r = await client.post("/api/v1/auth/register", json={
         "username": "alice",
-        "password": "other",
+        "password": "other1234",
     })
     assert r.status_code == 409
 

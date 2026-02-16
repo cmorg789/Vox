@@ -1,5 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from vox.limits import SERVER_DESCRIPTION_MAX, SERVER_ICON_MAX, SERVER_NAME_MAX
 from vox.models.base import VoxModel
 
 
@@ -11,9 +12,9 @@ class ServerInfoResponse(VoxModel):
 
 
 class UpdateServerRequest(BaseModel):
-    name: str | None = None
-    icon: str | None = None
-    description: str | None = None
+    name: str | None = Field(default=None, max_length=SERVER_NAME_MAX)
+    icon: str | None = Field(default=None, max_length=SERVER_ICON_MAX)
+    description: str | None = Field(default=None, max_length=SERVER_DESCRIPTION_MAX)
 
 
 class PermissionOverrideData(VoxModel):

@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db
 from vox.auth.service import get_user_role_ids
 from vox.db.models import User, blocks, friends
+from vox.limits import PAGE_LIMIT_FRIENDS
 from vox.gateway import events
 from vox.gateway.dispatch import dispatch
 from vox.models.users import (
@@ -71,7 +72,7 @@ async def unblock_user(
 
 @router.get("/@me/friends")
 async def list_friends(
-    limit: int = 100,
+    limit: int = Query(default=100, ge=1, le=PAGE_LIMIT_FRIENDS),
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),

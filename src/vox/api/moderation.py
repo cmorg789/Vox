@@ -1,7 +1,7 @@
 import time
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
 
 from vox.api.messages import _snowflake
@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import AuditLog, RecoveryCode, Report, TOTPSecret, User, WebAuthnCredential
+from vox.limits import PAGE_LIMIT_AUDIT_LOG, PAGE_LIMIT_REPORTS
 from vox.permissions import MANAGE_2FA, VIEW_AUDIT_LOG, VIEW_REPORTS
 from vox.models.moderation import (
     AuditLogEntry,
@@ -52,7 +53,7 @@ async def create_report(
 @router.get("/api/v1/reports")
 async def list_reports(
     status: str | None = None,
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=PAGE_LIMIT_REPORTS),
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(VIEW_REPORTS),
@@ -92,7 +93,7 @@ async def query_audit_log(
     event_type: str | None = None,
     actor_id: int | None = None,
     target_id: int | None = None,
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=PAGE_LIMIT_AUDIT_LOG),
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(VIEW_AUDIT_LOG),

@@ -2,12 +2,13 @@ import secrets
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
 from vox.api.deps import get_current_user, get_db
 from vox.db.models import Device, KeyBackup, OneTimePrekey, Prekey, User, dm_participants
+from vox.limits import MAX_DEVICES
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.e2ee import (
@@ -89,6 +90,15 @@ async def add_device(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    # Enforce device limit
+    count = await db.scalar(
+        select(func.count()).select_from(Device).where(Device.user_id == user.id)
+    )
+    if count is not None and count >= MAX_DEVICES:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": "DEVICE_LIMIT_REACHED", "message": f"Maximum of {MAX_DEVICES} devices allowed."}},
+        )
     db.add(Device(id=body.device_id, user_id=user.id, device_name=body.device_name, created_at=datetime.now(timezone.utc)))
     await db.commit()
     return {"device_id": body.device_id}

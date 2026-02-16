@@ -1,28 +1,29 @@
 from pydantic import BaseModel, Field
 
+from vox.limits import BAN_REASON_MAX, FEDERATION_ADDRESS_MAX
 from vox.models.base import VoxModel
 
 
 class RelayMessageRequest(BaseModel):
     model_config = {"populate_by_name": True}
 
-    from_: str = Field(alias="from")
-    to: str
+    from_: str = Field(alias="from", max_length=FEDERATION_ADDRESS_MAX)
+    to: str = Field(max_length=FEDERATION_ADDRESS_MAX)
     opaque_blob: str
 
 
 class RelayTypingRequest(BaseModel):
     model_config = {"populate_by_name": True}
 
-    from_: str = Field(alias="from")
-    to: str
+    from_: str = Field(alias="from", max_length=FEDERATION_ADDRESS_MAX)
+    to: str = Field(max_length=FEDERATION_ADDRESS_MAX)
 
 
 class RelayReadRequest(BaseModel):
     model_config = {"populate_by_name": True}
 
-    from_: str = Field(alias="from")
-    to: str
+    from_: str = Field(alias="from", max_length=FEDERATION_ADDRESS_MAX)
+    to: str = Field(max_length=FEDERATION_ADDRESS_MAX)
     up_to_msg_id: int
 
 
@@ -45,17 +46,17 @@ class FederatedUserProfile(VoxModel):
 
 
 class PresenceSubscribeRequest(BaseModel):
-    user_address: str
+    user_address: str = Field(max_length=FEDERATION_ADDRESS_MAX)
 
 
 class PresenceNotifyRequest(BaseModel):
-    user_address: str
+    user_address: str = Field(max_length=FEDERATION_ADDRESS_MAX)
     status: str
     activity: str | None = None
 
 
 class FederationJoinRequest(BaseModel):
-    user_address: str
+    user_address: str = Field(max_length=FEDERATION_ADDRESS_MAX)
     invite_code: str | None = None
     voucher: str
 
@@ -67,4 +68,4 @@ class FederationJoinResponse(VoxModel):
 
 
 class FederationBlockRequest(BaseModel):
-    reason: str | None = None
+    reason: str | None = Field(default=None, max_length=BAN_REASON_MAX)

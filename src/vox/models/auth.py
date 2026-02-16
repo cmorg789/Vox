@@ -1,5 +1,15 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from vox.limits import (
+    DISPLAY_NAME_MAX,
+    MFA_CODE_MAX,
+    MFA_TICKET_MAX,
+    PASSWORD_MAX,
+    PASSWORD_MIN,
+    USERNAME_MAX,
+    USERNAME_MIN,
+    WEBAUTHN_FIELD_MAX,
+)
 from vox.models.base import VoxModel
 
 
@@ -7,9 +17,9 @@ from vox.models.base import VoxModel
 
 
 class RegisterRequest(BaseModel):
-    username: str
-    password: str
-    display_name: str | None = None
+    username: str = Field(min_length=USERNAME_MIN, max_length=USERNAME_MAX)
+    password: str = Field(min_length=PASSWORD_MIN, max_length=PASSWORD_MAX)
+    display_name: str | None = Field(default=None, max_length=DISPLAY_NAME_MAX)
 
 
 class RegisterResponse(VoxModel):
@@ -21,8 +31,8 @@ class RegisterResponse(VoxModel):
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(max_length=USERNAME_MAX)
+    password: str = Field(max_length=PASSWORD_MAX)
 
 
 class LoginResponse(VoxModel):
@@ -42,9 +52,9 @@ class MFARequiredResponse(VoxModel):
 
 
 class Login2FARequest(BaseModel):
-    mfa_ticket: str
+    mfa_ticket: str = Field(max_length=MFA_TICKET_MAX)
     method: str  # totp, webauthn, recovery
-    code: str | None = None
+    code: str | None = Field(default=None, max_length=MFA_CODE_MAX)
     assertion: dict | None = None  # WebAuthn assertion object
 
 
@@ -68,7 +78,7 @@ class MFASetupResponse(VoxModel):
 
 class MFASetupConfirmRequest(BaseModel):
     setup_id: str
-    code: str | None = None  # TOTP
+    code: str | None = Field(default=None, max_length=MFA_CODE_MAX)  # TOTP
     attestation: dict | None = None  # WebAuthn
     credential_name: str | None = None
 
@@ -80,14 +90,14 @@ class MFASetupConfirmResponse(VoxModel):
 
 class MFARemoveRequest(BaseModel):
     method: str
-    code: str
+    code: str = Field(max_length=MFA_CODE_MAX)
 
 
 # --- WebAuthn ---
 
 
 class WebAuthnChallengeRequest(BaseModel):
-    username: str
+    username: str = Field(max_length=USERNAME_MAX)
 
 
 class WebAuthnChallengeResponse(VoxModel):
@@ -96,12 +106,12 @@ class WebAuthnChallengeResponse(VoxModel):
 
 
 class WebAuthnLoginRequest(BaseModel):
-    username: str
-    client_data_json: str
-    authenticator_data: str
-    signature: str
-    credential_id: str
-    user_handle: str | None = None
+    username: str = Field(max_length=USERNAME_MAX)
+    client_data_json: str = Field(max_length=WEBAUTHN_FIELD_MAX)
+    authenticator_data: str = Field(max_length=WEBAUTHN_FIELD_MAX)
+    signature: str = Field(max_length=WEBAUTHN_FIELD_MAX)
+    credential_id: str = Field(max_length=WEBAUTHN_FIELD_MAX)
+    user_handle: str | None = Field(default=None, max_length=WEBAUTHN_FIELD_MAX)
 
 
 class WebAuthnCredentialResponse(VoxModel):

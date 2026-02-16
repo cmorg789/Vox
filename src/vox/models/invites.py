@@ -1,12 +1,13 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from vox.limits import INVITE_MAX_AGE_MAX, INVITE_MAX_USES_MAX
 from vox.models.base import VoxModel
 
 
 class CreateInviteRequest(BaseModel):
     feed_id: int | None = None
-    max_uses: int | None = None
-    max_age: int | None = None  # seconds
+    max_uses: int | None = Field(default=None, ge=0, le=INVITE_MAX_USES_MAX)
+    max_age: int | None = Field(default=None, ge=0, le=INVITE_MAX_AGE_MAX)  # seconds
 
 
 class InviteResponse(VoxModel):

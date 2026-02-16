@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 from vox.api.deps import get_current_user, get_db
 from vox.api.messages import _msg_response
 from vox.db.models import Message, Pin, User, message_attachments
+from vox.limits import PAGE_LIMIT_SEARCH
 from vox.models.messages import SearchResponse
 
 router = APIRouter(tags=["search"])
@@ -20,7 +21,7 @@ async def search_messages(
     after: int | None = None,
     has_file: bool | None = None,
     pinned: bool | None = None,
-    limit: int = 25,
+    limit: int = Query(default=25, ge=1, le=PAGE_LIMIT_SEARCH),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> SearchResponse:

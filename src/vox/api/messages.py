@@ -1,14 +1,15 @@
 import time
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from vox.api.deps import get_current_user, get_db, require_permission
-from vox.db.models import Bot, BotCommand, File, Message, Pin, Reaction, User, message_attachments
-from vox.permissions import MANAGE_MESSAGES, READ_HISTORY, SEND_IN_THREADS, SEND_MESSAGES, has_permission, resolve_permissions
+from vox.db.models import Bot, BotCommand, Feed, File, Message, Pin, Reaction, Thread, User, message_attachments
+from vox.limits import PAGE_LIMIT_MESSAGES
+from vox.permissions import MANAGE_MESSAGES, MANAGE_SPACES, READ_HISTORY, SEND_IN_THREADS, SEND_MESSAGES, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox import interactions
@@ -166,7 +167,7 @@ async def _handle_slash_command(
 @router.get("/api/v1/feeds/{feed_id}/messages")
 async def get_feed_messages(
     feed_id: int,
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=PAGE_LIMIT_MESSAGES),
     before: int | None = None,
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
@@ -188,6 +189,17 @@ async def send_feed_message(
     db: AsyncSession = Depends(get_db),
     user: User = require_permission(SEND_MESSAGES, space_type="feed", space_id_param="feed_id"),
 ) -> SendMessageResponse:
+    # Fetch the feed to check type-based restrictions
+    feed = (await db.execute(select(Feed).where(Feed.id == feed_id))).scalar_one_or_none()
+    if feed is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Feed not found."}})
+
+    # Announcement feeds: only users with MANAGE_SPACES can post
+    if feed.type == "announcement":
+        perms = await resolve_permissions(db, user.id, space_type="feed", space_id=feed_id)
+        if not has_permission(perms, MANAGE_SPACES):
+            raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Only moderators can post in announcement feeds."}})
+
     # Slash command interception
     intercepted = await _handle_slash_command(body.body, user, feed_id=feed_id, dm_id=None, db=db)
     if intercepted is not None:
@@ -210,6 +222,24 @@ async def send_feed_message(
             if f is None:
                 raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_ATTACHMENT", "message": f"File {file_id} not found."}})
             await db.execute(message_attachments.insert().values(msg_id=msg_id, file_id=file_id))
+
+    # Forum feeds: auto-create a thread for each new message
+    if feed.type == "forum":
+        thread_name = (body.body[:64] if body.body else "Thread")
+        thread = Thread(
+            name=thread_name,
+            feed_id=feed_id,
+            parent_msg_id=msg_id,
+        )
+        db.add(thread)
+        await db.flush()
+        await dispatch(gw.thread_create(
+            thread_id=thread.id,
+            parent_feed_id=feed_id,
+            parent_msg_id=msg_id,
+            name=thread_name,
+        ))
+
     await db.commit()
     await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to))
     return SendMessageResponse(msg_id=msg_id, timestamp=ts)
@@ -275,7 +305,7 @@ async def bulk_delete_messages(
 async def get_thread_messages(
     feed_id: int,
     thread_id: int,
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=PAGE_LIMIT_MESSAGES),
     before: int | None = None,
     after: int | None = None,
     db: AsyncSession = Depends(get_db),

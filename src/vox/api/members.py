@@ -1,13 +1,14 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, select
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.auth.service import get_user_role_ids
-from vox.db.models import Ban, Invite, User
-from vox.permissions import BAN_MEMBERS, KICK_MEMBERS
+from vox.db.models import Ban, Invite, Message, Role, User, role_members
+from vox.limits import PAGE_LIMIT_BANS, PAGE_LIMIT_MEMBERS
+from vox.permissions import ADMINISTRATOR, BAN_MEMBERS, KICK_MEMBERS, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.members import (
@@ -22,9 +23,40 @@ from vox.models.members import (
 router = APIRouter(tags=["members"])
 
 
+async def get_highest_role_position(db: AsyncSession, user_id: int) -> float:
+    """Return the highest role position for a user (lower number = higher rank).
+
+    Returns infinity if the user has no roles, meaning they are outranked by everyone.
+    """
+    result = await db.execute(
+        select(func.min(Role.position))
+        .join(role_members, role_members.c.role_id == Role.id)
+        .where(role_members.c.user_id == user_id)
+    )
+    pos = result.scalar()
+    return pos if pos is not None else float("inf")
+
+
+async def _check_role_hierarchy(db: AsyncSession, actor_id: int, target_id: int) -> None:
+    """Raise 403 if the actor does not outrank the target in role hierarchy.
+
+    Users with ADMINISTRATOR permission bypass this check.
+    """
+    resolved = await resolve_permissions(db, actor_id)
+    if has_permission(resolved, ADMINISTRATOR):
+        return
+    actor_pos = await get_highest_role_position(db, actor_id)
+    target_pos = await get_highest_role_position(db, target_id)
+    if actor_pos >= target_pos:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": "ROLE_HIERARCHY", "message": "You cannot perform this action on a member with an equal or higher role."}},
+        )
+
+
 @router.get("/api/v1/members")
 async def list_members(
-    limit: int = 100,
+    limit: int = Query(default=100, ge=1, le=PAGE_LIMIT_MEMBERS),
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
@@ -94,12 +126,13 @@ async def update_member(
 async def kick_member(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = require_permission(KICK_MEMBERS),
+    actor: User = require_permission(KICK_MEMBERS),
 ):
     result = await db.execute(select(User).where(User.id == user_id))
     target = result.scalar_one_or_none()
     if target is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "USER_NOT_FOUND", "message": "User does not exist."}})
+    await _check_role_hierarchy(db, actor.id, user_id)
     target.active = False
     await db.commit()
     await dispatch(gw.member_leave(user_id=user_id))
@@ -112,15 +145,38 @@ async def ban_member(
     user_id: int,
     body: BanRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = require_permission(BAN_MEMBERS),
+    actor: User = require_permission(BAN_MEMBERS),
 ) -> BanResponse:
     result = await db.execute(select(User).where(User.id == user_id))
     target = result.scalar_one_or_none()
     if target is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "USER_NOT_FOUND", "message": "User does not exist."}})
+    await _check_role_hierarchy(db, actor.id, user_id)
     target.active = False
     ban = Ban(user_id=user_id, reason=body.reason, created_at=datetime.now(timezone.utc))
     db.add(ban)
+
+    # Delete messages from the banned user within the specified time window
+    if body.delete_msg_days and body.delete_msg_days > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=body.delete_msg_days)
+        cutoff_ms = int(cutoff.timestamp() * 1000)
+        # Find affected feed_ids for gateway events
+        affected = await db.execute(
+            select(Message.feed_id, Message.id)
+            .where(Message.author_id == user_id, Message.timestamp >= cutoff_ms, Message.feed_id != None)
+        )
+        by_feed: dict[int, list[int]] = {}
+        for row in affected:
+            by_feed.setdefault(row.feed_id, []).append(row.id)
+
+        await db.execute(
+            delete(Message).where(Message.author_id == user_id, Message.timestamp >= cutoff_ms)
+        )
+
+        # Dispatch bulk delete events per feed
+        for fid, msg_ids in by_feed.items():
+            await dispatch(gw.message_bulk_delete(feed_id=fid, msg_ids=msg_ids))
+
     await db.commit()
     await dispatch(gw.member_ban(user_id=user_id))
     return BanResponse(user_id=user_id, display_name=target.display_name, reason=body.reason)
@@ -139,7 +195,7 @@ async def unban_member(
 
 @router.get("/api/v1/bans")
 async def list_bans(
-    limit: int = 100,
+    limit: int = Query(default=100, ge=1, le=PAGE_LIMIT_BANS),
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(BAN_MEMBERS),

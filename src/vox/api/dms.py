@@ -1,7 +1,7 @@
 import time
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from vox.api.deps import get_current_user, get_db
 from vox.api.messages import _handle_slash_command, _msg_response, _snowflake
 from vox.db.models import DM, DMReadState, DMSettings, File, Message, User, dm_participants, message_attachments
+from vox.limits import PAGE_LIMIT_DMS, PAGE_LIMIT_MESSAGES
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.dms import (
@@ -84,7 +85,7 @@ async def open_dm(
 
 @router.get("/api/v1/dms")
 async def list_dms(
-    limit: int = 100,
+    limit: int = Query(default=100, ge=1, le=PAGE_LIMIT_DMS),
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -240,7 +241,7 @@ async def send_dm_message(
 @router.get("/api/v1/dms/{dm_id}/messages")
 async def get_dm_messages(
     dm_id: int,
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=PAGE_LIMIT_MESSAGES),
     before: int | None = None,
     after: int | None = None,
     db: AsyncSession = Depends(get_db),

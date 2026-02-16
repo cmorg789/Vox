@@ -1,5 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from vox.limits import COMMAND_DESCRIPTION_MAX, COMMAND_NAME_MAX, MESSAGE_BODY_MAX, WEBHOOK_NAME_MAX
 from vox.models.base import VoxModel
 
 
@@ -7,7 +8,7 @@ from vox.models.base import VoxModel
 
 
 class CreateWebhookRequest(BaseModel):
-    name: str
+    name: str = Field(max_length=WEBHOOK_NAME_MAX)
     avatar: str | None = None
 
 
@@ -19,7 +20,7 @@ class WebhookResponse(VoxModel):
 
 
 class ExecuteWebhookRequest(BaseModel):
-    body: str
+    body: str = Field(max_length=MESSAGE_BODY_MAX)
     embeds: list | None = None
 
 
@@ -27,14 +28,14 @@ class ExecuteWebhookRequest(BaseModel):
 
 
 class CommandParam(BaseModel):
-    name: str
-    description: str | None = None
+    name: str = Field(max_length=COMMAND_NAME_MAX)
+    description: str | None = Field(default=None, max_length=COMMAND_DESCRIPTION_MAX)
     required: bool = False
 
 
 class CommandData(BaseModel):
-    name: str
-    description: str | None = None
+    name: str = Field(max_length=COMMAND_NAME_MAX)
+    description: str | None = Field(default=None, max_length=COMMAND_DESCRIPTION_MAX)
     params: list[CommandParam] | None = None
 
 
