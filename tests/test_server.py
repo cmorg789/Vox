@@ -18,6 +18,10 @@ async def test_update_server(client):
     assert r.json()["name"] == "My Community"
     assert r.json()["description"] == "Cool place"
 
+    r = await client.get("/api/v1/server", headers=h)
+    assert r.json()["name"] == "My Community"
+    assert r.json()["description"] == "Cool place"
+
 
 async def test_layout_empty(client):
     h = await auth(client)
@@ -41,3 +45,30 @@ async def test_layout_with_content(client):
     assert len(r.json()["feeds"]) == 1
     assert len(r.json()["rooms"]) == 1
     assert r.json()["feeds"][0]["name"] == "welcome"
+
+
+async def test_get_server_requires_auth(client):
+    r = await client.get("/api/v1/server")
+    assert r.status_code in (401, 422)
+
+
+async def test_update_server_partial(client):
+    h = await auth(client)
+    original = await client.get("/api/v1/server", headers=h)
+    original_desc = original.json()["description"]
+
+    r = await client.patch("/api/v1/server", headers=h, json={"name": "New Name"})
+    assert r.status_code == 200
+    assert r.json()["name"] == "New Name"
+    assert r.json()["description"] == original_desc
+
+
+async def test_update_server_empty_body(client):
+    h = await auth(client)
+    r = await client.patch("/api/v1/server", headers=h, json={})
+    assert r.status_code == 200
+
+
+async def test_layout_requires_auth(client):
+    r = await client.get("/api/v1/server/layout")
+    assert r.status_code in (401, 422)

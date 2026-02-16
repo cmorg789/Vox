@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import AuditLog, RecoveryCode, Report, TOTPSecret, User, WebAuthnCredential
-from vox.limits import PAGE_LIMIT_AUDIT_LOG, PAGE_LIMIT_REPORTS
+from vox.limits import limits
 from vox.permissions import MANAGE_2FA, VIEW_AUDIT_LOG, VIEW_REPORTS
 from vox.models.moderation import (
     AuditLogEntry,
@@ -53,11 +53,12 @@ async def create_report(
 @router.get("/api/v1/reports")
 async def list_reports(
     status: str | None = None,
-    limit: int = Query(default=50, ge=1, le=PAGE_LIMIT_REPORTS),
+    limit: int = Query(default=50, ge=1, le=1000),
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(VIEW_REPORTS),
 ):
+    limit = min(limit, limits.page_limit_reports)
     query = select(Report).order_by(Report.id).limit(limit)
     if status is not None:
         query = query.where(Report.status == status)
@@ -93,14 +94,16 @@ async def query_audit_log(
     event_type: str | None = None,
     actor_id: int | None = None,
     target_id: int | None = None,
-    limit: int = Query(default=50, ge=1, le=PAGE_LIMIT_AUDIT_LOG),
+    limit: int = Query(default=50, ge=1, le=1000),
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(VIEW_AUDIT_LOG),
 ) -> AuditLogResponse:
+    limit = min(limit, limits.page_limit_audit_log)
     query = select(AuditLog).order_by(AuditLog.id).limit(limit)
     if event_type is not None:
-        query = query.where(AuditLog.event_type.like(event_type.replace("*", "%")))
+        escaped = event_type.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_").replace("*", "%")
+        query = query.where(AuditLog.event_type.like(escaped, escape="\\"))
     if actor_id is not None:
         query = query.where(AuditLog.actor_id == actor_id)
     if target_id is not None:
@@ -132,7 +135,6 @@ async def admin_2fa_reset(
     await db.execute(delete(RecoveryCode).where(RecoveryCode.user_id == body.target_user_id))
 
     # Audit log
-    ts = int(time.time() * 1000)
-    import json
-    db.add(AuditLog(id=_snowflake(), event_type="2fa.admin_reset", actor_id=user.id, target_id=body.target_user_id, extra=json.dumps({"reason": body.reason}), timestamp=ts))
+    from vox.audit import write_audit
+    await write_audit(db, "2fa.admin_reset", actor_id=user.id, target_id=body.target_user_id, extra={"reason": body.reason})
     await db.commit()

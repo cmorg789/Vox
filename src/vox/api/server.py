@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
-from vox.db.models import Category, Config, Feed, PermissionOverride, Room, User
+from vox.db.models import Category, Config, ConfigKey, Feed, PermissionOverride, Room, User
+from vox.limits import limits, save_limit
 from vox.permissions import MANAGE_SERVER
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
@@ -40,9 +43,9 @@ async def get_server_info(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> ServerInfoResponse:
-    name = await _get_config(db, "server_name") or "Vox Server"
-    icon = await _get_config(db, "server_icon")
-    description = await _get_config(db, "server_description")
+    name = await _get_config(db, ConfigKey.SERVER_NAME) or "Vox Server"
+    icon = await _get_config(db, ConfigKey.SERVER_ICON)
+    description = await _get_config(db, ConfigKey.SERVER_DESCRIPTION)
     result = await db.execute(select(func.count()).select_from(User).where(User.federated == False, User.active == True))
     member_count = result.scalar() or 0
     return ServerInfoResponse(name=name, icon=icon, description=description, member_count=member_count)
@@ -56,13 +59,13 @@ async def update_server(
 ):
     changed = {}
     if body.name is not None:
-        await _set_config(db, "server_name", body.name)
+        await _set_config(db, ConfigKey.SERVER_NAME, body.name)
         changed["name"] = body.name
     if body.icon is not None:
-        await _set_config(db, "server_icon", body.icon)
+        await _set_config(db, ConfigKey.SERVER_ICON, body.icon)
         changed["icon"] = body.icon
     if body.description is not None:
-        await _set_config(db, "server_description", body.description)
+        await _set_config(db, ConfigKey.SERVER_DESCRIPTION, body.description)
         changed["description"] = body.description
     await db.commit()
     if changed:
@@ -104,3 +107,34 @@ async def get_layout(
 
     categories = [CategoryInfo(category_id=c.id, name=c.name, position=c.position) for c in cats]
     return ServerLayoutResponse(categories=categories, feeds=feeds, rooms=rooms)
+
+
+# --- Limits ---
+
+
+class UpdateLimitsRequest(BaseModel):
+    limits: dict[str, int]
+
+
+@router.get("/limits")
+async def get_limits(
+    _: User = require_permission(MANAGE_SERVER),
+):
+    """Returns all limits with current (effective) values."""
+    return limits.model_dump()
+
+
+@router.patch("/limits")
+async def update_limits(
+    body: UpdateLimitsRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = require_permission(MANAGE_SERVER),
+):
+    """Update specific limits. Writes to DB and hot-reloads in-memory."""
+    valid_fields = set(limits.model_fields)
+    for name, value in body.limits.items():
+        if name not in valid_fields:
+            raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_LIMIT", "message": f"Unknown limit: {name}"}})
+        await save_limit(db, name, value)
+    await db.commit()
+    return limits.model_dump()

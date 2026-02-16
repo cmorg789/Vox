@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.auth.service import get_user_role_ids
 from vox.db.models import Ban, Invite, Message, Role, User, role_members
-from vox.limits import PAGE_LIMIT_BANS, PAGE_LIMIT_MEMBERS
+from vox.limits import limits
 from vox.permissions import ADMINISTRATOR, BAN_MEMBERS, KICK_MEMBERS, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
@@ -15,6 +15,7 @@ from vox.models.members import (
     BanRequest,
     BanResponse,
     JoinRequest,
+    KickRequest,
     MemberListResponse,
     MemberResponse,
     UpdateMemberRequest,
@@ -56,11 +57,12 @@ async def _check_role_hierarchy(db: AsyncSession, actor_id: int, target_id: int)
 
 @router.get("/api/v1/members")
 async def list_members(
-    limit: int = Query(default=100, ge=1, le=PAGE_LIMIT_MEMBERS),
+    limit: int = Query(default=100, ge=1, le=1000),
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> MemberListResponse:
+    limit = min(limit, limits.page_limit_members)
     query = select(User).where(User.active == True).order_by(User.id).limit(limit)
     if after is not None:
         query = query.where(User.id > after)
@@ -125,6 +127,7 @@ async def update_member(
 @router.delete("/api/v1/members/{user_id}", status_code=204)
 async def kick_member(
     user_id: int,
+    body: KickRequest | None = None,
     db: AsyncSession = Depends(get_db),
     actor: User = require_permission(KICK_MEMBERS),
 ):
@@ -134,6 +137,9 @@ async def kick_member(
         raise HTTPException(status_code=404, detail={"error": {"code": "USER_NOT_FOUND", "message": "User does not exist."}})
     await _check_role_hierarchy(db, actor.id, user_id)
     target.active = False
+    from vox.audit import write_audit
+    extra = {"reason": body.reason} if body and body.reason else None
+    await write_audit(db, "member.kick", actor_id=actor.id, target_id=user_id, extra=extra)
     await db.commit()
     await dispatch(gw.member_leave(user_id=user_id))
 
@@ -177,6 +183,8 @@ async def ban_member(
         for fid, msg_ids in by_feed.items():
             await dispatch(gw.message_bulk_delete(feed_id=fid, msg_ids=msg_ids))
 
+    from vox.audit import write_audit
+    await write_audit(db, "member.ban", actor_id=actor.id, target_id=user_id, extra={"reason": body.reason})
     await db.commit()
     await dispatch(gw.member_ban(user_id=user_id))
     return BanResponse(user_id=user_id, display_name=target.display_name, reason=body.reason)
@@ -186,20 +194,23 @@ async def ban_member(
 async def unban_member(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = require_permission(BAN_MEMBERS),
+    actor: User = require_permission(BAN_MEMBERS),
 ):
     await db.execute(delete(Ban).where(Ban.user_id == user_id))
+    from vox.audit import write_audit
+    await write_audit(db, "member.unban", actor_id=actor.id, target_id=user_id)
     await db.commit()
     await dispatch(gw.member_unban(user_id=user_id))
 
 
 @router.get("/api/v1/bans")
 async def list_bans(
-    limit: int = Query(default=100, ge=1, le=PAGE_LIMIT_BANS),
+    limit: int = Query(default=100, ge=1, le=1000),
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(BAN_MEMBERS),
 ):
+    limit = min(limit, limits.page_limit_bans)
     query = select(Ban).order_by(Ban.user_id).limit(limit)
     if after is not None:
         query = query.where(Ban.user_id > after)

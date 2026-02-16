@@ -1,15 +1,8 @@
-from pydantic import BaseModel, Field
+from typing import Annotated
 
-from vox.limits import (
-    DISPLAY_NAME_MAX,
-    MFA_CODE_MAX,
-    MFA_TICKET_MAX,
-    PASSWORD_MAX,
-    PASSWORD_MIN,
-    USERNAME_MAX,
-    USERNAME_MIN,
-    WEBAUTHN_FIELD_MAX,
-)
+from pydantic import AfterValidator, BaseModel, Field
+
+from vox.limits import str_limit
 from vox.models.base import VoxModel
 
 
@@ -17,9 +10,9 @@ from vox.models.base import VoxModel
 
 
 class RegisterRequest(BaseModel):
-    username: str = Field(min_length=USERNAME_MIN, max_length=USERNAME_MAX)
-    password: str = Field(min_length=PASSWORD_MIN, max_length=PASSWORD_MAX)
-    display_name: str | None = Field(default=None, max_length=DISPLAY_NAME_MAX)
+    username: Annotated[str, AfterValidator(str_limit(min_attr="username_min", max_attr="username_max"))]
+    password: Annotated[str, AfterValidator(str_limit(min_attr="password_min", max_attr="password_max"))]
+    display_name: Annotated[str, AfterValidator(str_limit(max_attr="display_name_max"))] | None = None
 
 
 class RegisterResponse(VoxModel):
@@ -31,8 +24,8 @@ class RegisterResponse(VoxModel):
 
 
 class LoginRequest(BaseModel):
-    username: str = Field(max_length=USERNAME_MAX)
-    password: str = Field(max_length=PASSWORD_MAX)
+    username: Annotated[str, AfterValidator(str_limit(max_attr="username_max"))]
+    password: Annotated[str, AfterValidator(str_limit(max_attr="password_max"))]
 
 
 class LoginResponse(VoxModel):
@@ -52,9 +45,9 @@ class MFARequiredResponse(VoxModel):
 
 
 class Login2FARequest(BaseModel):
-    mfa_ticket: str = Field(max_length=MFA_TICKET_MAX)
+    mfa_ticket: Annotated[str, AfterValidator(str_limit(max_attr="mfa_ticket_max"))]
     method: str  # totp, webauthn, recovery
-    code: str | None = Field(default=None, max_length=MFA_CODE_MAX)
+    code: Annotated[str, AfterValidator(str_limit(max_attr="mfa_code_max"))] | None = None
     assertion: dict | None = None  # WebAuthn assertion object
 
 
@@ -78,7 +71,7 @@ class MFASetupResponse(VoxModel):
 
 class MFASetupConfirmRequest(BaseModel):
     setup_id: str
-    code: str | None = Field(default=None, max_length=MFA_CODE_MAX)  # TOTP
+    code: Annotated[str, AfterValidator(str_limit(max_attr="mfa_code_max"))] | None = None  # TOTP
     attestation: dict | None = None  # WebAuthn
     credential_name: str | None = None
 
@@ -90,14 +83,14 @@ class MFASetupConfirmResponse(VoxModel):
 
 class MFARemoveRequest(BaseModel):
     method: str
-    code: str = Field(max_length=MFA_CODE_MAX)
+    code: Annotated[str, AfterValidator(str_limit(max_attr="mfa_code_max"))]
 
 
 # --- WebAuthn ---
 
 
 class WebAuthnChallengeRequest(BaseModel):
-    username: str = Field(max_length=USERNAME_MAX)
+    username: Annotated[str, AfterValidator(str_limit(max_attr="username_max"))]
 
 
 class WebAuthnChallengeResponse(VoxModel):
@@ -106,12 +99,12 @@ class WebAuthnChallengeResponse(VoxModel):
 
 
 class WebAuthnLoginRequest(BaseModel):
-    username: str = Field(max_length=USERNAME_MAX)
-    client_data_json: str = Field(max_length=WEBAUTHN_FIELD_MAX)
-    authenticator_data: str = Field(max_length=WEBAUTHN_FIELD_MAX)
-    signature: str = Field(max_length=WEBAUTHN_FIELD_MAX)
-    credential_id: str = Field(max_length=WEBAUTHN_FIELD_MAX)
-    user_handle: str | None = Field(default=None, max_length=WEBAUTHN_FIELD_MAX)
+    username: Annotated[str, AfterValidator(str_limit(max_attr="username_max"))]
+    client_data_json: Annotated[str, AfterValidator(str_limit(max_attr="webauthn_field_max"))]
+    authenticator_data: Annotated[str, AfterValidator(str_limit(max_attr="webauthn_field_max"))]
+    signature: Annotated[str, AfterValidator(str_limit(max_attr="webauthn_field_max"))]
+    credential_id: Annotated[str, AfterValidator(str_limit(max_attr="webauthn_field_max"))]
+    user_handle: Annotated[str, AfterValidator(str_limit(max_attr="webauthn_field_max"))] | None = None
 
 
 class WebAuthnCredentialResponse(VoxModel):

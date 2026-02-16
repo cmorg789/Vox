@@ -1,6 +1,8 @@
-from pydantic import BaseModel, Field
+from typing import Annotated
 
-from vox.limits import AVATAR_MAX, BIO_MAX, DISPLAY_NAME_MAX
+from pydantic import AfterValidator, BaseModel
+
+from vox.limits import str_limit
 from vox.models.base import VoxModel
 
 
@@ -13,9 +15,9 @@ class UserResponse(VoxModel):
 
 
 class UpdateProfileRequest(BaseModel):
-    display_name: str | None = Field(default=None, max_length=DISPLAY_NAME_MAX)
-    avatar: str | None = Field(default=None, max_length=AVATAR_MAX)
-    bio: str | None = Field(default=None, max_length=BIO_MAX)
+    display_name: Annotated[str, AfterValidator(str_limit(max_attr="display_name_max"))] | None = None
+    avatar: Annotated[str, AfterValidator(str_limit(max_attr="avatar_max"))] | None = None
+    bio: Annotated[str, AfterValidator(str_limit(max_attr="bio_max"))] | None = None
 
 
 class FriendResponse(VoxModel):

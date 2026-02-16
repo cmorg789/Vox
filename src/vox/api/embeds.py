@@ -103,8 +103,17 @@ async def resolve_embed(
 ) -> EmbedResponse:
     _validate_url(body.url)
     try:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
+        async with httpx.AsyncClient(follow_redirects=False) as client:
             resp = await client.get(body.url, timeout=5.0, headers={"User-Agent": "VoxBot/1.0"})
+            # Follow redirects manually, validating each target
+            redirects = 0
+            while resp.is_redirect and redirects < 5:
+                location = resp.headers.get("location")
+                if not location:
+                    break
+                _validate_url(location)
+                resp = await client.get(location, timeout=5.0, headers={"User-Agent": "VoxBot/1.0"})
+                redirects += 1
             if len(resp.content) > _MAX_RESPONSE_SIZE:
                 return EmbedResponse()
             html = resp.text

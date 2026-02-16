@@ -171,7 +171,7 @@ async def test_feed_messages_limit_capped(client):
     h, _, _ = await auth(client)
     fid = await setup_feed(client, h)
     r = await client.get(f"/api/v1/feeds/{fid}/messages?limit=200", headers=h)
-    assert r.status_code == 422
+    assert r.status_code == 200  # clamped to runtime limit, not rejected
 
 
 async def test_feed_messages_limit_zero(client):
@@ -184,13 +184,13 @@ async def test_feed_messages_limit_zero(client):
 async def test_members_limit_capped(client):
     h, _, _ = await auth(client)
     r = await client.get("/api/v1/members?limit=300", headers=h)
-    assert r.status_code == 422
+    assert r.status_code == 200  # clamped to runtime limit, not rejected
 
 
 async def test_search_limit_capped(client):
     h, _, _ = await auth(client)
     r = await client.get("/api/v1/messages/search?query=test&limit=200", headers=h)
-    assert r.status_code == 422
+    assert r.status_code == 200  # clamped to runtime limit, not rejected
 
 
 async def test_valid_pagination_limit(client):

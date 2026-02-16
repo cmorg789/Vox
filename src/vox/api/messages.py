@@ -381,7 +381,9 @@ async def add_reaction(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    db.add(Reaction(msg_id=msg_id, user_id=user.id, emoji=emoji))
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+    stmt = sqlite_insert(Reaction).values(msg_id=msg_id, user_id=user.id, emoji=emoji).on_conflict_do_nothing()
+    await db.execute(stmt)
     await db.commit()
     await dispatch(gw.message_reaction_add(msg_id=msg_id, user_id=user.id, emoji=emoji))
 
@@ -411,7 +413,9 @@ async def pin_message(
     _: User = require_permission(MANAGE_MESSAGES, space_type="feed", space_id_param="feed_id"),
 ):
     from datetime import datetime, timezone
-    db.add(Pin(feed_id=feed_id, msg_id=msg_id, pinned_at=datetime.now(timezone.utc)))
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+    stmt = sqlite_insert(Pin).values(feed_id=feed_id, msg_id=msg_id, pinned_at=datetime.now(timezone.utc)).on_conflict_do_nothing()
+    await db.execute(stmt)
     await db.commit()
     await dispatch(gw.message_pin_update(msg_id=msg_id, feed_id=feed_id, pinned=True))
 

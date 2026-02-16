@@ -1,6 +1,8 @@
 """Tests for rate limiting middleware."""
 
-from vox.ratelimit import CATEGORIES, reset
+import time as _time
+
+from vox.ratelimit import CATEGORIES, _buckets, check, classify, reset
 
 
 async def setup(client):
@@ -70,3 +72,90 @@ async def test_ratelimit_reset_clears_buckets(client):
     reset()
     r = await client.post("/api/v1/auth/login", json={"username": "x", "password": "x"})
     assert r.status_code != 429
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for classify() and check()
+# ---------------------------------------------------------------------------
+
+
+def test_classify_messages_nested():
+    assert classify("/api/v1/feeds/1/messages") == "messages"
+
+
+def test_classify_search():
+    # /messages check takes priority over /search when both are in the path
+    assert classify("/api/v1/feeds/1/messages/search") == "messages"
+    # A search path without /messages should classify as search
+    assert classify("/api/v1/server/search") == "search"
+
+
+def test_classify_prefix_map():
+    assert classify("/api/v1/auth/login") == "auth"
+    assert classify("/api/v1/feeds/1") == "channels"
+    assert classify("/api/v1/roles/1") == "roles"
+    assert classify("/api/v1/emoji/1") == "emoji"
+    assert classify("/api/v1/voice/join") == "voice"
+    assert classify("/api/v1/bots/1") == "bots"
+    assert classify("/api/v1/e2ee/keys") == "e2ee"
+    assert classify("/api/v1/federation/peers") == "federation"
+    assert classify("/api/v1/dms/1") == "messages"
+    assert classify("/api/v1/files/upload") == "files"
+
+
+def test_classify_unknown_falls_back_to_server():
+    assert classify("/api/v1/totally-unknown") == "server"
+
+
+def test_check_allows_first_request():
+    reset()
+    allowed, limit, remaining, reset_ts, retry_after = check("testkey", "auth")
+    assert allowed is True
+    max_tokens = CATEGORIES["auth"][0]
+    assert limit == max_tokens
+    assert remaining == max_tokens - 1
+    assert retry_after == 0
+
+
+def test_check_exhausts_bucket():
+    reset()
+    max_tokens = CATEGORIES["auth"][0]
+    for _ in range(max_tokens):
+        allowed, *_ = check("exhaustkey", "auth")
+        assert allowed is True
+    allowed, limit, remaining, reset_ts, retry_after = check("exhaustkey", "auth")
+    assert allowed is False
+    assert remaining == 0
+    assert retry_after > 0
+
+
+def test_check_different_keys_independent():
+    reset()
+    max_tokens = CATEGORIES["auth"][0]
+    for _ in range(max_tokens):
+        check("key_a", "auth")
+    allowed_a, *_ = check("key_a", "auth")
+    assert allowed_a is False
+
+    allowed_b, *_ = check("key_b", "auth")
+    assert allowed_b is True
+
+
+def test_check_refill_restores_tokens(monkeypatch):
+    reset()
+    max_tokens = CATEGORIES["auth"][0]
+    refill_rate = CATEGORIES["auth"][1]
+
+    for _ in range(max_tokens):
+        check("refillkey", "auth")
+
+    allowed, *_ = check("refillkey", "auth")
+    assert allowed is False
+
+    # Advance time enough for full refill
+    future = _time.time() + (max_tokens / refill_rate) + 1
+    monkeypatch.setattr(_time, "time", lambda: future)
+
+    allowed, _, remaining, *_ = check("refillkey", "auth")
+    assert allowed is True
+    assert remaining == max_tokens - 1

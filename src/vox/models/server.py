@@ -1,6 +1,8 @@
-from pydantic import BaseModel, Field
+from typing import Annotated
 
-from vox.limits import SERVER_DESCRIPTION_MAX, SERVER_ICON_MAX, SERVER_NAME_MAX
+from pydantic import AfterValidator, BaseModel
+
+from vox.limits import str_limit
 from vox.models.base import VoxModel
 
 
@@ -12,9 +14,9 @@ class ServerInfoResponse(VoxModel):
 
 
 class UpdateServerRequest(BaseModel):
-    name: str | None = Field(default=None, max_length=SERVER_NAME_MAX)
-    icon: str | None = Field(default=None, max_length=SERVER_ICON_MAX)
-    description: str | None = Field(default=None, max_length=SERVER_DESCRIPTION_MAX)
+    name: Annotated[str, AfterValidator(str_limit(max_attr="server_name_max"))] | None = None
+    icon: Annotated[str, AfterValidator(str_limit(max_attr="server_icon_max"))] | None = None
+    description: Annotated[str, AfterValidator(str_limit(max_attr="server_description_max"))] | None = None
 
 
 class PermissionOverrideData(VoxModel):

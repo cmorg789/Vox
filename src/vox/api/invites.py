@@ -6,8 +6,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
-from vox.db.models import Config, Invite, User
-from vox.limits import PAGE_LIMIT_INVITES
+from vox.db.models import Config, ConfigKey, Invite, User
+from vox.limits import limits
 from vox.permissions import CREATE_INVITES
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
@@ -35,6 +35,8 @@ async def create_invite(
         created_at=datetime.now(timezone.utc),
     )
     db.add(invite)
+    from vox.audit import write_audit
+    await write_audit(db, "invite.create", actor_id=user.id, extra={"code": code})
     await db.commit()
     await dispatch(gw.invite_create(code=code, creator_id=user.id, feed_id=body.feed_id))
     return InviteResponse(
@@ -51,12 +53,14 @@ async def create_invite(
 async def delete_invite(
     code: str,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    actor: User = Depends(get_current_user),
 ):
     result = await db.execute(select(Invite).where(Invite.code == code))
     invite = result.scalar_one_or_none()
     if invite is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "INVITE_INVALID", "message": "Invite not found."}})
+    from vox.audit import write_audit
+    await write_audit(db, "invite.delete", actor_id=actor.id, extra={"code": code})
     await db.delete(invite)
     await db.commit()
     await dispatch(gw.invite_delete(code=code))
@@ -72,9 +76,9 @@ async def resolve_invite(
     if invite is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "INVITE_INVALID", "message": "Invite not found."}})
 
-    name_row = await db.execute(select(Config).where(Config.key == "server_name"))
+    name_row = await db.execute(select(Config).where(Config.key == ConfigKey.SERVER_NAME))
     name = name_row.scalar_one_or_none()
-    icon_row = await db.execute(select(Config).where(Config.key == "server_icon"))
+    icon_row = await db.execute(select(Config).where(Config.key == ConfigKey.SERVER_ICON))
     icon = icon_row.scalar_one_or_none()
     count = (await db.execute(select(func.count()).select_from(User).where(User.active == True, User.federated == False))).scalar() or 0
 
@@ -88,11 +92,12 @@ async def resolve_invite(
 
 @router.get("")
 async def list_invites(
-    limit: int = Query(default=100, ge=1, le=PAGE_LIMIT_INVITES),
+    limit: int = Query(default=100, ge=1, le=1000),
     after: str | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    limit = min(limit, limits.page_limit_invites)
     query = select(Invite).order_by(Invite.code).limit(limit)
     if after is not None:
         query = query.where(Invite.code > after)

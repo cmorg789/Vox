@@ -1,13 +1,15 @@
-from pydantic import BaseModel, Field
+from typing import Annotated
 
-from vox.limits import INVITE_MAX_AGE_MAX, INVITE_MAX_USES_MAX
+from pydantic import AfterValidator, BaseModel
+
+from vox.limits import int_limit
 from vox.models.base import VoxModel
 
 
 class CreateInviteRequest(BaseModel):
     feed_id: int | None = None
-    max_uses: int | None = Field(default=None, ge=0, le=INVITE_MAX_USES_MAX)
-    max_age: int | None = Field(default=None, ge=0, le=INVITE_MAX_AGE_MAX)  # seconds
+    max_uses: Annotated[int, AfterValidator(int_limit(ge=0, max_attr="invite_max_uses_max"))] | None = None
+    max_age: Annotated[int, AfterValidator(int_limit(ge=0, max_attr="invite_max_age_max"))] | None = None  # seconds
 
 
 class InviteResponse(VoxModel):

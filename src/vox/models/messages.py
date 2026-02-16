@@ -1,24 +1,19 @@
-from pydantic import BaseModel, Field
+from typing import Annotated
 
-from vox.limits import BULK_DELETE_MAX, MESSAGE_BODY_MAX
+from pydantic import AfterValidator, BaseModel
+
+from vox.limits import list_limit, str_limit
 from vox.models.base import VoxModel
 
 
-class MentionData(BaseModel):
-    user_id: int
-
-
 class SendMessageRequest(BaseModel):
-    body: str = Field(max_length=MESSAGE_BODY_MAX)
+    body: Annotated[str, AfterValidator(str_limit(max_attr="message_body_max"))]
     reply_to: int | None = None
-    mentions: list[MentionData] | None = None
-    embeds: list | None = None
     attachments: list[str] | None = None  # file_ids
-    components: list | None = None  # bot components
 
 
 class EditMessageRequest(BaseModel):
-    body: str = Field(max_length=MESSAGE_BODY_MAX)
+    body: Annotated[str, AfterValidator(str_limit(max_attr="message_body_max"))]
 
 
 class SendMessageResponse(VoxModel):
@@ -41,10 +36,7 @@ class MessageResponse(VoxModel):
     opaque_blob: str | None = None
     timestamp: int
     reply_to: int | None = None
-    mentions: list[MentionData] = []
-    embeds: list = []
     attachments: list = []
-    components: list = []
     edit_timestamp: int | None = None
     federated: bool = False
     author_address: str | None = None
@@ -55,7 +47,7 @@ class MessageListResponse(VoxModel):
 
 
 class BulkDeleteRequest(BaseModel):
-    msg_ids: list[int] = Field(max_length=BULK_DELETE_MAX)
+    msg_ids: Annotated[list[int], AfterValidator(list_limit(max_attr="bulk_delete_max"))]
 
 
 # --- Search ---

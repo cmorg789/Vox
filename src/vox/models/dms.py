@@ -1,13 +1,15 @@
-from pydantic import BaseModel, Field
+from typing import Annotated
 
-from vox.limits import DM_ICON_MAX, DM_NAME_MAX, GROUP_DM_RECIPIENTS_MAX
+from pydantic import AfterValidator, BaseModel
+
+from vox.limits import list_limit, str_limit
 from vox.models.base import VoxModel
 
 
 class OpenDMRequest(BaseModel):
     recipient_id: int | None = None  # 1:1
-    recipient_ids: list[int] | None = Field(default=None, max_length=GROUP_DM_RECIPIENTS_MAX)  # group
-    name: str | None = Field(default=None, max_length=DM_NAME_MAX)  # group only
+    recipient_ids: Annotated[list[int], AfterValidator(list_limit(max_attr="group_dm_recipients_max"))] | None = None  # group
+    name: Annotated[str, AfterValidator(str_limit(max_attr="dm_name_max"))] | None = None  # group only
 
 
 class DMResponse(VoxModel):
@@ -23,8 +25,8 @@ class DMListResponse(VoxModel):
 
 
 class UpdateGroupDMRequest(BaseModel):
-    name: str | None = Field(default=None, max_length=DM_NAME_MAX)
-    icon: str | None = Field(default=None, max_length=DM_ICON_MAX)
+    name: Annotated[str, AfterValidator(str_limit(max_attr="dm_name_max"))] | None = None
+    icon: Annotated[str, AfterValidator(str_limit(max_attr="dm_icon_max"))] | None = None
 
 
 class ReadReceiptRequest(BaseModel):

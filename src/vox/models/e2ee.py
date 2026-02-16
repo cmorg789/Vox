@@ -1,6 +1,8 @@
-from pydantic import BaseModel, Field
+from typing import Annotated
 
-from vox.limits import DEVICE_ID_MAX, DEVICE_NAME_MAX, KEY_BACKUP_MAX
+from pydantic import AfterValidator, BaseModel
+
+from vox.limits import str_limit
 from vox.models.base import VoxModel
 
 
@@ -29,12 +31,12 @@ class PrekeyBundleResponse(VoxModel):
 
 
 class AddDeviceRequest(BaseModel):
-    device_id: str = Field(max_length=DEVICE_ID_MAX)
-    device_name: str = Field(max_length=DEVICE_NAME_MAX)
+    device_id: Annotated[str, AfterValidator(str_limit(max_attr="device_id_max"))]
+    device_name: Annotated[str, AfterValidator(str_limit(max_attr="device_name_max"))]
 
 
 class PairDeviceRequest(BaseModel):
-    device_name: str = Field(max_length=DEVICE_NAME_MAX)
+    device_name: Annotated[str, AfterValidator(str_limit(max_attr="device_name_max"))]
     method: str  # cpace or qr
     temp_public_key: str | None = None  # QR method only
 
@@ -51,7 +53,7 @@ class PairRespondRequest(BaseModel):
 
 
 class KeyBackupRequest(BaseModel):
-    encrypted_blob: str = Field(max_length=KEY_BACKUP_MAX)  # base64
+    encrypted_blob: Annotated[str, AfterValidator(str_limit(max_attr="key_backup_max"))]  # base64
 
 
 class KeyBackupResponse(VoxModel):

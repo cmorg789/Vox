@@ -1,6 +1,8 @@
-from pydantic import BaseModel, Field
+from typing import Annotated
 
-from vox.limits import COMMAND_DESCRIPTION_MAX, COMMAND_NAME_MAX, MESSAGE_BODY_MAX, WEBHOOK_NAME_MAX
+from pydantic import AfterValidator, BaseModel
+
+from vox.limits import str_limit
 from vox.models.base import VoxModel
 
 
@@ -8,7 +10,7 @@ from vox.models.base import VoxModel
 
 
 class CreateWebhookRequest(BaseModel):
-    name: str = Field(max_length=WEBHOOK_NAME_MAX)
+    name: Annotated[str, AfterValidator(str_limit(max_attr="webhook_name_max"))]
     avatar: str | None = None
 
 
@@ -20,7 +22,7 @@ class WebhookResponse(VoxModel):
 
 
 class ExecuteWebhookRequest(BaseModel):
-    body: str = Field(max_length=MESSAGE_BODY_MAX)
+    body: Annotated[str, AfterValidator(str_limit(max_attr="message_body_max"))]
     embeds: list | None = None
 
 
@@ -28,14 +30,14 @@ class ExecuteWebhookRequest(BaseModel):
 
 
 class CommandParam(BaseModel):
-    name: str = Field(max_length=COMMAND_NAME_MAX)
-    description: str | None = Field(default=None, max_length=COMMAND_DESCRIPTION_MAX)
+    name: Annotated[str, AfterValidator(str_limit(max_attr="command_name_max"))]
+    description: Annotated[str, AfterValidator(str_limit(max_attr="command_description_max"))] | None = None
     required: bool = False
 
 
 class CommandData(BaseModel):
-    name: str = Field(max_length=COMMAND_NAME_MAX)
-    description: str | None = Field(default=None, max_length=COMMAND_DESCRIPTION_MAX)
+    name: Annotated[str, AfterValidator(str_limit(max_attr="command_name_max"))]
+    description: Annotated[str, AfterValidator(str_limit(max_attr="command_description_max"))] | None = None
     params: list[CommandParam] | None = None
 
 

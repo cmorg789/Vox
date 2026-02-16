@@ -6,7 +6,7 @@ from sqlalchemy.orm import selectinload
 from vox.api.deps import get_current_user, get_db
 from vox.api.messages import _msg_response
 from vox.db.models import Message, Pin, User, message_attachments
-from vox.limits import PAGE_LIMIT_SEARCH
+from vox.limits import limits
 from vox.models.messages import SearchResponse
 
 router = APIRouter(tags=["search"])
@@ -20,12 +20,15 @@ async def search_messages(
     before: int | None = None,
     after: int | None = None,
     has_file: bool | None = None,
+    has_embed: bool | None = None,
     pinned: bool | None = None,
-    limit: int = Query(default=25, ge=1, le=PAGE_LIMIT_SEARCH),
+    limit: int = Query(default=25, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> SearchResponse:
-    stmt = select(Message).options(selectinload(Message.attachments)).where(Message.body.ilike(f"%{query}%")).order_by(Message.id.desc()).limit(limit)
+    limit = min(limit, limits.page_limit_search)
+    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    stmt = select(Message).options(selectinload(Message.attachments)).where(Message.body.ilike(f"%{escaped}%", escape="\\")).order_by(Message.id.desc()).limit(limit)
     if feed_id is not None:
         stmt = stmt.where(Message.feed_id == feed_id)
     if author_id is not None:
@@ -44,5 +47,9 @@ async def search_messages(
             message_attachments.c.msg_id == Message.id
         ).exists()
         stmt = stmt.where(not_(attachment_exists))
+    if has_embed is True:
+        stmt = stmt.where(Message.embed != None)
+    if has_embed is False:
+        stmt = stmt.where(Message.embed == None)
     result = await db.execute(stmt)
     return SearchResponse(results=[_msg_response(m) for m in result.scalars().all()])

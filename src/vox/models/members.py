@@ -1,6 +1,8 @@
-from pydantic import BaseModel, Field
+from typing import Annotated
 
-from vox.limits import BAN_DELETE_DAYS_MAX, BAN_REASON_MAX, KICK_REASON_MAX, NICKNAME_MAX
+from pydantic import AfterValidator, BaseModel
+
+from vox.limits import int_limit, str_limit
 from vox.models.base import VoxModel
 
 
@@ -22,16 +24,16 @@ class JoinRequest(BaseModel):
 
 
 class UpdateMemberRequest(BaseModel):
-    nickname: str | None = Field(default=None, max_length=NICKNAME_MAX)
+    nickname: Annotated[str, AfterValidator(str_limit(max_attr="nickname_max"))] | None = None
 
 
 class KickRequest(BaseModel):
-    reason: str | None = Field(default=None, max_length=KICK_REASON_MAX)
+    reason: Annotated[str, AfterValidator(str_limit(max_attr="kick_reason_max"))] | None = None
 
 
 class BanRequest(BaseModel):
-    reason: str | None = Field(default=None, max_length=BAN_REASON_MAX)
-    delete_msg_days: int | None = Field(default=None, ge=0, le=BAN_DELETE_DAYS_MAX)
+    reason: Annotated[str, AfterValidator(str_limit(max_attr="ban_reason_max"))] | None = None
+    delete_msg_days: Annotated[int, AfterValidator(int_limit(ge=0, max_attr="ban_delete_days_max"))] | None = None
 
 
 class BanResponse(VoxModel):

@@ -4,10 +4,11 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
-from vox.db.models import Category, Feed, Room, Thread, User, feed_subscribers, thread_subscribers
+from vox.db.models import Category, Feed, PermissionOverride, Room, Thread, User, feed_subscribers, thread_subscribers
 from vox.permissions import CREATE_THREADS, MANAGE_SPACES, MANAGE_THREADS
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
+from vox.models.server import PermissionOverrideData
 from vox.models.channels import (
     CategoryResponse,
     CreateCategoryRequest,
@@ -26,6 +27,19 @@ from vox.models.channels import (
 router = APIRouter(tags=["channels"])
 
 
+async def _overrides_for(db: AsyncSession, space_type: str, space_id: int) -> list[PermissionOverrideData]:
+    result = await db.execute(
+        select(PermissionOverride).where(
+            PermissionOverride.space_type == space_type,
+            PermissionOverride.space_id == space_id,
+        )
+    )
+    return [
+        PermissionOverrideData(target_type=o.target_type, target_id=o.target_id, allow=o.allow, deny=o.deny)
+        for o in result.scalars().all()
+    ]
+
+
 # --- Feeds ---
 
 @router.get("/api/v1/feeds/{feed_id}")
@@ -38,7 +52,8 @@ async def get_feed(
     feed = result.scalar_one_or_none()
     if feed is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Feed does not exist."}})
-    return FeedResponse(feed_id=feed.id, name=feed.name, type=feed.type, topic=feed.topic, category_id=feed.category_id)
+    overrides = await _overrides_for(db, "feed", feed.id)
+    return FeedResponse(feed_id=feed.id, name=feed.name, type=feed.type, topic=feed.topic, category_id=feed.category_id, permission_overrides=overrides)
 
 
 @router.post("/api/v1/feeds", status_code=201)
@@ -55,7 +70,8 @@ async def create_feed(
     await write_audit(db, "feed.create", actor_id=actor.id, target_id=feed.id)
     await db.commit()
     await dispatch(gw.feed_create(feed_id=feed.id, name=feed.name, type=feed.type, category_id=feed.category_id))
-    return FeedResponse(feed_id=feed.id, name=feed.name, type=feed.type, topic=feed.topic, category_id=feed.category_id)
+    overrides = await _overrides_for(db, "feed", feed.id)
+    return FeedResponse(feed_id=feed.id, name=feed.name, type=feed.type, topic=feed.topic, category_id=feed.category_id, permission_overrides=overrides)
 
 
 @router.patch("/api/v1/feeds/{feed_id}")
@@ -79,7 +95,8 @@ async def update_feed(
     await db.commit()
     if changed:
         await dispatch(gw.feed_update(feed_id=feed_id, **changed))
-    return FeedResponse(feed_id=feed.id, name=feed.name, type=feed.type, topic=feed.topic, category_id=feed.category_id)
+    overrides = await _overrides_for(db, "feed", feed.id)
+    return FeedResponse(feed_id=feed.id, name=feed.name, type=feed.type, topic=feed.topic, category_id=feed.category_id, permission_overrides=overrides)
 
 
 @router.delete("/api/v1/feeds/{feed_id}", status_code=204)
@@ -115,7 +132,8 @@ async def create_room(
     await write_audit(db, "room.create", actor_id=actor.id, target_id=room.id)
     await db.commit()
     await dispatch(gw.room_create(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id))
-    return RoomResponse(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id)
+    overrides = await _overrides_for(db, "room", room.id)
+    return RoomResponse(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id, permission_overrides=overrides)
 
 
 @router.patch("/api/v1/rooms/{room_id}")
@@ -136,7 +154,8 @@ async def update_room(
     await db.commit()
     if changed:
         await dispatch(gw.room_update(room_id=room_id, **changed))
-    return RoomResponse(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id)
+    overrides = await _overrides_for(db, "room", room.id)
+    return RoomResponse(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id, permission_overrides=overrides)
 
 
 @router.delete("/api/v1/rooms/{room_id}", status_code=204)

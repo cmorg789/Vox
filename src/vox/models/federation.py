@@ -1,29 +1,31 @@
-from pydantic import BaseModel, Field
+from typing import Annotated
 
-from vox.limits import BAN_REASON_MAX, FEDERATION_ADDRESS_MAX
+from pydantic import AfterValidator, BaseModel, Field
+
+from vox.limits import str_limit
 from vox.models.base import VoxModel
 
 
 class RelayMessageRequest(BaseModel):
     model_config = {"populate_by_name": True}
 
-    from_: str = Field(alias="from", max_length=FEDERATION_ADDRESS_MAX)
-    to: str = Field(max_length=FEDERATION_ADDRESS_MAX)
+    from_: Annotated[str, AfterValidator(str_limit(max_attr="federation_address_max"))] = Field(alias="from")
+    to: Annotated[str, AfterValidator(str_limit(max_attr="federation_address_max"))]
     opaque_blob: str
 
 
 class RelayTypingRequest(BaseModel):
     model_config = {"populate_by_name": True}
 
-    from_: str = Field(alias="from", max_length=FEDERATION_ADDRESS_MAX)
-    to: str = Field(max_length=FEDERATION_ADDRESS_MAX)
+    from_: Annotated[str, AfterValidator(str_limit(max_attr="federation_address_max"))] = Field(alias="from")
+    to: Annotated[str, AfterValidator(str_limit(max_attr="federation_address_max"))]
 
 
 class RelayReadRequest(BaseModel):
     model_config = {"populate_by_name": True}
 
-    from_: str = Field(alias="from", max_length=FEDERATION_ADDRESS_MAX)
-    to: str = Field(max_length=FEDERATION_ADDRESS_MAX)
+    from_: Annotated[str, AfterValidator(str_limit(max_attr="federation_address_max"))] = Field(alias="from")
+    to: Annotated[str, AfterValidator(str_limit(max_attr="federation_address_max"))]
     up_to_msg_id: int
 
 
@@ -46,17 +48,17 @@ class FederatedUserProfile(VoxModel):
 
 
 class PresenceSubscribeRequest(BaseModel):
-    user_address: str = Field(max_length=FEDERATION_ADDRESS_MAX)
+    user_address: Annotated[str, AfterValidator(str_limit(max_attr="federation_address_max"))]
 
 
 class PresenceNotifyRequest(BaseModel):
-    user_address: str = Field(max_length=FEDERATION_ADDRESS_MAX)
+    user_address: Annotated[str, AfterValidator(str_limit(max_attr="federation_address_max"))]
     status: str
     activity: str | None = None
 
 
 class FederationJoinRequest(BaseModel):
-    user_address: str = Field(max_length=FEDERATION_ADDRESS_MAX)
+    user_address: Annotated[str, AfterValidator(str_limit(max_attr="federation_address_max"))]
     invite_code: str | None = None
     voucher: str
 
@@ -68,4 +70,4 @@ class FederationJoinResponse(VoxModel):
 
 
 class FederationBlockRequest(BaseModel):
-    reason: str | None = Field(default=None, max_length=BAN_REASON_MAX)
+    reason: Annotated[str, AfterValidator(str_limit(max_attr="ban_reason_max"))] | None = None

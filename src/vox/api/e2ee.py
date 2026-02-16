@@ -8,7 +8,7 @@ from starlette.requests import Request
 
 from vox.api.deps import get_current_user, get_db
 from vox.db.models import Device, KeyBackup, OneTimePrekey, Prekey, User, dm_participants
-from vox.limits import MAX_DEVICES
+from vox.limits import limits
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.e2ee import (
@@ -94,10 +94,10 @@ async def add_device(
     count = await db.scalar(
         select(func.count()).select_from(Device).where(Device.user_id == user.id)
     )
-    if count is not None and count >= MAX_DEVICES:
+    if count is not None and count >= limits.max_devices:
         raise HTTPException(
             status_code=403,
-            detail={"error": {"code": "DEVICE_LIMIT_REACHED", "message": f"Maximum of {MAX_DEVICES} devices allowed."}},
+            detail={"error": {"code": "DEVICE_LIMIT_REACHED", "message": f"Maximum of {limits.max_devices} devices allowed."}},
         )
     db.add(Device(id=body.device_id, user_id=user.id, device_name=body.device_name, created_at=datetime.now(timezone.utc)))
     await db.commit()
@@ -186,8 +186,6 @@ async def reset_keys(
     # Delete all prekeys and one-time prekeys for user's devices
     devices = (await db.execute(select(Device).where(Device.user_id == user.id))).scalars().all()
     for dev in devices:
-        await db.execute(select(Prekey).where(Prekey.device_id == dev.id))
-        # Delete prekeys
         from sqlalchemy import delete
         await db.execute(delete(Prekey).where(Prekey.device_id == dev.id))
         await db.execute(delete(OneTimePrekey).where(OneTimePrekey.device_id == dev.id))

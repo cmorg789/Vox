@@ -412,7 +412,7 @@ class Device(Base):
 class Prekey(Base):
     __tablename__ = "prekeys"
 
-    device_id: Mapped[str] = mapped_column(String(255), ForeignKey("devices.id"), primary_key=True)
+    device_id: Mapped[str] = mapped_column(String(255), ForeignKey("devices.id", ondelete="CASCADE"), primary_key=True)
     identity_key: Mapped[str] = mapped_column(Text)
     signed_prekey: Mapped[str] = mapped_column(Text)
 
@@ -421,7 +421,7 @@ class OneTimePrekey(Base):
     __tablename__ = "one_time_prekeys"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    device_id: Mapped[str] = mapped_column(String(255), ForeignKey("devices.id"))
+    device_id: Mapped[str] = mapped_column(String(255), ForeignKey("devices.id", ondelete="CASCADE"))
     key_data: Mapped[str] = mapped_column(Text)
 
 

@@ -158,7 +158,8 @@ async def test_unprivileged_user_denied_manage_emoji(client):
     admin_h, _ = await _register(client)
     user_h, _ = await _register_unprivileged(client, admin_h)
 
-    r = await client.post("/api/v1/emoji?name=test", headers=user_h)
+    import io
+    r = await client.post("/api/v1/emoji", headers=user_h, data={"name": "test"}, files={"image": ("test.png", io.BytesIO(b"fake"), "image/png")})
     assert r.status_code == 403
 
 

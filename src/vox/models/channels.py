@@ -1,6 +1,8 @@
-from pydantic import BaseModel, Field
+from typing import Annotated
 
-from vox.limits import CHANNEL_NAME_MAX, CHANNEL_NAME_MIN, TOPIC_MAX
+from pydantic import AfterValidator, BaseModel
+
+from vox.limits import str_limit
 from vox.models.base import VoxModel
 
 
@@ -8,12 +10,12 @@ from vox.models.base import VoxModel
 
 
 class CreateCategoryRequest(BaseModel):
-    name: str = Field(min_length=CHANNEL_NAME_MIN, max_length=CHANNEL_NAME_MAX)
+    name: Annotated[str, AfterValidator(str_limit(min_attr="channel_name_min", max_attr="channel_name_max"))]
     position: int
 
 
 class UpdateCategoryRequest(BaseModel):
-    name: str | None = Field(default=None, max_length=CHANNEL_NAME_MAX)
+    name: Annotated[str, AfterValidator(str_limit(max_attr="channel_name_max"))] | None = None
     position: int | None = None
 
 
@@ -27,15 +29,15 @@ class CategoryResponse(VoxModel):
 
 
 class CreateFeedRequest(BaseModel):
-    name: str = Field(min_length=CHANNEL_NAME_MIN, max_length=CHANNEL_NAME_MAX)
+    name: Annotated[str, AfterValidator(str_limit(min_attr="channel_name_min", max_attr="channel_name_max"))]
     type: str  # text, forum, announcement
     category_id: int | None = None
     permission_overrides: list | None = None
 
 
 class UpdateFeedRequest(BaseModel):
-    name: str | None = Field(default=None, max_length=CHANNEL_NAME_MAX)
-    topic: str | None = Field(default=None, max_length=TOPIC_MAX)
+    name: Annotated[str, AfterValidator(str_limit(max_attr="channel_name_max"))] | None = None
+    topic: Annotated[str, AfterValidator(str_limit(max_attr="topic_max"))] | None = None
 
 
 class FeedResponse(VoxModel):
@@ -51,14 +53,14 @@ class FeedResponse(VoxModel):
 
 
 class CreateRoomRequest(BaseModel):
-    name: str = Field(min_length=CHANNEL_NAME_MIN, max_length=CHANNEL_NAME_MAX)
+    name: Annotated[str, AfterValidator(str_limit(min_attr="channel_name_min", max_attr="channel_name_max"))]
     type: str  # voice, stage
     category_id: int | None = None
     permission_overrides: list | None = None
 
 
 class UpdateRoomRequest(BaseModel):
-    name: str | None = Field(default=None, max_length=CHANNEL_NAME_MAX)
+    name: Annotated[str, AfterValidator(str_limit(max_attr="channel_name_max"))] | None = None
 
 
 class RoomResponse(VoxModel):
@@ -66,6 +68,7 @@ class RoomResponse(VoxModel):
     name: str
     type: str
     category_id: int | None = None
+    permission_overrides: list = []
 
 
 # --- Threads ---
@@ -73,11 +76,11 @@ class RoomResponse(VoxModel):
 
 class CreateThreadRequest(BaseModel):
     parent_msg_id: int
-    name: str = Field(min_length=CHANNEL_NAME_MIN, max_length=CHANNEL_NAME_MAX)
+    name: Annotated[str, AfterValidator(str_limit(min_attr="channel_name_min", max_attr="channel_name_max"))]
 
 
 class UpdateThreadRequest(BaseModel):
-    name: str | None = Field(default=None, max_length=CHANNEL_NAME_MAX)
+    name: Annotated[str, AfterValidator(str_limit(max_attr="channel_name_max"))] | None = None
     archived: bool | None = None
     locked: bool | None = None
 

@@ -218,7 +218,7 @@ async def set_room_permission_override(
     target_id: int,
     body: PermissionOverrideRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_ROLES),
 ):
     result = await db.execute(
         select(PermissionOverride).where(
