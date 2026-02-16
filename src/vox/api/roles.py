@@ -190,6 +190,7 @@ async def set_feed_permission_override(
     else:
         db.add(PermissionOverride(space_type="feed", space_id=feed_id, target_type=target_type, target_id=target_id, allow=body.allow, deny=body.deny))
     await db.commit()
+    await dispatch(gw.permission_override_update(space_type="feed", space_id=feed_id, target_type=target_type, target_id=target_id, allow=body.allow, deny=body.deny))
 
 
 @router.delete("/api/v1/feeds/{feed_id}/permissions/{target_type}/{target_id}", status_code=204)
@@ -209,6 +210,7 @@ async def delete_feed_permission_override(
         )
     )
     await db.commit()
+    await dispatch(gw.permission_override_delete(space_type="feed", space_id=feed_id, target_type=target_type, target_id=target_id))
 
 
 @router.put("/api/v1/rooms/{room_id}/permissions/{target_type}/{target_id}", status_code=204)
@@ -235,6 +237,7 @@ async def set_room_permission_override(
     else:
         db.add(PermissionOverride(space_type="room", space_id=room_id, target_type=target_type, target_id=target_id, allow=body.allow, deny=body.deny))
     await db.commit()
+    await dispatch(gw.permission_override_update(space_type="room", space_id=room_id, target_type=target_type, target_id=target_id, allow=body.allow, deny=body.deny))
 
 
 @router.delete("/api/v1/rooms/{room_id}/permissions/{target_type}/{target_id}", status_code=204)
@@ -254,3 +257,4 @@ async def delete_room_permission_override(
         )
     )
     await db.commit()
+    await dispatch(gw.permission_override_delete(space_type="room", space_id=room_id, target_type=target_type, target_id=target_id))

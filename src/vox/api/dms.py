@@ -6,9 +6,11 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
 from vox.api.deps import get_current_user, get_db
 from vox.api.messages import _handle_slash_command, _msg_response, _snowflake
-from vox.db.models import DM, DMReadState, DMSettings, File, Message, Reaction, User, dm_participants, message_attachments
+from vox.db.models import DM, DMReadState, DMSettings, File, Message, Reaction, User, dm_participants, message_attachments, role_members
 from vox.limits import limits
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
@@ -79,6 +81,16 @@ async def open_dm(
             )
             if friend_check.scalar_one_or_none() is None:
                 raise HTTPException(status_code=403, detail={"error": {"code": "DM_PERMISSION_DENIED", "message": "This user only accepts DMs from friends."}})
+        elif dm_perm == "mutual_servers":
+            mutual = await db.execute(
+                select(role_members.c.role_id)
+                .where(role_members.c.user_id == user.id)
+                .intersect(
+                    select(role_members.c.role_id).where(role_members.c.user_id == body.recipient_id)
+                )
+            )
+            if mutual.first() is None:
+                raise HTTPException(status_code=403, detail={"error": {"code": "DM_PERMISSION_DENIED", "message": "You must share a server with this user to send them a DM."}})
 
         dm = DM(is_group=False, created_at=datetime.now(timezone.utc))
         db.add(dm)
@@ -92,10 +104,18 @@ async def open_dm(
 
     elif body.recipient_ids is not None:
         # Group DM - deduplicate recipient list
+        all_ids = list(dict.fromkeys([user.id] + body.recipient_ids))
+        if len(all_ids) > limits.group_dm_recipients_max:
+            raise HTTPException(status_code=400, detail={"error": {"code": "TOO_MANY_RECIPIENTS", "message": f"Group DMs are limited to {limits.group_dm_recipients_max} participants."}})
+        # Validate all recipient IDs exist
+        existing = await db.execute(select(User.id).where(User.id.in_(body.recipient_ids)))
+        valid_ids = {row[0] for row in existing.all()}
+        invalid = set(body.recipient_ids) - valid_ids
+        if invalid:
+            raise HTTPException(status_code=404, detail={"error": {"code": "USER_NOT_FOUND", "message": f"User(s) not found: {sorted(invalid)}"}})
         dm = DM(is_group=True, name=body.name, created_at=datetime.now(timezone.utc))
         db.add(dm)
         await db.flush()
-        all_ids = list(dict.fromkeys([user.id] + body.recipient_ids))
         for uid in all_ids:
             await db.execute(dm_participants.insert().values(dm_id=dm.id, user_id=uid))
         await db.commit()
@@ -175,10 +195,17 @@ async def add_dm_recipient(
     db: AsyncSession = Depends(get_db),
     caller: User = Depends(get_current_user),
 ):
+    dm = (await db.execute(select(DM).where(DM.id == dm_id))).scalar_one_or_none()
+    if dm is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "DM not found."}})
+    if not dm.is_group:
+        raise HTTPException(status_code=400, detail={"error": {"code": "NOT_GROUP_DM", "message": "Cannot add recipients to a 1:1 DM. Convert to group first."}})
     pids = await _dm_participant_ids(db, dm_id)
     if caller.id not in pids:
         raise HTTPException(status_code=403, detail={"error": {"code": "NOT_DM_PARTICIPANT", "message": "You are not a participant in this DM."}})
-    await db.execute(dm_participants.insert().values(dm_id=dm_id, user_id=user_id))
+    if len(pids) >= limits.group_dm_recipients_max:
+        raise HTTPException(status_code=400, detail={"error": {"code": "TOO_MANY_RECIPIENTS", "message": f"Group DMs are limited to {limits.group_dm_recipients_max} participants."}})
+    await db.execute(sqlite_insert(dm_participants).values(dm_id=dm_id, user_id=user_id).on_conflict_do_nothing())
     await db.commit()
     pids = await _dm_participant_ids(db, dm_id)
     await dispatch(gw.dm_recipient_add(dm_id=dm_id, user_id=user_id), user_ids=pids)
@@ -197,6 +224,25 @@ async def remove_dm_recipient(
     await db.execute(delete(dm_participants).where(dm_participants.c.dm_id == dm_id, dm_participants.c.user_id == user_id))
     await db.commit()
     await dispatch(gw.dm_recipient_remove(dm_id=dm_id, user_id=user_id), user_ids=pids)
+
+
+@router.post("/api/v1/dms/{dm_id}/convert-to-group", status_code=200)
+async def convert_dm_to_group(
+    dm_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> DMResponse:
+    dm = (await db.execute(select(DM).where(DM.id == dm_id))).scalar_one_or_none()
+    if dm is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "DM not found."}})
+    pids = await _dm_participant_ids(db, dm_id)
+    if user.id not in pids:
+        raise HTTPException(status_code=403, detail={"error": {"code": "NOT_DM_PARTICIPANT", "message": "You are not a participant in this DM."}})
+    if not dm.is_group:
+        dm.is_group = True
+        await db.commit()
+        await dispatch(gw.dm_update(dm_id=dm_id, is_group=True), user_ids=pids)
+    return DMResponse(dm_id=dm.id, participant_ids=pids, is_group=dm.is_group, name=dm.name)
 
 
 @router.post("/api/v1/dms/{dm_id}/read", status_code=204)

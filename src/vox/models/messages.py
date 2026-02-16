@@ -37,6 +37,7 @@ class MessageResponse(VoxModel):
     timestamp: int
     reply_to: int | None = None
     attachments: list = []
+    embed: str | None = None
     edit_timestamp: int | None = None
     federated: bool = False
     author_address: str | None = None

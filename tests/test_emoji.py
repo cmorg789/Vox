@@ -99,3 +99,39 @@ async def test_sticker_response_fields(client):
     assert "name" in body
     assert "creator_id" in body
     assert "image" in body
+
+
+async def test_list_emoji_pagination(client):
+    """Emoji list pagination with after cursor."""
+    h = await auth(client)
+    r = await client.post("/api/v1/emoji", headers=h, data={"name": "e1"}, files={"image": ("a.png", _fake_image(), "image/png")})
+    eid = r.json()["emoji_id"]
+    r = await client.get(f"/api/v1/emoji?after={eid}", headers=h)
+    assert r.status_code == 200
+    assert len(r.json()["items"]) == 0
+
+
+async def test_list_stickers_pagination(client):
+    """Sticker list pagination with after cursor."""
+    h = await auth(client)
+    r = await client.post("/api/v1/stickers", headers=h, data={"name": "s1"}, files={"image": ("a.png", _fake_image(), "image/png")})
+    sid = r.json()["sticker_id"]
+    r = await client.get(f"/api/v1/stickers?after={sid}", headers=h)
+    assert r.status_code == 200
+    assert len(r.json()["items"]) == 0
+
+
+async def test_create_emoji_too_large(client):
+    """Uploading an emoji image exceeding size limit returns 413."""
+    h = await auth(client)
+    big_content = b"x" * (25 * 1024 * 1024 + 1)
+    r = await client.post("/api/v1/emoji", headers=h, data={"name": "big"}, files={"image": ("big.png", io.BytesIO(big_content), "image/png")})
+    assert r.status_code == 413
+
+
+async def test_create_sticker_too_large(client):
+    """Uploading a sticker image exceeding size limit returns 413."""
+    h = await auth(client)
+    big_content = b"x" * (25 * 1024 * 1024 + 1)
+    r = await client.post("/api/v1/stickers", headers=h, data={"name": "big"}, files={"image": ("big.png", io.BytesIO(big_content), "image/png")})
+    assert r.status_code == 413

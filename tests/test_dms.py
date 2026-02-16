@@ -214,3 +214,212 @@ async def test_send_dm_message_invalid_attachment(client):
     r = await client.post(f"/api/v1/dms/{dm_id}/messages", headers=h1, json={"body": "hi", "attachments": ["nonexistent_file_id"]})
     assert r.status_code == 400
     assert r.json()["detail"]["error"]["code"] == "INVALID_ATTACHMENT"
+
+
+async def test_open_dm_blocked(client):
+    """Opening a DM when blocked by recipient returns 403."""
+    h1, uid1, h2, uid2 = await setup(client)
+    # Bob blocks Alice
+    await client.put(f"/api/v1/users/@me/blocks/{uid1}", headers=h2)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    assert r.status_code == 403
+    assert r.json()["detail"]["error"]["code"] == "USER_BLOCKED"
+
+
+async def test_open_dm_permission_nobody(client):
+    """Opening a DM when recipient has dm_permission=nobody returns 403."""
+    h1, uid1, h2, uid2 = await setup(client)
+    await client.patch("/api/v1/users/@me/dm-settings", headers=h2, json={"dm_permission": "nobody"})
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    assert r.status_code == 403
+    assert r.json()["detail"]["error"]["code"] == "DM_PERMISSION_DENIED"
+
+
+async def test_open_dm_permission_friends_only(client):
+    """Opening a DM when recipient has friends_only and sender is not a friend returns 403."""
+    h1, uid1, h2, uid2 = await setup(client)
+    await client.patch("/api/v1/users/@me/dm-settings", headers=h2, json={"dm_permission": "friends_only"})
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    assert r.status_code == 403
+    assert r.json()["detail"]["error"]["code"] == "DM_PERMISSION_DENIED"
+
+
+async def test_open_dm_friends_only_accepted(client):
+    """Opening a DM with friends_only succeeds when users are friends."""
+    h1, uid1, h2, uid2 = await setup(client)
+    await client.patch("/api/v1/users/@me/dm-settings", headers=h2, json={"dm_permission": "friends_only"})
+    # Bob adds Alice as friend
+    await client.put(f"/api/v1/users/@me/friends/{uid1}", headers=h2)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    assert r.status_code == 201
+
+
+async def test_open_dm_no_recipient(client):
+    """Opening a DM without recipient_id or recipient_ids returns 400."""
+    h1, uid1, h2, uid2 = await setup(client)
+    r = await client.post("/api/v1/dms", headers=h1, json={})
+    assert r.status_code == 400
+
+
+async def test_list_dms_with_after(client):
+    """Pagination cursor works for DM listing."""
+    h1, uid1, h2, uid2 = await setup(client)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    dm_id = r.json()["dm_id"]
+
+    r = await client.get(f"/api/v1/dms?after={dm_id}", headers=h1)
+    assert r.status_code == 200
+    assert len(r.json()["items"]) == 0
+
+
+async def test_update_group_dm_icon(client):
+    """Updating group DM icon works."""
+    h1, uid1, h2, uid2 = await setup(client)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_ids": [uid2], "name": "Group"})
+    dm_id = r.json()["dm_id"]
+
+    r = await client.patch(f"/api/v1/dms/{dm_id}", headers=h1, json={"icon": "new_icon.png"})
+    assert r.status_code == 200
+
+
+async def test_add_dm_recipient_not_participant(client):
+    """Adding a recipient when caller is not a participant returns 403."""
+    h1, uid1, h2, uid2 = await setup(client)
+    r3 = await client.post("/api/v1/auth/register", json={"username": "charlie", "password": "test1234"})
+    h3 = {"Authorization": f"Bearer {r3.json()['token']}"}
+    uid3 = r3.json()["user_id"]
+
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_ids": [uid2], "name": "Group"})
+    dm_id = r.json()["dm_id"]
+
+    # Charlie (not a participant) tries to add
+    r = await client.put(f"/api/v1/dms/{dm_id}/recipients/{uid2}", headers=h3)
+    assert r.status_code == 403
+
+
+async def test_remove_dm_recipient_not_participant(client):
+    """Removing a recipient when caller is not a participant returns 403."""
+    h1, uid1, h2, uid2 = await setup(client)
+    r3 = await client.post("/api/v1/auth/register", json={"username": "charlie", "password": "test1234"})
+    h3 = {"Authorization": f"Bearer {r3.json()['token']}"}
+    uid3 = r3.json()["user_id"]
+
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_ids": [uid2], "name": "Group"})
+    dm_id = r.json()["dm_id"]
+
+    r = await client.delete(f"/api/v1/dms/{dm_id}/recipients/{uid2}", headers=h3)
+    assert r.status_code == 403
+
+
+async def test_dm_read_receipt_update_existing(client):
+    """Sending a read receipt twice updates the existing state."""
+    h1, uid1, h2, uid2 = await setup(client)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    dm_id = r.json()["dm_id"]
+
+    r = await client.post(f"/api/v1/dms/{dm_id}/messages", headers=h1, json={"body": "msg1"})
+    msg1_id = r.json()["msg_id"]
+    r = await client.post(f"/api/v1/dms/{dm_id}/messages", headers=h1, json={"body": "msg2"})
+    msg2_id = r.json()["msg_id"]
+
+    r = await client.post(f"/api/v1/dms/{dm_id}/read", headers=h2, json={"up_to_msg_id": msg1_id})
+    assert r.status_code == 204
+    r = await client.post(f"/api/v1/dms/{dm_id}/read", headers=h2, json={"up_to_msg_id": msg2_id})
+    assert r.status_code == 204
+
+
+async def test_get_dm_messages_pagination(client):
+    """DM message pagination with before/after params."""
+    h1, uid1, h2, uid2 = await setup(client)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    dm_id = r.json()["dm_id"]
+
+    r = await client.post(f"/api/v1/dms/{dm_id}/messages", headers=h1, json={"body": "msg1"})
+    msg1_id = r.json()["msg_id"]
+    r = await client.post(f"/api/v1/dms/{dm_id}/messages", headers=h1, json={"body": "msg2"})
+    msg2_id = r.json()["msg_id"]
+
+    r = await client.get(f"/api/v1/dms/{dm_id}/messages?before={msg2_id}", headers=h1)
+    assert r.status_code == 200
+    assert len(r.json()["messages"]) == 1
+
+    r = await client.get(f"/api/v1/dms/{dm_id}/messages?after={msg1_id}", headers=h1)
+    assert r.status_code == 200
+    assert len(r.json()["messages"]) == 1
+
+
+async def test_dm_reactions(client):
+    """Add and remove DM reactions."""
+    h1, uid1, h2, uid2 = await setup(client)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    dm_id = r.json()["dm_id"]
+
+    r = await client.post(f"/api/v1/dms/{dm_id}/messages", headers=h1, json={"body": "react to this"})
+    msg_id = r.json()["msg_id"]
+
+    # Add reaction
+    r = await client.put(f"/api/v1/dms/{dm_id}/messages/{msg_id}/reactions/%F0%9F%91%8D", headers=h1)
+    assert r.status_code == 204
+
+    # Remove reaction
+    r = await client.delete(f"/api/v1/dms/{dm_id}/messages/{msg_id}/reactions/%F0%9F%91%8D", headers=h1)
+    assert r.status_code == 204
+
+
+async def test_dm_reaction_not_participant(client):
+    """Non-participant cannot add DM reactions."""
+    h1, uid1, h2, uid2 = await setup(client)
+    r3 = await client.post("/api/v1/auth/register", json={"username": "charlie", "password": "test1234"})
+    h3 = {"Authorization": f"Bearer {r3.json()['token']}"}
+
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    dm_id = r.json()["dm_id"]
+    r = await client.post(f"/api/v1/dms/{dm_id}/messages", headers=h1, json={"body": "hi"})
+    msg_id = r.json()["msg_id"]
+
+    r = await client.put(f"/api/v1/dms/{dm_id}/messages/{msg_id}/reactions/%F0%9F%91%8D", headers=h3)
+    assert r.status_code == 403
+
+
+async def test_dm_reaction_message_not_found(client):
+    """Reaction on non-existent message returns 404."""
+    h1, uid1, h2, uid2 = await setup(client)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    dm_id = r.json()["dm_id"]
+
+    r = await client.put(f"/api/v1/dms/{dm_id}/messages/999999/reactions/%F0%9F%91%8D", headers=h1)
+    assert r.status_code == 404
+
+
+async def test_dm_remove_reaction_not_participant(client):
+    """Non-participant cannot remove DM reactions."""
+    h1, uid1, h2, uid2 = await setup(client)
+    r3 = await client.post("/api/v1/auth/register", json={"username": "charlie", "password": "test1234"})
+    h3 = {"Authorization": f"Bearer {r3.json()['token']}"}
+
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    dm_id = r.json()["dm_id"]
+    r = await client.post(f"/api/v1/dms/{dm_id}/messages", headers=h1, json={"body": "hi"})
+    msg_id = r.json()["msg_id"]
+
+    r = await client.delete(f"/api/v1/dms/{dm_id}/messages/{msg_id}/reactions/%F0%9F%91%8D", headers=h3)
+    assert r.status_code == 403
+
+
+async def test_dm_remove_reaction_message_not_found(client):
+    """Remove reaction on non-existent message returns 404."""
+    h1, uid1, h2, uid2 = await setup(client)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    dm_id = r.json()["dm_id"]
+
+    r = await client.delete(f"/api/v1/dms/{dm_id}/messages/999999/reactions/%F0%9F%91%8D", headers=h1)
+    assert r.status_code == 404
+
+
+async def test_update_dm_settings_existing(client):
+    """Updating DM settings when a row already exists."""
+    h1, uid1, _, _ = await setup(client)
+    await client.patch("/api/v1/users/@me/dm-settings", headers=h1, json={"dm_permission": "friends_only"})
+    r = await client.patch("/api/v1/users/@me/dm-settings", headers=h1, json={"dm_permission": "nobody"})
+    assert r.status_code == 200
+    assert r.json()["dm_permission"] == "nobody"

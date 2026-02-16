@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,10 +19,14 @@ from vox.models.voice import (
     VoiceKickRequest,
     VoiceMoveRequest,
 )
-from vox.permissions import CONNECT, MOVE_MEMBERS, STAGE_MODERATOR
+from vox.permissions import CONNECT, MOVE_MEMBERS, STAGE_MODERATOR, has_permission, resolve_permissions
 from vox.voice import service as voice_service
 
 router = APIRouter(tags=["voice"])
+
+# In-memory tracking for pending stage invites: (room_id, user_id) -> timestamp
+_pending_stage_invites: dict[tuple[int, int], float] = {}
+_STAGE_INVITE_TTL = 300  # 5 minutes
 
 
 async def _dispatch_voice_state(db: AsyncSession, room_id: int) -> None:
@@ -57,6 +62,17 @@ async def leave_voice(
 ):
     await voice_service.leave_room(db, room_id, user.id)
     await _dispatch_voice_state(db, room_id)
+
+
+@router.post("/api/v1/rooms/{room_id}/voice/token-refresh")
+async def refresh_media_token(
+    room_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    token = await voice_service.refresh_media_token(db, room_id, user.id)
+    await dispatch(gw.media_token_refresh(room_id=room_id, media_token=token), user_ids=[user.id])
+    return {"media_token": token}
 
 
 @router.post("/api/v1/rooms/{room_id}/voice/kick", status_code=204)
@@ -97,8 +113,17 @@ async def stage_request_to_speak(
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=400, detail={"error": {"code": "NOT_IN_VOICE", "message": "Not in this voice room."}})
 
+    # Find moderators in the room to target the notification
+    vs_result = await db.execute(select(VoiceState.user_id).where(VoiceState.room_id == room_id))
+    room_user_ids = [row[0] for row in vs_result.all()]
+    moderator_ids = []
+    for uid in room_user_ids:
+        perms = await resolve_permissions(db, uid, space_type="room", space_id=room_id)
+        if has_permission(perms, STAGE_MODERATOR):
+            moderator_ids.append(uid)
+
     evt = gw.stage_request(room_id=room_id, user_id=user.id)
-    await dispatch(evt)
+    await dispatch(evt, user_ids=moderator_ids if moderator_ids else None)
 
 
 @router.post("/api/v1/rooms/{room_id}/stage/invite", status_code=204)
@@ -115,8 +140,15 @@ async def stage_invite_to_speak(
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=400, detail={"error": {"code": "NOT_IN_VOICE", "message": "Target user is not in this voice room."}})
 
+    # Clean up stale invites
+    now = time.time()
+    stale = [k for k, ts in _pending_stage_invites.items() if now - ts > _STAGE_INVITE_TTL]
+    for k in stale:
+        del _pending_stage_invites[k]
+
     evt = gw.stage_invite(room_id=room_id, user_id=body.user_id)
     await dispatch(evt, user_ids=[body.user_id])
+    _pending_stage_invites[(room_id, body.user_id)] = now
 
 
 @router.post("/api/v1/rooms/{room_id}/stage/invite/respond", status_code=204)
@@ -126,6 +158,11 @@ async def stage_respond_to_invite(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    key = (room_id, user.id)
+    if key not in _pending_stage_invites:
+        raise HTTPException(status_code=400, detail={"error": {"code": "NO_PENDING_INVITE", "message": "You have not been invited to speak."}})
+    del _pending_stage_invites[key]
+
     if body.accepted:
         speaker = StageSpeaker(
             room_id=room_id,
@@ -159,7 +196,7 @@ async def stage_set_topic(
     room_id: int,
     body: StageTopicRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(STAGE_MODERATOR, space_type="room", space_id_param="room_id"),
 ):
     result = await db.execute(select(Room).where(Room.id == room_id))
     room = result.scalar_one_or_none()

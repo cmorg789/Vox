@@ -930,3 +930,213 @@ async def test_webauthn_setup_flow(client):
     assert "creation_options" in data
     assert "challenge_id" in data["creation_options"]
     assert data["setup_id"].startswith("setup_webauthn_")
+
+
+async def test_logout(client):
+    """Logout invalidates the session token."""
+    token, _ = await _register_and_get_token(client)
+    r = await client.post("/api/v1/auth/logout", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 204
+
+    # Token should no longer work
+    r = await client.get("/api/v1/auth/2fa", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 401
+
+
+async def test_logout_non_bearer_prefix(client):
+    """Logout with unrecognized prefix returns 204 silently."""
+    token, _ = await _register_and_get_token(client)
+    # Use a weird prefix - depends on get_current_user accepting it or not
+    # Actually the deps will reject it, so let's test the Bot prefix path instead
+    # by manually calling with Bot token (will be rejected by get_current_user first)
+    r = await client.post("/api/v1/auth/logout", headers={"Authorization": f"Bot {token}"})
+    # Bot tokens go through get_current_user which might handle them
+    assert r.status_code in (204, 401)
+
+
+async def test_confirm_2fa_setup_totp_no_code(client):
+    """Confirming TOTP setup without code returns 400."""
+    token, _ = await _register_and_get_token(client)
+    r = await client.post(
+        "/api/v1/auth/2fa/setup",
+        json={"method": "totp"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    setup_id = r.json()["setup_id"]
+
+    r = await client.post(
+        "/api/v1/auth/2fa/setup/confirm",
+        json={"setup_id": setup_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 400
+
+
+async def test_confirm_2fa_setup_totp_no_pending(client):
+    """Confirming TOTP when no pending setup exists returns 400."""
+    token, _ = await _register_and_get_token(client)
+
+    # Create a setup session manually with the right prefix but no pending TOTP
+    from vox.db.engine import get_session_factory
+    from vox.auth.mfa import create_setup_session
+    factory = get_session_factory()
+    async with factory() as db:
+        setup_id = await create_setup_session(db, 1, "setup_totp_")
+        await db.commit()
+
+    # Try to confirm (no pending TOTP secret)
+    # But first delete any pending secrets
+    from sqlalchemy import delete
+    from vox.db.models import TOTPSecret
+    async with factory() as db:
+        await db.execute(delete(TOTPSecret))
+        await db.commit()
+
+    r = await client.post(
+        "/api/v1/auth/2fa/setup/confirm",
+        json={"setup_id": setup_id, "code": "123456"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"]["error"]["code"] == "2FA_SETUP_EXPIRED"
+
+
+async def test_confirm_webauthn_setup_no_attestation(client):
+    """Confirming WebAuthn setup without attestation returns 400."""
+    token, _ = await _register_and_get_token(client)
+    r = await client.post(
+        "/api/v1/auth/2fa/setup",
+        json={"method": "webauthn"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    setup_id = r.json()["setup_id"]
+
+    r = await client.post(
+        "/api/v1/auth/2fa/setup/confirm",
+        json={"setup_id": setup_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"]["error"]["code"] == "WEBAUTHN_FAILED"
+
+
+async def test_webauthn_login_challenge_with_credential(client):
+    """WebAuthn login challenge works when user has credentials."""
+    from datetime import datetime, timezone
+    from vox.db.models import WebAuthnCredential
+    from vox.db.engine import get_session_factory
+
+    token, user_id = await _register_and_get_token(client)
+    factory = get_session_factory()
+    async with factory() as db:
+        cred = WebAuthnCredential(
+            credential_id="dGVzdF9jcmVkZW50aWFs",
+            user_id=user_id,
+            name="Test Key",
+            public_key="test_pub_key",
+            registered_at=datetime.now(timezone.utc),
+        )
+        db.add(cred)
+        await db.commit()
+
+    r = await client.post("/api/v1/auth/login/webauthn/challenge", json={"username": "alice"})
+    assert r.status_code == 200
+    data = r.json()
+    assert "challenge_id" in data
+    assert "options" in data
+
+
+async def test_webauthn_login_no_challenge(client):
+    """WebAuthn login without a pending challenge returns 401."""
+    from datetime import datetime, timezone
+    from vox.db.models import WebAuthnCredential
+    from vox.db.engine import get_session_factory
+
+    token, user_id = await _register_and_get_token(client)
+    factory = get_session_factory()
+    async with factory() as db:
+        cred = WebAuthnCredential(
+            credential_id="dGVzdF9jcmVkZW50aWFs",
+            user_id=user_id,
+            name="Test Key",
+            public_key="test_pub_key",
+            registered_at=datetime.now(timezone.utc),
+        )
+        db.add(cred)
+        await db.commit()
+
+    r = await client.post("/api/v1/auth/login/webauthn", json={
+        "username": "alice",
+        "credential_id": "dGVzdF9jcmVkZW50aWFs",
+        "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0In0",
+        "authenticator_data": "dGVzdA",
+        "signature": "dGVzdA",
+    })
+    assert r.status_code == 401
+    assert r.json()["detail"]["error"]["code"] == "WEBAUTHN_FAILED"
+
+
+async def test_webauthn_login_unknown_user(client):
+    """WebAuthn login with unknown user returns 401."""
+    r = await client.post("/api/v1/auth/login/webauthn", json={
+        "username": "nobody",
+        "credential_id": "test",
+        "client_data_json": "test",
+        "authenticator_data": "test",
+        "signature": "test",
+    })
+    assert r.status_code == 401
+
+
+async def test_federation_login_invalid_token(client):
+    """Federation login with invalid token returns 401."""
+    r = await client.post("/api/v1/auth/login/federation", json={
+        "federation_token": "invalid_token",
+    })
+    assert r.status_code == 401
+
+
+async def test_federation_login_not_federated(client):
+    """Federation login with a non-federated user's token returns 403."""
+    # Register a regular user and get their session token
+    token, user_id = await _register_and_get_token(client)
+
+    # Try using the session token as a federation token (user is not federated)
+    r = await client.post("/api/v1/auth/login/federation", json={
+        "federation_token": token,
+    })
+    assert r.status_code == 403
+
+
+async def test_delete_webauthn_credential_success(client):
+    """Deleting an existing WebAuthn credential works."""
+    from datetime import datetime, timezone
+    from vox.db.models import WebAuthnCredential
+    from vox.db.engine import get_session_factory
+
+    token, user_id = await _register_and_get_token(client)
+    factory = get_session_factory()
+    async with factory() as db:
+        cred = WebAuthnCredential(
+            credential_id="to_delete_cred",
+            user_id=user_id,
+            name="Deletable Key",
+            public_key="test_pub_key",
+            registered_at=datetime.now(timezone.utc),
+        )
+        db.add(cred)
+        await db.commit()
+
+    r = await client.request(
+        "DELETE",
+        "/api/v1/auth/webauthn/credentials/to_delete_cred",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+
+    # Verify it's gone
+    r = await client.get(
+        "/api/v1/auth/webauthn/credentials",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.json() == []

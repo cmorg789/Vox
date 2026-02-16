@@ -293,3 +293,46 @@ async def test_slash_command_in_dm(client):
     r = await client.post(f"/api/v1/dms/{dm_id}/messages", headers=human_h, json={"body": "/help"})
     assert r.status_code == 201
     assert r.json()["interaction_id"] is not None
+
+
+async def test_register_commands_not_bot(client):
+    """Non-bot user cannot register commands."""
+    r = await client.post("/api/v1/auth/register", json={"username": "alice", "password": "test1234"})
+    h = {"Authorization": f"Bearer {r.json()['token']}"}
+    r = await client.put("/api/v1/bots/@me/commands", headers=h, json={
+        "commands": [{"name": "test", "description": "Test"}]
+    })
+    assert r.status_code == 403
+    assert r.json()["detail"]["error"]["code"] == "FORBIDDEN"
+
+
+async def test_deregister_commands_not_bot(client):
+    """Non-bot user cannot deregister commands."""
+    r = await client.post("/api/v1/auth/register", json={"username": "alice", "password": "test1234"})
+    h = {"Authorization": f"Bearer {r.json()['token']}"}
+    r = await client.request("DELETE", "/api/v1/bots/@me/commands", headers=h, json={
+        "command_names": ["test"]
+    })
+    assert r.status_code == 403
+
+
+async def test_register_duplicate_command(client):
+    """Registering a command with the same name twice returns 409."""
+    human_h, bot_h, _, _ = await _setup_bot(client)
+    await client.put("/api/v1/bots/@me/commands", headers=bot_h, json={
+        "commands": [{"name": "help", "description": "Show help"}]
+    })
+    r = await client.put("/api/v1/bots/@me/commands", headers=bot_h, json={
+        "commands": [{"name": "help", "description": "Duplicate"}]
+    })
+    assert r.status_code == 409
+    assert r.json()["detail"]["error"]["code"] == "CMD_ALREADY_REGISTERED"
+
+
+async def test_respond_interaction_message_not_found(client):
+    """Responding to interaction with non-existent message returns 404."""
+    human_h, bot_h, _, _ = await _setup_bot(client)
+    r = await client.post("/api/v1/interactions/999999/response", headers=bot_h, json={
+        "body": "response"
+    })
+    assert r.status_code == 404

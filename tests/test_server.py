@@ -72,3 +72,47 @@ async def test_update_server_empty_body(client):
 async def test_layout_requires_auth(client):
     r = await client.get("/api/v1/server/layout")
     assert r.status_code in (401, 422)
+
+
+async def test_update_server_icon(client):
+    """Update server icon field."""
+    h = await auth(client)
+    r = await client.patch("/api/v1/server", headers=h, json={"icon": "icon.png"})
+    assert r.status_code == 200
+    assert r.json()["icon"] == "icon.png"
+
+
+async def test_update_server_existing_config(client):
+    """Updating server name twice updates existing config row."""
+    h = await auth(client)
+    await client.patch("/api/v1/server", headers=h, json={"name": "First"})
+    r = await client.patch("/api/v1/server", headers=h, json={"name": "Second"})
+    assert r.json()["name"] == "Second"
+
+
+async def test_get_limits(client):
+    """Get server limits."""
+    h = await auth(client)
+    r = await client.get("/api/v1/server/limits", headers=h)
+    assert r.status_code == 200
+    assert "message_body_max" in r.json()
+
+
+async def test_update_limits(client):
+    """Update a server limit."""
+    h = await auth(client)
+    r = await client.patch("/api/v1/server/limits", headers=h, json={"limits": {"message_body_max": 8000}})
+    assert r.status_code == 200
+    assert r.json()["message_body_max"] == 8000
+
+    # Update again (existing row path)
+    r = await client.patch("/api/v1/server/limits", headers=h, json={"limits": {"message_body_max": 4000}})
+    assert r.status_code == 200
+    assert r.json()["message_body_max"] == 4000
+
+
+async def test_update_limits_invalid(client):
+    """Update with unknown limit name returns 400."""
+    h = await auth(client)
+    r = await client.patch("/api/v1/server/limits", headers=h, json={"limits": {"nonexistent_limit": 100}})
+    assert r.status_code == 400

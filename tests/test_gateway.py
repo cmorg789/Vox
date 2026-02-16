@@ -746,3 +746,189 @@ class TestGatewayCompression:
                 decompressor = zstd.ZstdDecompressor()
                 hello = json.loads(decompressor.decompress(data))
                 assert hello["type"] == "hello"
+
+
+class TestGatewayPresenceDetails:
+    """Test presence update with custom_status and activity fields."""
+
+    def test_presence_custom_status(self, app, db):
+        """Presence update with custom_status field."""
+        with TestClient(app) as tc:
+            resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            token = resp.json()["token"]
+
+            with tc.websocket_connect("/gateway") as ws:
+                ws.receive_json()
+                ws.send_json({"type": "identify", "d": {"token": token}})
+                ws.receive_json()
+
+                ws.send_json({
+                    "type": "presence_update",
+                    "d": {"status": "online", "custom_status": "Working hard"}
+                })
+                event = ws.receive_json()
+                assert event["type"] == "presence_update"
+                assert event["d"]["custom_status"] == "Working hard"
+
+    def test_presence_activity(self, app, db):
+        """Presence update with activity field."""
+        with TestClient(app) as tc:
+            resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            token = resp.json()["token"]
+
+            with tc.websocket_connect("/gateway") as ws:
+                ws.receive_json()
+                ws.send_json({"type": "identify", "d": {"token": token}})
+                ws.receive_json()
+
+                ws.send_json({
+                    "type": "presence_update",
+                    "d": {"status": "online", "activity": {"type": "playing", "name": "Chess"}}
+                })
+                event = ws.receive_json()
+                assert event["type"] == "presence_update"
+                assert event["d"]["activity"]["name"] == "Chess"
+
+
+class TestGatewayMlsRelays:
+    """Test MLS commit, proposal, and device relay events."""
+
+    def test_mls_commit_relay(self, app, db):
+        """MLS commit relay broadcasts to same user."""
+        with TestClient(app) as tc:
+            resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            token = resp.json()["token"]
+
+            with tc.websocket_connect("/gateway") as ws:
+                ws.receive_json()
+                ws.send_json({"type": "identify", "d": {"token": token}})
+                ws.receive_json()
+
+                ws.send_json({
+                    "type": "mls_relay",
+                    "d": {"mls_type": "commit", "data": "commitdata"}
+                })
+                event = ws.receive_json()
+                assert event["type"] == "mls_commit"
+                assert event["d"]["data"] == "commitdata"
+
+    def test_mls_proposal_relay(self, app, db):
+        """MLS proposal relay broadcasts to same user."""
+        with TestClient(app) as tc:
+            resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            token = resp.json()["token"]
+
+            with tc.websocket_connect("/gateway") as ws:
+                ws.receive_json()
+                ws.send_json({"type": "identify", "d": {"token": token}})
+                ws.receive_json()
+
+                ws.send_json({
+                    "type": "mls_relay",
+                    "d": {"mls_type": "proposal", "data": "proposaldata"}
+                })
+                event = ws.receive_json()
+                assert event["type"] == "mls_proposal"
+                assert event["d"]["data"] == "proposaldata"
+
+    def test_cpace_rsi_relay(self, app, db):
+        """CPace rsi relay broadcasts to same user."""
+        with TestClient(app) as tc:
+            resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            token = resp.json()["token"]
+
+            with tc.websocket_connect("/gateway") as ws:
+                ws.receive_json()
+                ws.send_json({"type": "identify", "d": {"token": token}})
+                ws.receive_json()
+
+                ws.send_json({
+                    "type": "cpace_relay",
+                    "d": {"cpace_type": "rsi", "pair_id": "pair_789", "data": "rsidata"}
+                })
+                event = ws.receive_json()
+                assert event["type"] == "cpace_rsi"
+                assert event["d"]["pair_id"] == "pair_789"
+
+
+class TestGatewayEdgeCases:
+    """Test connection edge cases for coverage."""
+
+    def test_resume_empty_token(self, app, db):
+        """Resume with empty token -> close AUTH_FAILED."""
+        with TestClient(app) as tc:
+            with tc.websocket_connect("/gateway") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({
+                    "type": "resume",
+                    "d": {"token": "", "session_id": "sess_x", "last_seq": 0}
+                })
+                with pytest.raises(Exception):
+                    ws.receive_json()
+
+    def test_resume_empty_session_id(self, app, db):
+        """Resume with empty session_id -> close AUTH_FAILED."""
+        with TestClient(app) as tc:
+            resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            token = resp.json()["token"]
+            with tc.websocket_connect("/gateway") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({
+                    "type": "resume",
+                    "d": {"token": token, "session_id": "", "last_seq": 0}
+                })
+                with pytest.raises(Exception):
+                    ws.receive_json()
+
+    def test_resume_invalid_token(self, app, db):
+        """Resume with invalid (non-existing) token -> close AUTH_FAILED."""
+        with TestClient(app) as tc:
+            with tc.websocket_connect("/gateway") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({
+                    "type": "resume",
+                    "d": {"token": "vox_sess_bogus", "session_id": "sess_x", "last_seq": 0}
+                })
+                with pytest.raises(Exception):
+                    ws.receive_json()
+
+    def test_invalid_json_in_message_loop(self, app, db):
+        """Send invalid JSON after identify -> close DECODE_ERROR (message loop path)."""
+        with TestClient(app) as tc:
+            resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            token = resp.json()["token"]
+
+            with tc.websocket_connect("/gateway") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({"type": "identify", "d": {"token": token}})
+                ws.receive_json()  # ready
+
+                # Now send invalid JSON in the authenticated message loop
+                ws.send_text("{{{bad json")
+                with pytest.raises(Exception):
+                    ws.receive_json()
+
+    def test_presence_broadcast_to_others(self, app, db):
+        """When a second user connects, the first sees their presence."""
+        with TestClient(app) as tc:
+            resp1 = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            token1 = resp1.json()["token"]
+            resp2 = tc.post("/api/v1/auth/register", json={"username": "bob", "password": "password123"})
+            token2 = resp2.json()["token"]
+
+            with tc.websocket_connect("/gateway") as ws1:
+                ws1.receive_json()  # hello
+                ws1.send_json({"type": "identify", "d": {"token": token1}})
+                ws1.receive_json()  # ready
+
+                # Bob connects -> Alice should receive presence_update
+                with tc.websocket_connect("/gateway") as ws2:
+                    ws2.receive_json()  # hello
+                    ws2.send_json({"type": "identify", "d": {"token": token2}})
+                    ready2 = ws2.receive_json()  # ready
+                    assert ready2["type"] == "ready"
+
+                    # Alice should get Bob's presence_update
+                    evt = ws1.receive_json()
+                    assert evt["type"] == "presence_update"
+                    assert evt["d"]["status"] == "online"

@@ -126,6 +126,10 @@ def member_update(user_id: int, nickname: str | None = None) -> dict[str, Any]:
     return _event("member_update", d)
 
 
+def user_update(user_id: int, **changed: Any) -> dict[str, Any]:
+    return _event("user_update", {"user_id": user_id, **changed})
+
+
 def member_ban(user_id: int) -> dict[str, Any]:
     return _event("member_ban", {"user_id": user_id})
 
@@ -202,6 +206,14 @@ def thread_delete(thread_id: int) -> dict[str, Any]:
     return _event("thread_delete", {"thread_id": thread_id})
 
 
+def thread_subscribe(thread_id: int, user_id: int) -> dict[str, Any]:
+    return _event("thread_subscribe", {"thread_id": thread_id, "user_id": user_id})
+
+
+def thread_unsubscribe(thread_id: int, user_id: int) -> dict[str, Any]:
+    return _event("thread_unsubscribe", {"thread_id": thread_id, "user_id": user_id})
+
+
 # --- Role Events ---
 
 def role_create(role_id: int, name: str, color: str | None = None, permissions: int = 0, position: int = 0) -> dict[str, Any]:
@@ -214,6 +226,14 @@ def role_update(role_id: int, **changed: Any) -> dict[str, Any]:
 
 def role_delete(role_id: int) -> dict[str, Any]:
     return _event("role_delete", {"role_id": role_id})
+
+
+def permission_override_update(space_type: str, space_id: int, target_type: str, target_id: int, allow: int, deny: int) -> dict[str, Any]:
+    return _event("permission_override_update", {"space_type": space_type, "space_id": space_id, "target_type": target_type, "target_id": target_id, "allow": allow, "deny": deny})
+
+
+def permission_override_delete(space_type: str, space_id: int, target_type: str, target_id: int) -> dict[str, Any]:
+    return _event("permission_override_delete", {"space_type": space_type, "space_id": space_id, "target_type": target_type, "target_id": target_id})
 
 
 def role_assign(role_id: int, user_id: int) -> dict[str, Any]:

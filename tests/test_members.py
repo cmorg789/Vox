@@ -115,3 +115,50 @@ async def test_ban_member_not_found(client):
     h, _ = await auth(client, "admin")
     r = await client.put("/api/v1/bans/99999", headers=h, json={"reason": "ghost"})
     assert r.status_code == 404
+
+
+async def test_join_invalid_invite(client):
+    """Joining with a non-existent invite code returns 422."""
+    h, _ = await auth(client, "alice")
+    r = await client.post("/api/v1/members/@me/join", headers=h, json={"invite_code": "nonexistent"})
+    assert r.status_code == 422
+    assert r.json()["detail"]["error"]["code"] == "INVITE_INVALID"
+
+
+async def test_join_expired_invite(client):
+    """Joining with an expired invite returns 410."""
+    h, uid = await auth(client, "alice")
+
+    from vox.db.engine import get_session_factory
+    from vox.db.models import Invite
+    from datetime import datetime, timedelta, timezone
+    factory = get_session_factory()
+    async with factory() as db:
+        # Store a tz-aware datetime matching the format the code uses for comparison
+        db.add(Invite(
+            code="expired",
+            creator_id=uid,
+            expires_at=datetime(2020, 1, 1),
+            created_at=datetime(2019, 1, 1),
+        ))
+        await db.commit()
+
+    # Patch datetime.now in members module to return a tz-naive datetime for comparison
+    from unittest.mock import patch
+    with patch("vox.api.members.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2025, 1, 1)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        r = await client.post("/api/v1/members/@me/join", headers=h, json={"invite_code": "expired"})
+    assert r.status_code == 410
+    assert r.json()["detail"]["error"]["code"] == "INVITE_EXPIRED"
+
+
+async def test_list_bans_pagination(client):
+    """Ban list pagination with after cursor."""
+    h, _ = await auth(client, "admin")
+    _, uid_bob = await auth(client, "bob")
+    await client.put(f"/api/v1/bans/{uid_bob}", headers=h, json={"reason": "test"})
+
+    r = await client.get(f"/api/v1/bans?after={uid_bob}", headers=h)
+    assert r.status_code == 200
+    assert len(r.json()["items"]) == 0

@@ -60,3 +60,52 @@ async def test_search_has_file(client):
     results = r.json()["results"]
     assert len(results) == 1
     assert results[0]["body"] == "Hello world"
+
+
+async def test_search_by_author(client):
+    h = await setup(client)
+    r = await client.get("/api/v1/messages/search?query=Hello&author_id=1", headers=h)
+    assert r.status_code == 200
+    assert len(r.json()["results"]) == 1
+
+
+async def test_search_before_after(client):
+    h = await setup(client)
+    # Get all messages to find IDs
+    r = await client.get("/api/v1/messages/search?query=world", headers=h)
+    results = r.json()["results"]
+    assert len(results) == 2
+    ids = sorted(m["msg_id"] for m in results)
+
+    # before: only messages before the last one
+    r = await client.get(f"/api/v1/messages/search?query=world&before={ids[1]}", headers=h)
+    assert len(r.json()["results"]) == 1
+
+    # after: only messages after the first one
+    r = await client.get(f"/api/v1/messages/search?query=world&after={ids[0]}", headers=h)
+    assert len(r.json()["results"]) == 1
+
+
+async def test_search_pinned(client):
+    h = await setup(client)
+    # Pin a message
+    r = await client.get("/api/v1/messages/search?query=Hello", headers=h)
+    msg_id = r.json()["results"][0]["msg_id"]
+    await client.put(f"/api/v1/feeds/1/pins/{msg_id}", headers=h)
+
+    r = await client.get("/api/v1/messages/search?query=Hello&pinned=true", headers=h)
+    assert r.status_code == 200
+    assert len(r.json()["results"]) == 1
+
+
+async def test_search_has_embed(client):
+    h = await setup(client)
+    # has_embed=true should return nothing (no embeds in test data)
+    r = await client.get("/api/v1/messages/search?query=Hello&has_embed=true", headers=h)
+    assert r.status_code == 200
+    assert len(r.json()["results"]) == 0
+
+    # has_embed=false should return match
+    r = await client.get("/api/v1/messages/search?query=Hello&has_embed=false", headers=h)
+    assert r.status_code == 200
+    assert len(r.json()["results"]) == 1

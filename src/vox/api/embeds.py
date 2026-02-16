@@ -117,7 +117,7 @@ async def resolve_embed(
             if len(resp.content) > _MAX_RESPONSE_SIZE:
                 return EmbedResponse()
             html = resp.text
-    except (httpx.HTTPError, Exception):
+    except httpx.HTTPError:
         return EmbedResponse()
 
     meta = _extract_meta(html)

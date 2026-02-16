@@ -176,6 +176,22 @@ async def move_user(
     return token, members
 
 
+async def refresh_media_token(db: AsyncSession, room_id: int, user_id: int) -> str:
+    """Generate a new media token for a user already in a voice room."""
+    result = await db.execute(
+        select(VoiceState).where(VoiceState.user_id == user_id, VoiceState.room_id == room_id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "NOT_IN_VOICE", "message": "Not in this voice room."}},
+        )
+    token = "media_" + secrets.token_urlsafe(32)
+    sfu = get_sfu()
+    sfu.admit_user(room_id, user_id, token)
+    return token
+
+
 async def get_media_url(db: AsyncSession) -> str:
     result = await db.execute(select(Config).where(Config.key == ConfigKey.MEDIA_URL))
     row = result.scalar_one_or_none()

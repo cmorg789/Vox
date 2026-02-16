@@ -56,3 +56,43 @@ async def test_block_unblock(client):
 
     r = await client.delete(f"/api/v1/users/@me/blocks/{uid_b}", headers={"Authorization": f"Bearer {token_a}"})
     assert r.status_code == 204
+
+
+async def test_get_user_presence(client):
+    """Get user presence returns a dict."""
+    token, uid = await register(client)
+    r = await client.get(f"/api/v1/users/{uid}/presence", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+
+
+async def test_update_profile_avatar(client):
+    """Update avatar field."""
+    token, uid = await register(client)
+    r = await client.patch("/api/v1/users/@me", headers={"Authorization": f"Bearer {token}"}, json={"avatar": "avatar.png"})
+    assert r.status_code == 200
+    assert r.json()["avatar"] == "avatar.png"
+
+
+async def test_block_self(client):
+    """Cannot block yourself."""
+    token, uid = await register(client)
+    r = await client.put(f"/api/v1/users/@me/blocks/{uid}", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 400
+
+
+async def test_add_friend_self(client):
+    """Cannot add yourself as friend."""
+    token, uid = await register(client)
+    r = await client.put(f"/api/v1/users/@me/friends/{uid}", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 400
+
+
+async def test_friends_pagination(client):
+    """Friends list pagination with after cursor."""
+    token_a, uid_a = await register(client, "alice")
+    token_b, uid_b = await register(client, "bob")
+    await client.put(f"/api/v1/users/@me/friends/{uid_b}", headers={"Authorization": f"Bearer {token_a}"})
+
+    r = await client.get(f"/api/v1/users/@me/friends?after={uid_b}", headers={"Authorization": f"Bearer {token_a}"})
+    assert r.status_code == 200
+    assert len(r.json()["items"]) == 0

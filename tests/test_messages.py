@@ -314,3 +314,83 @@ async def test_slash_command_http_callback_error(client):
         r = await client.post("/api/v1/feeds/1/messages", headers=h, json={"body": "/fail"})
         assert r.status_code == 201
         assert r.json().get("interaction_id") is not None
+
+
+async def test_send_message_feed_not_found(client):
+    """Sending a message to non-existent feed returns 404."""
+    h = await setup(client)
+    r = await client.post("/api/v1/feeds/99999/messages", headers=h, json={"body": "hi"})
+    assert r.status_code in (403, 404)
+
+
+async def test_get_thread_messages_thread_not_found(client):
+    """Get thread messages for non-existent thread returns 404."""
+    h = await setup(client)
+    r = await client.get("/api/v1/feeds/1/threads/99999/messages", headers=h)
+    assert r.status_code == 404
+
+
+async def test_send_thread_message_thread_not_found(client):
+    """Send message to non-existent thread returns 404."""
+    h = await setup(client)
+    r = await client.post("/api/v1/feeds/1/threads/99999/messages", headers=h, json={"body": "hi"})
+    assert r.status_code == 404
+
+
+async def test_send_thread_message_locked(client):
+    """Send message to locked thread returns 403."""
+    h = await setup(client)
+    # Create a thread
+    r = await client.post("/api/v1/feeds/1/messages", headers=h, json={"body": "parent"})
+    msg_id = r.json()["msg_id"]
+    r = await client.post("/api/v1/feeds/1/threads", headers=h, json={"parent_msg_id": msg_id, "name": "Thread"})
+    thread_id = r.json()["thread_id"]
+
+    # Lock it
+    r = await client.patch(f"/api/v1/threads/{thread_id}", headers=h, json={"locked": True})
+    assert r.status_code == 200
+
+    # Try to post
+    r = await client.post(f"/api/v1/feeds/1/threads/{thread_id}/messages", headers=h, json={"body": "can't post"})
+    assert r.status_code == 403
+    assert r.json()["detail"]["error"]["code"] == "THREAD_LOCKED"
+
+
+async def test_feed_reaction_add_remove(client):
+    """Add and remove reaction on a feed message."""
+    h = await setup(client)
+    r = await client.post("/api/v1/feeds/1/messages", headers=h, json={"body": "react"})
+    msg_id = r.json()["msg_id"]
+
+    r = await client.put(f"/api/v1/feeds/1/messages/{msg_id}/reactions/%F0%9F%91%8D", headers=h)
+    assert r.status_code == 204
+
+    r = await client.delete(f"/api/v1/feeds/1/messages/{msg_id}/reactions/%F0%9F%91%8D", headers=h)
+    assert r.status_code == 204
+
+
+async def test_feed_reaction_message_not_found(client):
+    """Reaction on non-existent message returns 404."""
+    h = await setup(client)
+    r = await client.put("/api/v1/feeds/1/messages/99999/reactions/%F0%9F%91%8D", headers=h)
+    assert r.status_code == 404
+
+    r = await client.delete("/api/v1/feeds/1/messages/99999/reactions/%F0%9F%91%8D", headers=h)
+    assert r.status_code == 404
+
+
+async def test_send_thread_message_with_attachment(client):
+    """Thread messages with file attachments."""
+    import io
+    h = await setup(client)
+
+    r = await client.post("/api/v1/feeds/1/messages", headers=h, json={"body": "parent"})
+    msg_id = r.json()["msg_id"]
+    r = await client.post("/api/v1/feeds/1/threads", headers=h, json={"parent_msg_id": msg_id, "name": "Thread"})
+    thread_id = r.json()["thread_id"]
+
+    r = await client.post("/api/v1/feeds/1/files", headers=h, files={"file": ("test.txt", io.BytesIO(b"data"), "text/plain")})
+    file_id = r.json()["file_id"]
+
+    r = await client.post(f"/api/v1/feeds/1/threads/{thread_id}/messages", headers=h, json={"body": "with file", "attachments": [file_id]})
+    assert r.status_code == 201

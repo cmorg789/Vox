@@ -44,3 +44,18 @@ async def test_delete_invite(client):
 
     r = await client.get(f"/api/v1/invites/{code}")
     assert r.status_code == 404
+
+
+async def test_create_invite_with_max_age(client):
+    """Create an invite with expiration time."""
+    h = await auth(client)
+    r = await client.post("/api/v1/invites", headers=h, json={"max_age": 3600})
+    assert r.status_code == 201
+    assert r.json()["expires_at"] is not None
+
+
+async def test_delete_invite_not_found(client):
+    """Deleting non-existent invite returns 404."""
+    h = await auth(client)
+    r = await client.delete("/api/v1/invites/nonexistent", headers=h)
+    assert r.status_code == 404

@@ -311,6 +311,7 @@ async def subscribe_thread(
 ):
     await db.execute(sqlite_insert(thread_subscribers).values(thread_id=thread_id, user_id=user.id).on_conflict_do_nothing())
     await db.commit()
+    await dispatch(gw.thread_subscribe(thread_id=thread_id, user_id=user.id))
 
 
 @router.delete("/api/v1/threads/{thread_id}/subscribers/@me", status_code=204)
@@ -322,3 +323,4 @@ async def unsubscribe_thread(
     from sqlalchemy import delete
     await db.execute(delete(thread_subscribers).where(thread_subscribers.c.thread_id == thread_id, thread_subscribers.c.user_id == user.id))
     await db.commit()
+    await dispatch(gw.thread_unsubscribe(thread_id=thread_id, user_id=user.id))

@@ -224,3 +224,20 @@ async def test_thread_subscribe_unsubscribe(client):
 
     r = await client.delete(f"/api/v1/threads/{thread_id}/subscribers/@me", headers=h)
     assert r.status_code == 204
+
+
+async def test_get_room(client):
+    """Get room by ID."""
+    h = await auth(client)
+    r = await client.post("/api/v1/rooms", headers=h, json={"name": "Lounge", "type": "voice"})
+    room_id = r.json()["room_id"]
+    r = await client.get(f"/api/v1/rooms/{room_id}", headers=h)
+    assert r.status_code == 200
+    assert r.json()["name"] == "Lounge"
+
+
+async def test_get_room_not_found(client):
+    """Get non-existent room returns 404."""
+    h = await auth(client)
+    r = await client.get("/api/v1/rooms/99999", headers=h)
+    assert r.status_code == 404

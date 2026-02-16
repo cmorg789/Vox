@@ -151,3 +151,17 @@ async def test_list_roles_pagination(client):
     # Should not include roles with id <= 1
     for item in r.json()["items"]:
         assert item["role_id"] > 1
+
+
+async def test_assign_role_not_found(client):
+    """Assigning a non-existent role returns 404."""
+    h, uid = await auth(client)
+    r = await client.put(f"/api/v1/members/{uid}/roles/99999", headers=h)
+    assert r.status_code == 404
+
+
+async def test_revoke_role_not_found(client):
+    """Revoking a non-existent role returns 404."""
+    h, uid = await auth(client)
+    r = await client.delete(f"/api/v1/members/{uid}/roles/99999", headers=h)
+    assert r.status_code == 404

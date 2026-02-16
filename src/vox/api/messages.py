@@ -64,6 +64,7 @@ def _msg_response(m: Message) -> MessageResponse:
         federated=m.federated,
         author_address=m.author_address,
         attachments=attachments,
+        embed=m.embed,
     )
 
 

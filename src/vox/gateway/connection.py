@@ -181,11 +181,14 @@ class Connection:
                 )
                 self.hub.save_session(self.session_id, state)
                 await self.hub.disconnect(self)
-                # If no remaining sessions, broadcast offline and clear presence
+                # If no remaining sessions, clear presence and broadcast offline
+                # clear_presence must be inside the lock to prevent a race where
+                # a new connection registers between the check and the clear
                 async with self.hub._lock:
                     has_connections = self.user_id in self.hub.connections
+                    if not has_connections:
+                        self.hub.clear_presence(self.user_id)
                 if not has_connections:
-                    self.hub.clear_presence(self.user_id)
                     await self.hub.broadcast(events.presence_update(user_id=self.user_id, status="offline"))
 
     async def _handle_identify(self, data: dict[str, Any], db_factory: Any) -> None:

@@ -44,13 +44,19 @@ async def update_profile(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> UserResponse:
+    changed = {}
     if body.display_name is not None:
         user.display_name = body.display_name
+        changed["display_name"] = body.display_name
     if body.avatar is not None:
         user.avatar = body.avatar
+        changed["avatar"] = body.avatar
     if body.bio is not None:
         user.bio = body.bio
+        changed["bio"] = body.bio
     await db.commit()
+    if changed:
+        await dispatch(events.user_update(user_id=user.id, **changed))
     role_ids = await get_user_role_ids(db, user.id)
     return UserResponse(user_id=user.id, display_name=user.display_name, avatar=user.avatar, bio=user.bio, roles=role_ids)
 
