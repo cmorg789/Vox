@@ -309,6 +309,35 @@ POST /api/v1/auth/login/webauthn
 
 **Note:** 2FA challenges are only issued for password logins. Token-based session resumption and bot tokens skip 2FA since the original authentication already verified the second factor.
 
+### WebAuthn Challenge
+
+Before passwordless WebAuthn login, request a challenge:
+
+```
+POST /api/v1/auth/login/webauthn/challenge
+```
+
+```json
+// Request
+{
+  "username": "alice"
+}
+
+// Response
+{
+  "challenge": "...",
+  "credential_ids": ["..."]
+}
+```
+
+### Logout
+
+```
+POST /api/v1/auth/logout
+```
+
+Invalidates the current session token. Returns `204 No Content`.
+
 ### 2FA Management
 
 #### Get 2FA Status
@@ -448,6 +477,23 @@ GET /api/v1/users/{user_id}
 }
 ```
 
+#### Get User Presence
+
+```
+GET /api/v1/users/{user_id}/presence
+```
+
+Returns the user's current online status and activity.
+
+```json
+// Response
+{
+  "user_id": 42,
+  "status": "online",
+  "activity": {"type": "playing", "name": "Chess.com"}
+}
+```
+
 #### Update Own Profile
 
 ```
@@ -496,15 +542,16 @@ DELETE /api/v1/users/@me/friends/{user_id}
 #### List Friends
 
 ```
-GET /api/v1/users/@me/friends
+GET /api/v1/users/@me/friends?limit=200&after={cursor}
 ```
 
 ```json
 // Response
 {
-  "friends": [
+  "items": [
     {"user_id": 7, "display_name": "Bob", "avatar": "..."}
-  ]
+  ],
+  "cursor": "cursor_next..."
 }
 ```
 
@@ -542,6 +589,34 @@ Requires `MANAGE_SERVER` permission.
   "description": "..."
 }
 ```
+
+#### Get Server Limits
+
+```
+GET /api/v1/server/limits
+```
+
+Requires `MANAGE_SERVER` permission. Returns all configurable limits with current values.
+
+#### Update Server Limits
+
+```
+PATCH /api/v1/server/limits
+```
+
+Requires `MANAGE_SERVER` permission.
+
+```json
+// Request
+{
+  "limits": {
+    "message_body_max": 8000,
+    "page_limit_messages": 200
+  }
+}
+```
+
+Updates specific limits. Writes to DB and hot-reloads in-memory. Unknown limit names return `400`.
 
 ### Members
 
@@ -641,7 +716,7 @@ Requires `BAN_MEMBERS` permission.
 #### List Bans
 
 ```
-GET /api/v1/bans
+GET /api/v1/bans?limit=200&after={cursor}
 ```
 
 Requires `BAN_MEMBERS` permission.
@@ -649,9 +724,10 @@ Requires `BAN_MEMBERS` permission.
 ```json
 // Response
 {
-  "bans": [
+  "items": [
     {"user_id": 99, "display_name": "Spammer", "reason": "Spam"}
-  ]
+  ],
+  "cursor": "cursor_next..."
 }
 ```
 
@@ -711,15 +787,16 @@ No authentication required. Returns server info for preview before joining.
 #### List Invites
 
 ```
-GET /api/v1/invites
+GET /api/v1/invites?limit=100&after={cursor}
 ```
 
 ```json
 // Response
 {
-  "invites": [
+  "items": [
     {"code": "abc123", "creator_id": 42, "uses": 3, "max_uses": 10, "expires_at": 1700086400}
-  ]
+  ],
+  "cursor": "cursor_next..."
 }
 ```
 
@@ -728,15 +805,16 @@ GET /api/v1/invites
 #### List Roles
 
 ```
-GET /api/v1/roles
+GET /api/v1/roles?limit=200&after={cursor}
 ```
 
 ```json
 // Response
 {
-  "roles": [
+  "items": [
     {"role_id": 1, "name": "Admin", "color": 16711680, "permissions": 9223372036854775807, "position": 0}
-  ]
+  ],
+  "cursor": "cursor_next..."
 }
 ```
 
@@ -946,6 +1024,23 @@ DELETE /api/v1/feeds/{feed_id}
 Requires `MANAGE_SPACES` permission.
 
 ### Rooms
+
+#### Get Room
+
+```
+GET /api/v1/rooms/{room_id}
+```
+
+```json
+// Response
+{
+  "room_id": 5,
+  "name": "Gaming",
+  "type": "voice",
+  "category_id": 2,
+  "permission_overrides": []
+}
+```
 
 #### Create Room
 
@@ -1261,6 +1356,25 @@ PUT /api/v1/feeds/{feed_id}/pins/{msg_id}
 DELETE /api/v1/feeds/{feed_id}/pins/{msg_id}
 ```
 
+Requires `MANAGE_MESSAGES` permission.
+
+#### List Pins
+
+```
+GET /api/v1/feeds/{feed_id}/pins
+```
+
+Returns all pinned messages in a feed.
+
+```json
+// Response
+{
+  "pins": [
+    {"msg_id": 123, "feed_id": 5, "pinned_at": "..."}
+  ]
+}
+```
+
 #### Search Messages
 
 ```
@@ -1521,15 +1635,16 @@ POST /api/v1/embeds/resolve
 #### List Custom Emoji
 
 ```
-GET /api/v1/emoji
+GET /api/v1/emoji?limit=200&after={cursor}
 ```
 
 ```json
 // Response
 {
-  "emoji": [
-    {"emoji_id": 1, "name": "pepethink", "creator_id": 42}
-  ]
+  "items": [
+    {"emoji_id": 1, "name": "pepethink", "creator_id": 42, "image": "/api/v1/files/abc123"}
+  ],
+  "cursor": "cursor_next..."
 }
 ```
 
@@ -1555,7 +1670,17 @@ Requires `MANAGE_EMOJI` permission.
 #### List Stickers
 
 ```
-GET /api/v1/stickers
+GET /api/v1/stickers?limit=200&after={cursor}
+```
+
+```json
+// Response
+{
+  "items": [
+    {"sticker_id": 1, "name": "wave", "creator_id": 42, "image": "/api/v1/files/xyz789"}
+  ],
+  "cursor": "cursor_next..."
+}
 ```
 
 #### Create Sticker
@@ -1731,7 +1856,21 @@ POST /api/v1/feeds/{feed_id}/messages
 }
 ```
 
-When a user clicks a button, the bot receives an `interaction_create` event with `type: "button"` and `component_id: "red"`.
+When a user clicks a button, the client sends:
+
+```
+POST /api/v1/interactions/component
+```
+
+```json
+// Request
+{
+  "msg_id": 12345,
+  "component_id": "red"
+}
+```
+
+The server looks up the bot that sent the message and dispatches an `interaction_create` event to it. Returns `204 No Content`.
 
 #### Bot and Webhook Comparison
 

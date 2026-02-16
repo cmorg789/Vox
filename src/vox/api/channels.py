@@ -118,6 +118,20 @@ async def delete_feed(
 
 # --- Rooms ---
 
+@router.get("/api/v1/rooms/{room_id}")
+async def get_room(
+    room_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> RoomResponse:
+    result = await db.execute(select(Room).where(Room.id == room_id))
+    room = result.scalar_one_or_none()
+    if room is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Room does not exist."}})
+    overrides = await _overrides_for(db, "room", room.id)
+    return RoomResponse(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id, permission_overrides=overrides)
+
+
 @router.post("/api/v1/rooms", status_code=201)
 async def create_room(
     body: CreateRoomRequest,
