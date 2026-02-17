@@ -1,9 +1,16 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel
 
 from vox.limits import str_limit
 from vox.models.base import VoxModel
+
+
+class PermissionOverrideInput(BaseModel):
+    target_type: Literal["role", "user"]
+    target_id: int
+    allow: int
+    deny: int
 
 
 # --- Categories ---
@@ -30,9 +37,9 @@ class CategoryResponse(VoxModel):
 
 class CreateFeedRequest(BaseModel):
     name: Annotated[str, AfterValidator(str_limit(min_attr="channel_name_min", max_attr="channel_name_max"))]
-    type: str  # text, forum, announcement
+    type: Literal["text", "forum", "announcement"]
     category_id: int | None = None
-    permission_overrides: list | None = None
+    permission_overrides: list[PermissionOverrideInput] | None = None
 
 
 class UpdateFeedRequest(BaseModel):
@@ -55,9 +62,9 @@ class FeedResponse(VoxModel):
 
 class CreateRoomRequest(BaseModel):
     name: Annotated[str, AfterValidator(str_limit(min_attr="channel_name_min", max_attr="channel_name_max"))]
-    type: str  # voice, stage
+    type: Literal["voice", "stage"]
     category_id: int | None = None
-    permission_overrides: list | None = None
+    permission_overrides: list[PermissionOverrideInput] | None = None
 
 
 class UpdateRoomRequest(BaseModel):

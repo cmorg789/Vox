@@ -70,7 +70,7 @@ async def create_feed(
     await db.flush()
     if body.permission_overrides:
         for o in body.permission_overrides:
-            db.add(PermissionOverride(space_type="feed", space_id=feed.id, target_type=o["target_type"], target_id=o["target_id"], allow=o["allow"], deny=o["deny"]))
+            db.add(PermissionOverride(space_type="feed", space_id=feed.id, target_type=o.target_type, target_id=o.target_id, allow=o.allow, deny=o.deny))
     from vox.audit import write_audit
     await write_audit(db, "feed.create", actor_id=actor.id, target_id=feed.id)
     await db.commit()
@@ -179,7 +179,7 @@ async def create_room(
     await db.flush()
     if body.permission_overrides:
         for o in body.permission_overrides:
-            db.add(PermissionOverride(space_type="room", space_id=room.id, target_type=o["target_type"], target_id=o["target_id"], allow=o["allow"], deny=o["deny"]))
+            db.add(PermissionOverride(space_type="room", space_id=room.id, target_type=o.target_type, target_id=o.target_id, allow=o.allow, deny=o.deny))
     from vox.audit import write_audit
     await write_audit(db, "room.create", actor_id=actor.id, target_id=room.id)
     await db.commit()

@@ -1,9 +1,51 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel
 
 from vox.limits import str_limit
 from vox.models.base import VoxModel
+
+
+# --- Embed / Component Models ---
+
+
+class EmbedField(BaseModel):
+    name: str
+    value: str
+    inline: bool = False
+
+
+class Embed(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    url: str | None = None
+    color: int | None = None
+    fields: list[EmbedField] | None = None
+    image: str | None = None
+    thumbnail: str | None = None
+
+
+class ActionButton(BaseModel):
+    type: Literal["button"]
+    label: str
+    custom_id: str
+    style: str = "primary"
+
+
+class SelectOption(BaseModel):
+    label: str
+    value: str
+    description: str | None = None
+
+
+class SelectMenu(BaseModel):
+    type: Literal["select"]
+    custom_id: str
+    options: list[SelectOption]
+    placeholder: str | None = None
+
+
+Component = ActionButton | SelectMenu
 
 
 # --- Webhooks ---
@@ -24,7 +66,7 @@ class WebhookResponse(VoxModel):
 
 class ExecuteWebhookRequest(BaseModel):
     body: Annotated[str, AfterValidator(str_limit(max_attr="message_body_max"))]
-    embeds: list | None = None
+    embeds: list[Embed] | None = None
 
 
 # --- Bot Commands ---
@@ -61,8 +103,8 @@ class CommandResponse(VoxModel):
 
 class InteractionResponse(BaseModel):
     body: str | None = None
-    embeds: list | None = None
-    components: list | None = None
+    embeds: list[Embed] | None = None
+    components: list[Component] | None = None
     ephemeral: bool = False
 
 
