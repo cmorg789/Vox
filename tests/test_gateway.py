@@ -1,5 +1,6 @@
 import json
 import time
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -9,6 +10,88 @@ from vox.api.app import create_app
 from vox.db.engine import get_engine
 from vox.db.models import Base
 from vox.gateway.hub import init_hub
+
+
+# ---------------------------------------------------------------------------
+# Hub unit tests (no fixtures needed)
+# ---------------------------------------------------------------------------
+
+
+def test_hub_get_session_expired():
+    """get_session() returns None for expired sessions and deletes them."""
+    from vox.gateway.hub import Hub, SessionState
+
+    hub = Hub()
+    state = SessionState(user_id=1, created_at=time.monotonic() - 999)
+    hub.sessions["s1"] = state
+
+    result = hub.get_session("s1")
+    assert result is None
+    assert "s1" not in hub.sessions
+
+
+def test_hub_cleanup_sessions():
+    """cleanup_sessions() removes expired sessions."""
+    from vox.gateway.hub import Hub, SessionState
+
+    hub = Hub()
+    hub.sessions["fresh"] = SessionState(user_id=1, created_at=time.monotonic())
+    hub.sessions["stale"] = SessionState(user_id=2, created_at=time.monotonic() - 999)
+
+    hub.cleanup_sessions()
+    assert "fresh" in hub.sessions
+    assert "stale" not in hub.sessions
+
+
+def test_hub_get_presence_online():
+    """get_presence() returns presence data for online users."""
+    from vox.gateway.hub import Hub
+
+    hub = Hub()
+    mock_conn = MagicMock()
+    mock_conn.user_id = 1
+    hub.connections[1] = {mock_conn}
+    hub.set_presence(1, {"status": "online"})
+
+    result = hub.get_presence(1)
+    assert result["status"] == "online"
+    assert result["user_id"] == 1
+
+
+def test_hub_get_presence_offline():
+    """get_presence() returns offline status for disconnected users."""
+    from vox.gateway.hub import Hub
+
+    hub = Hub()
+    result = hub.get_presence(999)
+    assert result["status"] == "offline"
+
+
+def test_hub_connected_user_ids():
+    """connected_user_ids returns all connected user IDs."""
+    from vox.gateway.hub import Hub
+
+    hub = Hub()
+    mock_conn = MagicMock()
+    mock_conn.user_id = 1
+    hub.connections[1] = {mock_conn}
+    hub.connections[2] = {MagicMock()}
+
+    assert hub.connected_user_ids == {1, 2}
+
+
+@pytest.mark.asyncio
+async def test_hub_broadcast_all():
+    """broadcast_all() sends to all connected users."""
+    from vox.gateway.hub import Hub
+
+    hub = Hub()
+    mock_conn = AsyncMock()
+    mock_conn.user_id = 1
+    hub.connections[1] = {mock_conn}
+
+    await hub.broadcast_all({"type": "test", "d": {}})
+    mock_conn.send_event.assert_called_once()
 
 
 @pytest.fixture()
@@ -932,3 +1015,91 @@ class TestGatewayEdgeCases:
                     evt = ws1.receive_json()
                     assert evt["type"] == "presence_update"
                     assert evt["d"]["status"] == "online"
+
+    def test_invisible_presence_broadcasts_offline(self, app, db):
+        """Setting presence to 'invisible' broadcasts 'offline' to peers."""
+        with TestClient(app) as tc:
+            resp1 = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            token1 = resp1.json()["token"]
+            resp2 = tc.post("/api/v1/auth/register", json={"username": "bob", "password": "password123"})
+            token2 = resp2.json()["token"]
+
+            with tc.websocket_connect("/gateway") as ws1:
+                ws1.receive_json()  # hello
+                ws1.send_json({"type": "identify", "d": {"token": token1}})
+                ws1.receive_json()  # ready
+
+                with tc.websocket_connect("/gateway") as ws2:
+                    ws2.receive_json()  # hello
+                    ws2.send_json({"type": "identify", "d": {"token": token2}})
+                    ws2.receive_json()  # ready
+
+                    # Drain Alice's presence_update from Bob connecting
+                    evt = ws1.receive_json()
+                    assert evt["type"] == "presence_update"
+
+                    # Bob sets invisible
+                    ws2.send_json({
+                        "type": "presence_update",
+                        "d": {"status": "invisible"}
+                    })
+                    # Bob sees his own broadcast
+                    ws2.receive_json()
+
+                    # Alice should see "offline", not "invisible"
+                    evt = ws1.receive_json()
+                    assert evt["type"] == "presence_update"
+                    assert evt["d"]["status"] == "offline"
+                    assert evt["d"]["user_id"] == resp2.json()["user_id"]
+
+
+class TestVoiceCleanupOnDisconnect:
+    """Test voice state cleanup logic."""
+
+    @pytest.mark.asyncio
+    async def test_cleanup_voice_state_calls_leave(self):
+        """_cleanup_voice_state calls leave_room and dispatches voice_state_update."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from vox.gateway.connection import Connection
+        from vox.gateway.hub import Hub
+        from vox.voice import service as voice_service
+
+        hub = Hub()
+        ws = MagicMock()
+        conn = Connection(ws, hub)
+        conn.user_id = 42
+
+        mock_sfu = MagicMock()
+        mock_vs = MagicMock()
+        mock_vs.room_id = 7
+
+        mock_db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_vs
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        dispatched = []
+
+        async def capture_dispatch(event, user_ids=None):
+            dispatched.append(event)
+
+        old_sfu = voice_service._sfu
+        voice_service._sfu = mock_sfu
+        try:
+            with patch("vox.voice.service.leave_room", new_callable=AsyncMock) as mock_leave, \
+                 patch("vox.voice.service.get_room_members", new_callable=AsyncMock, return_value=[]) as mock_members, \
+                 patch("vox.gateway.dispatch.dispatch", capture_dispatch):
+                await conn._cleanup_voice_state(mock_factory)
+        finally:
+            voice_service._sfu = old_sfu
+
+        mock_leave.assert_called_once_with(mock_db, 7, 42)
+        mock_members.assert_called_once_with(mock_db, 7)
+        assert len(dispatched) == 1
+        assert dispatched[0]["type"] == "voice_state_update"
+        assert dispatched[0]["d"]["room_id"] == 7
+        assert dispatched[0]["d"]["members"] == []

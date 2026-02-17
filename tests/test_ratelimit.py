@@ -1,6 +1,9 @@
 """Tests for rate limiting middleware."""
 
 import time as _time
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from vox.ratelimit import CATEGORIES, _buckets, check, classify, reset
 
@@ -159,3 +162,36 @@ def test_check_refill_restores_tokens(monkeypatch):
     allowed, _, remaining, *_ = check("refillkey", "auth")
     assert allowed is True
     assert remaining == max_tokens - 1
+
+
+@pytest.mark.asyncio
+async def test_ratelimit_webhook_key():
+    """Webhook execution is IP-keyed."""
+    from vox.ratelimit import RateLimitMiddleware
+
+    middleware = RateLimitMiddleware(app=MagicMock())
+
+    mock_request = MagicMock()
+    mock_request.url.path = "/api/v1/webhooks/123/execute"
+    mock_request.client.host = "1.2.3.4"
+    mock_request.headers = {}
+
+    key = await middleware._resolve_key(mock_request, "/api/v1/webhooks/123/execute")
+    assert key == "ip:1.2.3.4"
+
+
+@pytest.mark.asyncio
+async def test_ratelimit_exception_fallback():
+    """When token lookup raises, falls back to IP key."""
+    from vox.ratelimit import RateLimitMiddleware
+
+    middleware = RateLimitMiddleware(app=MagicMock())
+
+    mock_request = MagicMock()
+    mock_request.url.path = "/api/v1/feeds"
+    mock_request.client.host = "5.6.7.8"
+    mock_request.headers = {"authorization": "Bearer bad_token"}
+
+    with patch("vox.ratelimit.get_session_factory", side_effect=Exception("db error")):
+        key = await middleware._resolve_key(mock_request, "/api/v1/feeds")
+    assert key == "ip:5.6.7.8"

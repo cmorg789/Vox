@@ -1,3 +1,6 @@
+import pytest
+
+
 async def auth(client):
     r = await client.post("/api/v1/auth/register", json={"username": "alice", "password": "test1234"})
     return {"Authorization": f"Bearer {r.json()['token']}"}
@@ -116,3 +119,74 @@ async def test_update_limits_invalid(client):
     h = await auth(client)
     r = await client.patch("/api/v1/server/limits", headers=h, json={"limits": {"nonexistent_limit": 100}})
     assert r.status_code == 400
+
+
+async def test_load_limits(client):
+    """load_limits loads overrides from DB."""
+    from vox.limits import load_limits, limits
+    from vox.db.engine import get_session_factory
+    from vox.db.models import Config
+
+    factory = get_session_factory()
+    async with factory() as db:
+        db.add(Config(key="limit_message_body_max", value="9999"))
+        await db.commit()
+
+    async with factory() as db:
+        await load_limits(db)
+
+    assert limits.message_body_max == 9999
+
+    # Clean up
+    from sqlalchemy import delete
+    async with factory() as db:
+        await db.execute(delete(Config).where(Config.key == "limit_message_body_max"))
+        await db.commit()
+    async with factory() as db:
+        await load_limits(db)
+
+
+def test_str_limit_none():
+    """str_limit validator passes None through."""
+    from vox.limits import str_limit
+
+    validator = str_limit(max_attr="message_body_max")
+    assert validator(None) is None
+
+
+def test_int_limit_none():
+    """int_limit validator passes None through."""
+    from vox.limits import int_limit
+
+    validator = int_limit(ge=0, max_attr="message_body_max")
+    assert validator(None) is None
+
+
+@pytest.mark.asyncio
+async def test_periodic_cleanup_runs():
+    """_periodic_cleanup executes cleanup logic."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from vox.api.app import _periodic_cleanup
+    import asyncio
+
+    call_count = 0
+
+    async def fake_sleep(secs):
+        nonlocal call_count
+        call_count += 1
+        if call_count > 1:
+            raise asyncio.CancelledError()
+
+    mock_factory = MagicMock()
+    mock_db = AsyncMock()
+    mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("asyncio.sleep", side_effect=fake_sleep):
+        with patch("vox.auth.service.cleanup_expired_sessions", new_callable=AsyncMock):
+            try:
+                await _periodic_cleanup(mock_factory)
+            except asyncio.CancelledError:
+                pass
+
+    assert call_count >= 1

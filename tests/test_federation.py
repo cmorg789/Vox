@@ -1230,6 +1230,35 @@ async def test_join_banned_user(client):
     assert r.status_code == 403
 
 
+@pytest.mark.asyncio
+async def test_close_http_client():
+    """close_http_client closes and clears the client."""
+    import httpx
+
+    # Force create a client
+    fed_service._http_client = httpx.AsyncClient(timeout=5.0)
+    assert fed_service._http_client is not None
+
+    await fed_service.close_http_client()
+    assert fed_service._http_client is None
+
+    # Calling again when already None is a no-op
+    await fed_service.close_http_client()
+
+
+def test_get_http_client_creates_new():
+    """_get_http_client creates a new client when none exists."""
+    old = fed_service._http_client
+    fed_service._http_client = None
+    try:
+        client = fed_service._get_http_client()
+        assert client is not None
+        assert not client.is_closed
+    finally:
+        # Clean up
+        fed_service._http_client = old
+
+
 async def test_config_helpers(client):
     """_get_config and _set_config work correctly including update path."""
     await _register(client)

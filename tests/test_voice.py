@@ -1,3 +1,8 @@
+from unittest.mock import MagicMock
+
+import pytest
+
+
 async def _register(client, username="alice", password="test1234"):
     r = await client.post("/api/v1/auth/register", json={"username": username, "password": password})
     return {"Authorization": f"Bearer {r.json()['token']}"}
@@ -290,6 +295,57 @@ async def test_leave_room_sfu_exception(client):
         assert r.status_code == 204
     finally:
         voice_service._sfu = old_sfu
+
+
+async def test_init_sfu_no_module(client):
+    """init_sfu raises RuntimeError when vox_sfu not installed."""
+    from vox.voice import service
+
+    original_sfu_class = service.SFU
+    service.SFU = None
+    try:
+        with pytest.raises(RuntimeError, match="vox_sfu is not installed"):
+            service.init_sfu("0.0.0.0:4443")
+    finally:
+        service.SFU = original_sfu_class
+
+
+async def test_get_sfu_no_module(client):
+    """get_sfu raises RuntimeError when vox_sfu not installed and no existing."""
+    from vox.voice import service
+
+    original_sfu_class = service.SFU
+    original_sfu = service._sfu
+    service.SFU = None
+    service._sfu = None
+    try:
+        with pytest.raises(RuntimeError, match="vox_sfu is not installed"):
+            service.get_sfu()
+    finally:
+        service.SFU = original_sfu_class
+        service._sfu = original_sfu
+
+
+async def test_reset_sfu(client):
+    """reset() clears the SFU instance."""
+    from vox.voice import service
+
+    mock_sfu = MagicMock()
+    service._sfu = mock_sfu
+    service.reset()
+    assert service._sfu is None
+    mock_sfu.stop.assert_called_once()
+
+
+async def test_reset_sfu_stop_exception(client):
+    """reset() handles exception from sfu.stop() gracefully."""
+    from vox.voice import service
+
+    mock_sfu = MagicMock()
+    mock_sfu.stop.side_effect = Exception("oops")
+    service._sfu = mock_sfu
+    service.reset()
+    assert service._sfu is None
 
 
 async def test_move_user_sfu_exceptions(client):

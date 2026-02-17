@@ -179,6 +179,17 @@ async def test_emoji_dispatch_events(client):
     assert "emoji_delete" in types
 
 
+async def test_sync_no_events(client):
+    """Sync with future timestamp returns empty events."""
+    h, _ = await auth(client)
+
+    # Sync with a very recent timestamp (should have no new events)
+    ts = int(time.time() * 1000) + 100000  # future timestamp
+    r = await client.post("/api/v1/sync", headers=h, json={"since_timestamp": ts, "categories": ["members"]})
+    assert r.status_code == 200
+    assert r.json()["events"] == []
+
+
 async def test_role_assign_revoke_dispatch(client):
     """Verify role assign/revoke dispatch events end up in sync."""
     h, uid = await auth(client)

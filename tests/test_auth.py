@@ -1,3 +1,6 @@
+import pytest
+
+
 async def test_register(client):
     r = await client.post("/api/v1/auth/register", json={
         "username": "alice",
@@ -1106,6 +1109,137 @@ async def test_federation_login_not_federated(client):
         "federation_token": token,
     })
     assert r.status_code == 403
+
+
+async def test_cleanup_expired_sessions(client):
+    """cleanup_expired_sessions deletes expired sessions."""
+    from vox.auth.service import cleanup_expired_sessions
+    from vox.db.engine import get_session_factory
+    from vox.db.models import Session
+    from sqlalchemy import select
+    from datetime import datetime, timedelta, timezone
+
+    # Register a user
+    r = await client.post("/api/v1/auth/register", json={"username": "alice", "password": "test1234"})
+    token = r.json()["token"]
+
+    factory = get_session_factory()
+    async with factory() as db:
+        # Expire the session
+        result = await db.execute(select(Session).where(Session.token == token))
+        session = result.scalar_one()
+        session.expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        await db.commit()
+
+    async with factory() as db:
+        await cleanup_expired_sessions(db)
+
+    # Token should no longer work
+    r = await client.get("/api/v1/auth/2fa", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 401
+
+
+async def test_verify_webauthn_registration_invalid_challenge(client):
+    """verify_webauthn_registration with invalid challenge raises 400."""
+    from vox.auth.mfa import verify_webauthn_registration
+    from vox.db.engine import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as db:
+        with pytest.raises(Exception) as exc_info:
+            await verify_webauthn_registration(db, "nonexistent_challenge", {})
+        assert exc_info.value.status_code == 400
+
+
+async def test_verify_webauthn_registration_verification_fails(client):
+    """verify_webauthn_registration with bad attestation raises 400."""
+    from vox.auth.mfa import verify_webauthn_registration, _store_challenge
+    from vox.db.engine import get_session_factory
+    from vox.db.models import Config
+
+    factory = get_session_factory()
+    async with factory() as db:
+        db.add(Config(key="webauthn_rp_id", value="localhost"))
+        db.add(Config(key="webauthn_origin", value="http://localhost"))
+        await db.flush()
+
+        await _store_challenge(db, "test_challenge", 1, "registration", {
+            "challenge": "dGVzdA",
+            "rp_id": "localhost",
+            "origin": "http://localhost",
+            "user_id": 1,
+        })
+        await db.flush()
+
+        with pytest.raises(Exception) as exc_info:
+            await verify_webauthn_registration(db, "test_challenge", {"bad": "data"})
+        assert exc_info.value.status_code == 400
+
+
+async def test_verify_webauthn_authentication_invalid_challenge(client):
+    """verify_webauthn_authentication with invalid challenge raises 400."""
+    from vox.auth.mfa import verify_webauthn_authentication
+    from vox.db.engine import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as db:
+        with pytest.raises(Exception) as exc_info:
+            await verify_webauthn_authentication(db, "nonexistent_challenge", {})
+        assert exc_info.value.status_code == 400
+
+
+async def test_verify_webauthn_authentication_credential_not_found(client):
+    """verify_webauthn_authentication with no matching credential raises 400."""
+    from vox.auth.mfa import verify_webauthn_authentication, _store_challenge
+    from vox.db.engine import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as db:
+        await _store_challenge(db, "auth_challenge", 1, "authentication", {
+            "challenge": "dGVzdA",
+            "rp_id": "localhost",
+            "origin": "http://localhost",
+            "user_id": 1,
+        })
+        await db.flush()
+
+        with pytest.raises(Exception) as exc_info:
+            await verify_webauthn_authentication(db, "auth_challenge", {"id": "nonexistent"})
+        assert exc_info.value.status_code == 400
+
+
+async def test_verify_webauthn_authentication_verify_fails(client):
+    """verify_webauthn_authentication with bad assertion raises 401."""
+    from vox.auth.mfa import verify_webauthn_authentication, _store_challenge
+    from vox.db.engine import get_session_factory
+    from vox.db.models import WebAuthnCredential
+    from datetime import datetime, timezone
+
+    factory = get_session_factory()
+    async with factory() as db:
+        await _store_challenge(db, "auth_challenge2", 1, "authentication", {
+            "challenge": "dGVzdA",
+            "rp_id": "localhost",
+            "origin": "http://localhost",
+            "user_id": 1,
+        })
+        db.add(WebAuthnCredential(
+            credential_id="cred_abc",
+            user_id=1,
+            name="test key",
+            public_key="pubkey_base64",
+            registered_at=datetime.now(timezone.utc),
+        ))
+        await db.flush()
+
+        with pytest.raises(Exception) as exc_info:
+            await verify_webauthn_authentication(db, "auth_challenge2", {
+                "id": "cred_abc",
+                "rawId": "cred_abc",
+                "response": {"authenticatorData": "x", "clientDataJSON": "x", "signature": "x"},
+                "type": "public-key",
+            })
+        assert exc_info.value.status_code == 401
 
 
 async def test_delete_webauthn_credential_success(client):
