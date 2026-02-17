@@ -101,6 +101,9 @@ async def add_device(
         )
     db.add(Device(id=body.device_id, user_id=user.id, device_name=body.device_name, created_at=datetime.now(timezone.utc)))
     await db.commit()
+    devices_result = await db.execute(select(Device).where(Device.user_id == user.id))
+    device_list = [{"device_id": d.id, "device_name": d.device_name} for d in devices_result.scalars().all()]
+    await dispatch(gw.device_list_update(device_list), user_ids=[user.id])
     return {"device_id": body.device_id}
 
 
@@ -116,6 +119,9 @@ async def remove_device(
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Device not found."}})
     await db.delete(device)
     await db.commit()
+    devices_result = await db.execute(select(Device).where(Device.user_id == user.id))
+    device_list = [{"device_id": d.id, "device_name": d.device_name} for d in devices_result.scalars().all()]
+    await dispatch(gw.device_list_update(device_list), user_ids=[user.id])
 
 
 @router.post("/devices/pair", status_code=201)
