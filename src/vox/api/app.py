@@ -44,8 +44,9 @@ def create_app(database_url: str) -> FastAPI:
         engine = get_engine()
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        # Ensure uploads directory exists
-        Path("uploads").mkdir(exist_ok=True)
+        # Initialize storage backend
+        from vox.storage import init_storage
+        init_storage()
         # Load runtime-configurable limits from DB
         from vox.limits import load_limits
         async with get_session_factory()() as db:

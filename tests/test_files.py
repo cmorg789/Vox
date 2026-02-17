@@ -40,11 +40,11 @@ async def test_upload_custom_name_and_mime(client):
         "/api/v1/feeds/1/files",
         headers=h,
         files={"file": ("original.bin", io.BytesIO(b"data"), "application/octet-stream")},
-        data={"name": "custom.dat", "mime": "application/x-custom"},
+        data={"name": "custom.dat", "mime": "application/pdf"},
     )
     assert r.status_code == 201
     assert r.json()["name"] == "custom.dat"
-    assert r.json()["mime"] == "application/x-custom"
+    assert r.json()["mime"] == "application/pdf"
 
 
 async def test_upload_too_large(client, monkeypatch):
@@ -157,3 +157,20 @@ async def test_dm_with_attachment(client):
     assert len(msgs) == 1
     assert len(msgs[0]["attachments"]) == 1
     assert msgs[0]["attachments"][0]["file_id"] == file_id
+
+
+async def test_upload_disallowed_mime(client):
+    """Uploading a file with a disallowed MIME type returns 415."""
+    import io
+
+    h = await setup(client)
+
+    r = await client.post(
+        "/api/v1/feeds/1/files",
+        headers=h,
+        files={"file": ("evil.bin", io.BytesIO(b"malicious"), "application/x-evil")},
+    )
+    assert r.status_code == 415
+    body = r.json()
+    err = body.get("error") or body.get("detail", {}).get("error", {})
+    assert err["code"] == "UNSUPPORTED_MEDIA_TYPE"

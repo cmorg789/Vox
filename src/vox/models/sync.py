@@ -6,6 +6,8 @@ from vox.models.base import VoxModel
 class SyncRequest(BaseModel):
     since_timestamp: int
     categories: list[str]
+    limit: int = 500
+    after: int | None = None  # cursor: event ID
 
 
 class SyncEvent(VoxModel):
@@ -17,3 +19,4 @@ class SyncEvent(VoxModel):
 class SyncResponse(VoxModel):
     events: list[SyncEvent]
     server_timestamp: int
+    cursor: int | None = None

@@ -174,22 +174,28 @@ async def test_voucher_replay_rejected(client):
 
 async def test_voucher_expired(client):
     """Expired voucher is rejected."""
+    from vox.db.engine import get_session_factory
     private_key, pub_b64 = _generate_test_keypair()
     voucher = fed_service.create_voucher("alice@origin.example", "target.example", private_key, ttl=-1)
 
-    with patch.object(fed_service, "lookup_vox_key", new_callable=AsyncMock, return_value=pub_b64):
-        result = await fed_service.verify_voucher(voucher, "target.example")
-        assert result is None
+    factory = get_session_factory()
+    async with factory() as db:
+        with patch.object(fed_service, "lookup_vox_key", new_callable=AsyncMock, return_value=pub_b64):
+            result = await fed_service.verify_voucher(voucher, "target.example", db=db)
+            assert result is None
 
 
 async def test_voucher_wrong_target(client):
     """Voucher for wrong target domain is rejected."""
+    from vox.db.engine import get_session_factory
     private_key, pub_b64 = _generate_test_keypair()
     voucher = fed_service.create_voucher("alice@origin.example", "other.example", private_key)
 
-    with patch.object(fed_service, "lookup_vox_key", new_callable=AsyncMock, return_value=pub_b64):
-        result = await fed_service.verify_voucher(voucher, "target.example")
-        assert result is None
+    factory = get_session_factory()
+    async with factory() as db:
+        with patch.object(fed_service, "lookup_vox_key", new_callable=AsyncMock, return_value=pub_b64):
+            result = await fed_service.verify_voucher(voucher, "target.example", db=db)
+            assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +349,7 @@ async def test_prekey_fetch(client):
     headers, user_id, private_key, pub_b64 = await _setup_fed_keys_in_db(client)
 
     await client.post("/api/v1/keys/devices", headers=headers, json={"device_id": "dev1", "device_name": "Phone"})
-    await client.put("/api/v1/keys/prekeys", headers=headers, json={
+    await client.put("/api/v1/keys/prekeys/dev1", headers=headers, json={
         "identity_key": "id_key_data",
         "signed_prekey": "signed_pk_data",
         "one_time_prekeys": ["otp1", "otp2"],

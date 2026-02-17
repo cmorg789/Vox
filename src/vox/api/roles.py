@@ -22,14 +22,13 @@ router = APIRouter(tags=["roles"])
 
 async def _get_space_viewers(db: AsyncSession, space_type: str, space_id: int) -> list[int]:
     """Get user IDs who have VIEW_SPACE permission for a feed/room."""
+    from vox.permissions import batch_resolve_permissions
     result = await db.execute(select(User.id).where(User.active == True))
-    all_user_ids = result.scalars().all()
-    viewers = []
-    for uid in all_user_ids:
-        resolved = await resolve_permissions(db, uid, space_type=space_type, space_id=space_id)
-        if has_permission(resolved, VIEW_SPACE):
-            viewers.append(uid)
-    return viewers
+    all_user_ids = list(result.scalars().all())
+    if not all_user_ids:
+        return []
+    perms_map = await batch_resolve_permissions(db, all_user_ids, space_type=space_type, space_id=space_id)
+    return [uid for uid, perms in perms_map.items() if has_permission(perms, VIEW_SPACE)]
 
 
 # --- Roles ---
@@ -97,7 +96,7 @@ async def create_role(
     from vox.audit import write_audit
     await write_audit(db, "role.create", actor_id=actor.id, target_id=role.id)
     await db.commit()
-    await dispatch(gw.role_create(role_id=role.id, name=role.name, color=role.color, permissions=role.permissions, position=role.position))
+    await dispatch(gw.role_create(role_id=role.id, name=role.name, color=role.color, permissions=role.permissions, position=role.position), db=db)
     return RoleResponse(role_id=role.id, name=role.name, color=role.color, permissions=role.permissions, position=role.position)
 
 
@@ -134,9 +133,11 @@ async def update_role(
     if body.position is not None:
         role.position = body.position
         changed["position"] = body.position
+    from vox.audit import write_audit
+    await write_audit(db, "role.update", actor_id=actor.id, target_id=role_id, extra=changed if changed else None)
     await db.commit()
     if changed:
-        await dispatch(gw.role_update(role_id=role_id, **changed))
+        await dispatch(gw.role_update(role_id=role_id, **changed), db=db)
     return RoleResponse(role_id=role.id, name=role.name, color=role.color, permissions=role.permissions, position=role.position)
 
 
@@ -154,7 +155,7 @@ async def delete_role(
     await write_audit(db, "role.delete", actor_id=actor.id, target_id=role_id)
     await db.delete(role)
     await db.commit()
-    await dispatch(gw.role_delete(role_id=role_id))
+    await dispatch(gw.role_delete(role_id=role_id), db=db)
 
 
 @router.put("/api/v1/members/{user_id}/roles/{role_id}", status_code=204)
@@ -180,7 +181,7 @@ async def assign_role(
     from vox.audit import write_audit
     await write_audit(db, "role.assign", actor_id=actor.id, target_id=user_id)
     await db.commit()
-    await dispatch(gw.role_assign(role_id=role_id, user_id=user_id))
+    await dispatch(gw.role_assign(role_id=role_id, user_id=user_id), db=db)
 
 
 @router.delete("/api/v1/members/{user_id}/roles/{role_id}", status_code=204)
@@ -206,10 +207,13 @@ async def revoke_role(
     from vox.audit import write_audit
     await write_audit(db, "role.revoke", actor_id=actor.id, target_id=user_id)
     await db.commit()
-    await dispatch(gw.role_revoke(role_id=role_id, user_id=user_id))
+    await dispatch(gw.role_revoke(role_id=role_id, user_id=user_id), db=db)
 
 
 # --- Permission Overrides ---
+
+VALID_TARGET_TYPES = ("role", "user")
+
 
 @router.put("/api/v1/feeds/{feed_id}/permissions/{target_type}/{target_id}", status_code=204)
 async def set_feed_permission_override(
@@ -220,6 +224,8 @@ async def set_feed_permission_override(
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(MANAGE_ROLES),
 ):
+    if target_type not in VALID_TARGET_TYPES:
+        raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_TARGET_TYPE", "message": "target_type must be 'role' or 'user'."}})
     result = await db.execute(
         select(PermissionOverride).where(
             PermissionOverride.space_type == "feed",
@@ -236,7 +242,7 @@ async def set_feed_permission_override(
         db.add(PermissionOverride(space_type="feed", space_id=feed_id, target_type=target_type, target_id=target_id, allow=body.allow, deny=body.deny))
     await db.commit()
     viewers = await _get_space_viewers(db, "feed", feed_id)
-    await dispatch(gw.permission_override_update(space_type="feed", space_id=feed_id, target_type=target_type, target_id=target_id, allow=body.allow, deny=body.deny), user_ids=viewers)
+    await dispatch(gw.permission_override_update(space_type="feed", space_id=feed_id, target_type=target_type, target_id=target_id, allow=body.allow, deny=body.deny), user_ids=viewers, db=db)
 
 
 @router.delete("/api/v1/feeds/{feed_id}/permissions/{target_type}/{target_id}", status_code=204)
@@ -247,6 +253,8 @@ async def delete_feed_permission_override(
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(MANAGE_ROLES),
 ):
+    if target_type not in VALID_TARGET_TYPES:
+        raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_TARGET_TYPE", "message": "target_type must be 'role' or 'user'."}})
     await db.execute(
         delete(PermissionOverride).where(
             PermissionOverride.space_type == "feed",
@@ -257,7 +265,7 @@ async def delete_feed_permission_override(
     )
     await db.commit()
     viewers = await _get_space_viewers(db, "feed", feed_id)
-    await dispatch(gw.permission_override_delete(space_type="feed", space_id=feed_id, target_type=target_type, target_id=target_id), user_ids=viewers)
+    await dispatch(gw.permission_override_delete(space_type="feed", space_id=feed_id, target_type=target_type, target_id=target_id), user_ids=viewers, db=db)
 
 
 @router.put("/api/v1/rooms/{room_id}/permissions/{target_type}/{target_id}", status_code=204)
@@ -269,6 +277,8 @@ async def set_room_permission_override(
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(MANAGE_ROLES),
 ):
+    if target_type not in VALID_TARGET_TYPES:
+        raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_TARGET_TYPE", "message": "target_type must be 'role' or 'user'."}})
     result = await db.execute(
         select(PermissionOverride).where(
             PermissionOverride.space_type == "room",
@@ -285,7 +295,7 @@ async def set_room_permission_override(
         db.add(PermissionOverride(space_type="room", space_id=room_id, target_type=target_type, target_id=target_id, allow=body.allow, deny=body.deny))
     await db.commit()
     viewers = await _get_space_viewers(db, "room", room_id)
-    await dispatch(gw.permission_override_update(space_type="room", space_id=room_id, target_type=target_type, target_id=target_id, allow=body.allow, deny=body.deny), user_ids=viewers)
+    await dispatch(gw.permission_override_update(space_type="room", space_id=room_id, target_type=target_type, target_id=target_id, allow=body.allow, deny=body.deny), user_ids=viewers, db=db)
 
 
 @router.delete("/api/v1/rooms/{room_id}/permissions/{target_type}/{target_id}", status_code=204)
@@ -296,6 +306,8 @@ async def delete_room_permission_override(
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(MANAGE_ROLES),
 ):
+    if target_type not in VALID_TARGET_TYPES:
+        raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_TARGET_TYPE", "message": "target_type must be 'role' or 'user'."}})
     await db.execute(
         delete(PermissionOverride).where(
             PermissionOverride.space_type == "room",
@@ -306,4 +318,4 @@ async def delete_room_permission_override(
     )
     await db.commit()
     viewers = await _get_space_viewers(db, "room", room_id)
-    await dispatch(gw.permission_override_delete(space_type="room", space_id=room_id, target_type=target_type, target_id=target_id), user_ids=viewers)
+    await dispatch(gw.permission_override_delete(space_type="room", space_id=room_id, target_type=target_type, target_id=target_id), user_ids=viewers, db=db)

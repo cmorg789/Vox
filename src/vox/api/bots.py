@@ -35,20 +35,38 @@ async def register_commands(
     if bot is None:
         raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Not a bot account."}})
 
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
     for cmd in body.commands:
-        existing = await db.execute(select(BotCommand).where(BotCommand.bot_id == bot.id, BotCommand.name == cmd.name))
-        if existing.scalar_one_or_none() is not None:
-            raise HTTPException(status_code=409, detail={"error": {"code": "CMD_ALREADY_REGISTERED", "message": f"Command '{cmd.name}' already registered."}})
-        db.add(BotCommand(
+        params_json = json.dumps([p.model_dump() for p in cmd.params]) if cmd.params else None
+        stmt = sqlite_insert(BotCommand).values(
             bot_id=bot.id,
             name=cmd.name,
             description=cmd.description,
-            params=json.dumps([p.model_dump() for p in cmd.params]) if cmd.params else None,
-        ))
+            params=params_json,
+        ).on_conflict_do_update(
+            index_elements=["bot_id", "name"],
+            set_={"description": cmd.description, "params": params_json},
+        )
+        await db.execute(stmt)
     await db.commit()
     cmds = [{"name": c.name, "description": c.description, "params": json.loads(c.params) if c.params else []} for c in body.commands]
-    await dispatch(gw.bot_commands_update(bot_id=bot.id, commands=cmds))
+    await dispatch(gw.bot_commands_update(bot_id=bot.id, commands=cmds), db=db)
     return {"ok": True}
+
+
+@router.get("/api/v1/bots/@me/commands")
+async def list_bot_commands(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    result = await db.execute(select(Bot).where(Bot.user_id == user.id))
+    bot = result.scalar_one_or_none()
+    if bot is None:
+        raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Not a bot account."}})
+    result = await db.execute(select(BotCommand).where(BotCommand.bot_id == bot.id))
+    commands = result.scalars().all()
+    items = [CommandResponse(name=c.name, description=c.description, params=json.loads(c.params) if c.params else []) for c in commands]
+    return {"commands": items}
 
 
 @router.delete("/api/v1/bots/@me/commands")
@@ -65,7 +83,7 @@ async def deregister_commands(
     for name in body.command_names:
         await db.execute(delete(BotCommand).where(BotCommand.bot_id == bot.id, BotCommand.name == name))
     await db.commit()
-    await dispatch(gw.bot_commands_delete(bot_id=bot.id, command_names=body.command_names))
+    await dispatch(gw.bot_commands_delete(bot_id=bot.id, command_names=body.command_names), db=db)
     return {"ok": True}
 
 
@@ -114,6 +132,7 @@ async def respond_to_interaction(
                 timestamp=ts,
             ),
             user_ids=[interaction.user_id],
+            db=db,
         )
     else:
         # Create a real message in the feed/dm
@@ -138,6 +157,7 @@ async def respond_to_interaction(
                 body=body.body,
                 timestamp=ts,
             ),
+            db=db,
         )
 
     return Response(status_code=204)
@@ -182,6 +202,7 @@ async def component_interaction(
             "msg_id": body.msg_id,
         }),
         user_ids=[bot.user_id],
+        db=db,
     )
 
     return Response(status_code=204)

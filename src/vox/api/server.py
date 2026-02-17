@@ -55,7 +55,7 @@ async def get_server_info(
 async def update_server(
     body: UpdateServerRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = require_permission(MANAGE_SERVER),
+    actor: User = require_permission(MANAGE_SERVER),
 ):
     changed = {}
     if body.name is not None:
@@ -67,10 +67,12 @@ async def update_server(
     if body.description is not None:
         await _set_config(db, ConfigKey.SERVER_DESCRIPTION, body.description)
         changed["description"] = body.description
+    from vox.audit import write_audit
+    await write_audit(db, "server.update", actor_id=actor.id, extra=changed if changed else None)
     await db.commit()
     if changed:
-        await dispatch(gw.server_update(**changed))
-    return await get_server_info(db=db, _=_)
+        await dispatch(gw.server_update(**changed), db=db)
+    return await get_server_info(db=db, _=actor)
 
 
 async def _overrides_for(db: AsyncSession, space_type: str, space_id: int) -> list[PermissionOverrideData]:

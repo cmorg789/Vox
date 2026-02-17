@@ -23,6 +23,10 @@ def heartbeat_ack() -> dict[str, Any]:
     return {"type": "heartbeat_ack"}
 
 
+def resumed(seq: int) -> dict[str, Any]:
+    return _event("resumed", {"seq": seq})
+
+
 def ready(
     session_id: str,
     user_id: int,
@@ -52,8 +56,9 @@ def ready(
 
 def message_create(
     msg_id: int, feed_id: int | None = None, dm_id: int | None = None,
-    author_id: int = 0, body: str | None = None, timestamp: int = 0,
+    author_id: int | None = None, body: str | None = None, timestamp: int = 0,
     reply_to: int | None = None, mentions: list[int] | None = None,
+    webhook_id: int | None = None,
 ) -> dict[str, Any]:
     d: dict[str, Any] = {"msg_id": msg_id, "author_id": author_id, "body": body, "timestamp": timestamp}
     if feed_id is not None:
@@ -64,6 +69,8 @@ def message_create(
         d["reply_to"] = reply_to
     if mentions:
         d["mentions"] = mentions
+    if webhook_id is not None:
+        d["webhook_id"] = webhook_id
     return _event("message_create", d)
 
 
@@ -252,6 +259,10 @@ def emoji_create(emoji_id: int, name: str, creator_id: int) -> dict[str, Any]:
     return _event("emoji_create", {"emoji_id": emoji_id, "name": name, "creator_id": creator_id})
 
 
+def emoji_update(emoji_id: int, **changed: Any) -> dict[str, Any]:
+    return _event("emoji_update", {"emoji_id": emoji_id, **changed})
+
+
 def emoji_delete(emoji_id: int) -> dict[str, Any]:
     return _event("emoji_delete", {"emoji_id": emoji_id})
 
@@ -260,6 +271,10 @@ def emoji_delete(emoji_id: int) -> dict[str, Any]:
 
 def sticker_create(sticker_id: int, name: str, creator_id: int) -> dict[str, Any]:
     return _event("sticker_create", {"sticker_id": sticker_id, "name": name, "creator_id": creator_id})
+
+
+def sticker_update(sticker_id: int, **changed: Any) -> dict[str, Any]:
+    return _event("sticker_update", {"sticker_id": sticker_id, **changed})
 
 
 def sticker_delete(sticker_id: int) -> dict[str, Any]:
@@ -329,6 +344,14 @@ def presence_update(user_id: int, status: str, **extra: Any) -> dict[str, Any]:
 
 def friend_request(user_id: int, target_id: int) -> dict[str, Any]:
     return _event("friend_request", {"user_id": user_id, "target_id": target_id})
+
+
+def friend_add(user_id: int, target_id: int) -> dict[str, Any]:
+    return _event("friend_add", {"user_id": user_id, "target_id": target_id})
+
+
+def friend_reject(user_id: int, target_id: int) -> dict[str, Any]:
+    return _event("friend_reject", {"user_id": user_id, "target_id": target_id})
 
 
 def friend_remove(user_id: int, target_id: int) -> dict[str, Any]:

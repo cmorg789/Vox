@@ -90,10 +90,12 @@ async def test_join_banned_user(client):
     # Ban bob
     await client.put(f"/api/v1/bans/{uid_bob}", headers=h_admin, json={"reason": "bad"})
 
-    h_bob = {"Authorization": f"Bearer {(await client.post('/api/v1/auth/register', json={'username': 'charlie', 'password': 'test1234'})).json()['token']}"}
+    reg = await client.post('/api/v1/auth/register', json={'username': 'charlie', 'password': 'test1234'})
+    charlie_token = reg.json()['token']
+    charlie_uid = reg.json()['user_id']
+    h_bob = {"Authorization": f"Bearer {charlie_token}"}
     # Actually use bob's token - but bob is banned and inactive so can't log in easily
     # Instead test with admin banning charlie then charlie trying to join
-    charlie_uid = 3
     await client.put(f"/api/v1/bans/{charlie_uid}", headers=h_admin, json={"reason": "bad"})
     r = await client.post("/api/v1/members/@me/join", headers=h_bob, json={"invite_code": "valid"})
     assert r.status_code == 403
@@ -143,7 +145,6 @@ async def test_join_expired_invite(client):
         ))
         await db.commit()
 
-    # Patch datetime.now in members module to return a tz-naive datetime for comparison
     from unittest.mock import patch
     with patch("vox.api.members.datetime") as mock_dt:
         mock_dt.now.return_value = datetime(2025, 1, 1)
@@ -162,3 +163,36 @@ async def test_list_bans_pagination(client):
     r = await client.get(f"/api/v1/bans?after={uid_bob}", headers=h)
     assert r.status_code == 200
     assert len(r.json()["items"]) == 0
+
+
+async def test_unban_reactivates_user(client):
+    """Unbanning a user reactivates them and they become accessible again."""
+    h_admin, _ = await auth(client, "admin")
+    h_bob, uid_bob = await auth(client, "bob")
+
+    # Ban bob
+    r = await client.put(f"/api/v1/bans/{uid_bob}", headers=h_admin, json={"reason": "Spam"})
+    assert r.status_code == 200
+
+    # Verify bob is banned
+    r = await client.get("/api/v1/bans", headers=h_admin)
+    ban_ids = [b["user_id"] for b in r.json()["items"]]
+    assert uid_bob in ban_ids
+
+    # Unban bob
+    r = await client.delete(f"/api/v1/bans/{uid_bob}", headers=h_admin)
+    assert r.status_code == 204
+
+    # Verify bob is accessible
+    r = await client.get(f"/api/v1/users/{uid_bob}", headers=h_admin)
+    assert r.status_code == 200
+    assert r.json()["user_id"] == uid_bob
+
+
+async def test_unban_not_banned_returns_404(client):
+    """Unbanning a user that was never banned returns 404."""
+    h_admin, _ = await auth(client, "admin")
+    _, uid_bob = await auth(client, "bob")
+
+    r = await client.delete(f"/api/v1/bans/{uid_bob}", headers=h_admin)
+    assert r.status_code == 404

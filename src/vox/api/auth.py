@@ -291,6 +291,8 @@ async def confirm_2fa_setup(
     # Detect method from setup_id prefix
     if body.setup_id.startswith("setup_totp_"):
         setup_session = await validate_setup_session(db, body.setup_id, "setup_totp_")
+        if setup_session.user_id != user.id:
+            raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Setup session does not belong to this user."}})
 
         if not body.code:
             raise HTTPException(
@@ -319,6 +321,8 @@ async def confirm_2fa_setup(
 
     elif body.setup_id.startswith("setup_webauthn_"):
         setup_session = await validate_setup_session(db, body.setup_id, "setup_webauthn_")
+        if setup_session.user_id != user.id:
+            raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Setup session does not belong to this user."}})
 
         if not body.attestation:
             raise HTTPException(
@@ -346,9 +350,18 @@ async def confirm_2fa_setup(
             detail={"error": {"code": "2FA_SETUP_EXPIRED", "message": "Invalid setup ID."}},
         )
 
-    # Generate recovery codes
-    codes = generate_recovery_codes()
-    await store_recovery_codes(db, user.id, codes)
+    # Generate recovery codes only if none exist
+    from sqlalchemy import func
+    existing = (await db.execute(
+        select(func.count()).select_from(RecoveryCode).where(
+            RecoveryCode.user_id == user.id, RecoveryCode.used == False
+        )
+    )).scalar()
+    if existing:
+        codes = []  # preserve existing codes
+    else:
+        codes = generate_recovery_codes()
+        await store_recovery_codes(db, user.id, codes)
 
     # Delete the setup session
     await db.delete(setup_session)
@@ -367,17 +380,25 @@ async def remove_2fa(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    # Verify identity via code (try TOTP first, then recovery)
+    # Verify identity via code (TOTP, WebAuthn assertion, or recovery)
     verified = False
-    if body.method == "totp":
-        result = await db.execute(
-            select(TOTPSecret).where(TOTPSecret.user_id == user.id, TOTPSecret.enabled == True)
-        )
-        totp_secret = result.scalar_one_or_none()
-        if totp_secret and verify_totp(totp_secret.secret, body.code):
+    if body.method == "webauthn" and body.assertion:
+        challenge_id = body.assertion.get("challenge_id", "")
+        try:
+            await verify_webauthn_authentication(db, challenge_id, body.assertion)
             verified = True
-    if not verified:
-        verified = await verify_recovery_code(db, user.id, body.code)
+        except Exception:
+            pass
+    elif body.code:
+        if body.method == "totp":
+            result = await db.execute(
+                select(TOTPSecret).where(TOTPSecret.user_id == user.id, TOTPSecret.enabled == True)
+            )
+            totp_secret = result.scalar_one_or_none()
+            if totp_secret and verify_totp(totp_secret.secret, body.code):
+                verified = True
+        if not verified:
+            verified = await verify_recovery_code(db, user.id, body.code)
     if not verified:
         raise HTTPException(
             status_code=401,

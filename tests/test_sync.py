@@ -94,8 +94,8 @@ async def test_sync_retention_cutoff(client):
         headers=h,
         json={"since_timestamp": eight_days_ago, "categories": ["members"]},
     )
-    assert r.status_code == 200
-    assert r.json()["events"] == []
+    assert r.status_code == 400
+    assert r.json()["detail"]["error"]["code"] == "FULL_SYNC_REQUIRED"
 
 
 async def test_sync_invalid_category(client):

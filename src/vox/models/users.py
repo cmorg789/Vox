@@ -28,6 +28,7 @@ class FriendResponse(VoxModel):
     user_id: int
     display_name: str | None
     avatar: str | None
+    status: str = "accepted"
 
 
 class DMSettingsResponse(VoxModel):

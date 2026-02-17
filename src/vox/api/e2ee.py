@@ -26,17 +26,17 @@ from vox.models.e2ee import (
 router = APIRouter(prefix="/api/v1/keys", tags=["e2ee"])
 
 
-@router.put("/prekeys", status_code=204)
+@router.put("/prekeys/{device_id}", status_code=204)
 async def upload_prekeys(
+    device_id: str,
     body: UploadPrekeysRequest,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    # Get user's first device (or require device_id in header later)
-    result = await db.execute(select(Device).where(Device.user_id == user.id).limit(1))
+    result = await db.execute(select(Device).where(Device.id == device_id, Device.user_id == user.id))
     device = result.scalar_one_or_none()
     if device is None:
-        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "No device registered."}})
+        raise HTTPException(status_code=404, detail={"error": {"code": "DEVICE_NOT_FOUND", "message": "Device not found."}})
 
     # Upsert prekey
     result = await db.execute(select(Prekey).where(Prekey.device_id == device.id))
@@ -84,6 +84,16 @@ async def get_prekey_bundle(
     return PrekeyBundleResponse(user_id=user_id, devices=bundles)
 
 
+@router.get("/devices")
+async def list_devices(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    result = await db.execute(select(Device).where(Device.user_id == user.id))
+    devices = result.scalars().all()
+    return {"devices": [{"device_id": d.id, "device_name": d.device_name, "created_at": int(d.created_at.timestamp()) if d.created_at else None} for d in devices]}
+
+
 @router.post("/devices", status_code=201)
 async def add_device(
     body: AddDeviceRequest,
@@ -103,7 +113,7 @@ async def add_device(
     await db.commit()
     devices_result = await db.execute(select(Device).where(Device.user_id == user.id))
     device_list = [{"device_id": d.id, "device_name": d.device_name} for d in devices_result.scalars().all()]
-    await dispatch(gw.device_list_update(device_list), user_ids=[user.id])
+    await dispatch(gw.device_list_update(device_list), user_ids=[user.id], db=db)
     return {"device_id": body.device_id}
 
 
@@ -121,7 +131,7 @@ async def remove_device(
     await db.commit()
     devices_result = await db.execute(select(Device).where(Device.user_id == user.id))
     device_list = [{"device_id": d.id, "device_name": d.device_name} for d in devices_result.scalars().all()]
-    await dispatch(gw.device_list_update(device_list), user_ids=[user.id])
+    await dispatch(gw.device_list_update(device_list), user_ids=[user.id], db=db)
 
 
 @router.post("/devices/pair", status_code=201)
@@ -140,6 +150,7 @@ async def initiate_pairing(
             pair_id=pair_id,
         ),
         user_ids=[user.id],
+        db=db,
     )
     return PairDeviceResponse(pair_id=pair_id)
 
@@ -154,6 +165,7 @@ async def respond_to_pairing(
     await dispatch(
         gw.cpace_confirm(pair_id=pair_id, data="approved" if body.approved else "denied"),
         user_ids=[user.id],
+        db=db,
     )
 
 
@@ -207,4 +219,4 @@ async def reset_keys(
     )
     contact_ids = list(result.scalars().all())
     if contact_ids:
-        await dispatch(gw.key_reset_notify(user_id=user.id), user_ids=contact_ids)
+        await dispatch(gw.key_reset_notify(user_id=user.id), user_ids=contact_ids, db=db)

@@ -41,7 +41,10 @@ async def sync(
     cutoff = now_ms - SYNC_RETENTION_MS
 
     if body.since_timestamp < cutoff:
-        return SyncResponse(events=[], server_timestamp=now_ms)
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "FULL_SYNC_REQUIRED", "message": "Data older than 7 days requires a full refresh."}},
+        )
 
     # Collect all event types for the requested categories
     event_types: set[str] = set()
@@ -57,11 +60,17 @@ async def sync(
     if not event_types:
         return SyncResponse(events=[], server_timestamp=now_ms)
 
+    from vox.limits import limits
+    limit = min(body.limit, limits.page_limit_messages)
+
     stmt = (
         select(EventLog)
         .where(EventLog.timestamp >= body.since_timestamp, EventLog.event_type.in_(event_types))
-        .order_by(EventLog.timestamp)
+        .order_by(EventLog.id)
+        .limit(limit)
     )
+    if body.after is not None:
+        stmt = stmt.where(EventLog.id > body.after)
     result = await db.execute(stmt)
     rows = result.scalars().all()
 
@@ -70,4 +79,5 @@ async def sync(
         for row in rows
     ]
 
-    return SyncResponse(events=events, server_timestamp=now_ms)
+    cursor = rows[-1].id if rows else None
+    return SyncResponse(events=events, server_timestamp=now_ms, cursor=cursor)

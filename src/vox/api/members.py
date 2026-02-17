@@ -76,6 +76,20 @@ async def list_members(
     return MemberListResponse(items=items, cursor=cursor)
 
 
+@router.get("/api/v1/members/{user_id}")
+async def get_member(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> MemberResponse:
+    result = await db.execute(select(User).where(User.id == user_id, User.active == True))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "USER_NOT_FOUND", "message": "Member does not exist."}})
+    role_ids = await get_user_role_ids(db, user.id)
+    return MemberResponse(user_id=user.id, display_name=user.display_name, avatar=user.avatar, nickname=user.nickname, role_ids=role_ids)
+
+
 @router.post("/api/v1/members/@me/join", status_code=204)
 async def join_server(
     body: JoinRequest,
@@ -97,7 +111,7 @@ async def join_server(
     invite.uses += 1
     user.active = True
     await db.commit()
-    await dispatch(gw.member_join(user_id=user.id, display_name=user.display_name))
+    await dispatch(gw.member_join(user_id=user.id, display_name=user.display_name), db=db)
 
 
 @router.delete("/api/v1/members/@me", status_code=204)
@@ -107,7 +121,7 @@ async def leave_server(
 ):
     user.active = False
     await db.commit()
-    await dispatch(gw.member_leave(user_id=user.id))
+    await dispatch(gw.member_leave(user_id=user.id), db=db)
 
 
 @router.patch("/api/v1/members/@me")
@@ -118,8 +132,10 @@ async def update_member(
 ) -> MemberResponse:
     if body.nickname is not None:
         user.nickname = body.nickname
+    from vox.audit import write_audit
+    await write_audit(db, "member.update", actor_id=user.id, target_id=user.id, extra={"nickname": user.nickname})
     await db.commit()
-    await dispatch(gw.member_update(user_id=user.id, nickname=user.nickname))
+    await dispatch(gw.member_update(user_id=user.id, nickname=user.nickname), db=db)
     role_ids = await get_user_role_ids(db, user.id)
     return MemberResponse(user_id=user.id, display_name=user.display_name, avatar=user.avatar, nickname=user.nickname, role_ids=role_ids)
 
@@ -141,7 +157,7 @@ async def kick_member(
     extra = {"reason": body.reason} if body and body.reason else None
     await write_audit(db, "member.kick", actor_id=actor.id, target_id=user_id, extra=extra)
     await db.commit()
-    await dispatch(gw.member_leave(user_id=user_id))
+    await dispatch(gw.member_leave(user_id=user_id), db=db)
 
 
 # --- Bans ---
@@ -181,12 +197,12 @@ async def ban_member(
 
         # Dispatch bulk delete events per feed
         for fid, msg_ids in by_feed.items():
-            await dispatch(gw.message_bulk_delete(feed_id=fid, msg_ids=msg_ids))
+            await dispatch(gw.message_bulk_delete(feed_id=fid, msg_ids=msg_ids), db=db)
 
     from vox.audit import write_audit
     await write_audit(db, "member.ban", actor_id=actor.id, target_id=user_id, extra={"reason": body.reason})
     await db.commit()
-    await dispatch(gw.member_ban(user_id=user_id))
+    await dispatch(gw.member_ban(user_id=user_id), db=db)
     return BanResponse(user_id=user_id, display_name=target.display_name, reason=body.reason, created_at=int(ban.created_at.timestamp()))
 
 
@@ -196,11 +212,16 @@ async def unban_member(
     db: AsyncSession = Depends(get_db),
     actor: User = require_permission(BAN_MEMBERS),
 ):
-    await db.execute(delete(Ban).where(Ban.user_id == user_id))
+    result = await db.execute(delete(Ban).where(Ban.user_id == user_id))
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail={"error": {"code": "BAN_NOT_FOUND", "message": "No ban exists for this user."}})
+    target = await db.get(User, user_id)
+    if target is not None and not target.active:
+        target.active = True
     from vox.audit import write_audit
     await write_audit(db, "member.unban", actor_id=actor.id, target_id=user_id)
     await db.commit()
-    await dispatch(gw.member_unban(user_id=user_id))
+    await dispatch(gw.member_unban(user_id=user_id), db=db)
 
 
 @router.get("/api/v1/bans")

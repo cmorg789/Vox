@@ -67,6 +67,7 @@ def _msg_response(m: Message) -> MessageResponse:
         author_address=m.author_address,
         attachments=attachments,
         embed=m.embed,
+        webhook_id=m.webhook_id,
     )
 
 
@@ -155,14 +156,29 @@ async def _handle_slash_command(
                         await dispatch(gw.message_create(
                             msg_id=msg_id, feed_id=feed_id, dm_id=dm_id,
                             author_id=bot.user_id, body=data["body"], timestamp=ts,
-                        ))
+                        ), db=db)
         except httpx.HTTPError:
-            pass
+            # Dispatch ephemeral error to the invoking user
+            error_msg_id = await _snowflake()
+            error_ts = int(time.time() * 1000)
+            await dispatch(
+                gw.message_create(
+                    msg_id=error_msg_id,
+                    feed_id=feed_id,
+                    dm_id=dm_id,
+                    author_id=None,
+                    body="Bot did not respond. Please try again later.",
+                    timestamp=error_ts,
+                ),
+                user_ids=[user.id],
+                db=db,
+            )
     else:
         # Gateway bot — dispatch interaction_create to the bot's user
         await dispatch(
             gw.interaction_create(payload),
             user_ids=[bot.user_id],
+            db=db,
         )
 
     return SendMessageResponse(msg_id=0, timestamp=int(time.time() * 1000), interaction_id=interaction.id)
@@ -189,6 +205,38 @@ async def get_feed_messages(
     return MessageListResponse(messages=[_msg_response(m) for m in result.scalars().all()])
 
 
+@router.get("/api/v1/feeds/{feed_id}/messages/{msg_id}")
+async def get_feed_message(
+    feed_id: int,
+    msg_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = require_permission(READ_HISTORY, space_type="feed", space_id_param="feed_id"),
+) -> MessageResponse:
+    result = await db.execute(select(Message).options(selectinload(Message.attachments)).where(Message.id == msg_id, Message.feed_id == feed_id))
+    msg = result.scalar_one_or_none()
+    if msg is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "MESSAGE_NOT_FOUND", "message": "Message does not exist."}})
+    return _msg_response(msg)
+
+
+@router.get("/api/v1/feeds/{feed_id}/messages/{msg_id}/reactions")
+async def list_message_reactions(
+    feed_id: int,
+    msg_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    msg = (await db.execute(select(Message).where(Message.id == msg_id, Message.feed_id == feed_id))).scalar_one_or_none()
+    if msg is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "MESSAGE_NOT_FOUND", "message": "Message does not exist."}})
+    result = await db.execute(select(Reaction).where(Reaction.msg_id == msg_id))
+    reactions = result.scalars().all()
+    grouped: dict[str, list[int]] = {}
+    for r in reactions:
+        grouped.setdefault(r.emoji, []).append(r.user_id)
+    return {"reactions": [{"emoji": emoji, "user_ids": uids} for emoji, uids in grouped.items()]}
+
+
 @router.post("/api/v1/feeds/{feed_id}/messages", status_code=201)
 async def send_feed_message(
     feed_id: int,
@@ -200,6 +248,10 @@ async def send_feed_message(
     feed = (await db.execute(select(Feed).where(Feed.id == feed_id))).scalar_one_or_none()
     if feed is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Feed not found."}})
+
+    # Empty message validation
+    if not (body.body and body.body.strip()) and not body.attachments:
+        raise HTTPException(status_code=400, detail={"error": {"code": "EMPTY_MESSAGE", "message": "Message must have body or attachments."}})
 
     # Announcement feeds: only users with MANAGE_SPACES can post
     if feed.type == "announcement":
@@ -257,8 +309,8 @@ async def send_feed_message(
             parent_feed_id=feed_id,
             parent_msg_id=msg_id,
             name=forum_thread.name,
-        ))
-    await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions))
+        ), db=db)
+    await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions), db=db)
     await notify_for_message(db, msg_id=msg_id, feed_id=feed_id, thread_id=None, dm_id=None, author_id=user.id, body=body.body, reply_to=body.reply_to, mentions=body.mentions)
     return SendMessageResponse(msg_id=msg_id, timestamp=ts, mentions=body.mentions)
 
@@ -280,7 +332,7 @@ async def edit_feed_message(
     msg.body = body.body
     msg.edit_timestamp = int(time.time() * 1000)
     await db.commit()
-    await dispatch(gw.message_update(msg_id=msg.id, feed_id=feed_id, body=body.body, edit_timestamp=msg.edit_timestamp))
+    await dispatch(gw.message_update(msg_id=msg.id, feed_id=feed_id, body=body.body, edit_timestamp=msg.edit_timestamp), db=db)
     return EditMessageResponse(msg_id=msg.id, edit_timestamp=msg.edit_timestamp)
 
 
@@ -302,7 +354,7 @@ async def delete_feed_message(
             raise HTTPException(status_code=403, detail={"error": {"code": "MISSING_PERMISSIONS", "message": "You lack the required permissions."}})
     await db.delete(msg)
     await db.commit()
-    await dispatch(gw.message_delete(msg_id=msg_id, feed_id=feed_id))
+    await dispatch(gw.message_delete(msg_id=msg_id, feed_id=feed_id), db=db)
 
 
 @router.post("/api/v1/feeds/{feed_id}/messages/bulk-delete", status_code=204)
@@ -314,7 +366,7 @@ async def bulk_delete_messages(
 ):
     await db.execute(delete(Message).where(Message.id.in_(body.msg_ids), Message.feed_id == feed_id))
     await db.commit()
-    await dispatch(gw.message_bulk_delete(feed_id=feed_id, msg_ids=body.msg_ids))
+    await dispatch(gw.message_bulk_delete(feed_id=feed_id, msg_ids=body.msg_ids), db=db)
 
 
 # --- Thread Messages ---
@@ -357,6 +409,9 @@ async def send_thread_message(
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Thread does not exist in this feed."}})
     if thread.locked:
         raise HTTPException(status_code=403, detail={"error": {"code": "THREAD_LOCKED", "message": "This thread is locked."}})
+    # Empty message validation
+    if not (body.body and body.body.strip()) and not body.attachments:
+        raise HTTPException(status_code=400, detail={"error": {"code": "EMPTY_MESSAGE", "message": "Message must have body or attachments."}})
     # Slash command interception
     intercepted = await _handle_slash_command(body.body, user, feed_id=feed_id, dm_id=None, db=db)
     if intercepted is not None:
@@ -388,7 +443,7 @@ async def send_thread_message(
                 raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_ATTACHMENT", "message": f"File {file_id} not found."}})
             await db.execute(message_attachments.insert().values(msg_id=msg_id, file_id=file_id))
     await db.commit()
-    await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions))
+    await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions), db=db)
     await notify_for_message(db, msg_id=msg_id, feed_id=feed_id, thread_id=thread_id, dm_id=None, author_id=user.id, body=body.body, reply_to=body.reply_to, mentions=body.mentions)
     return SendMessageResponse(msg_id=msg_id, timestamp=ts, mentions=body.mentions)
 
@@ -410,7 +465,7 @@ async def add_reaction(
     stmt = sqlite_insert(Reaction).values(msg_id=msg_id, user_id=user.id, emoji=emoji).on_conflict_do_nothing()
     await db.execute(stmt)
     await db.commit()
-    await dispatch(gw.message_reaction_add(msg_id=msg_id, user_id=user.id, emoji=emoji))
+    await dispatch(gw.message_reaction_add(msg_id=msg_id, user_id=user.id, emoji=emoji), db=db)
     await notify_for_reaction(db, msg_id=msg_id, reactor_id=user.id, emoji=emoji)
 
 
@@ -429,7 +484,7 @@ async def remove_reaction(
         delete(Reaction).where(Reaction.msg_id == msg_id, Reaction.user_id == user.id, Reaction.emoji == emoji)
     )
     await db.commit()
-    await dispatch(gw.message_reaction_remove(msg_id=msg_id, user_id=user.id, emoji=emoji))
+    await dispatch(gw.message_reaction_remove(msg_id=msg_id, user_id=user.id, emoji=emoji), db=db)
 
 
 # --- Pins ---
@@ -446,7 +501,7 @@ async def pin_message(
     stmt = sqlite_insert(Pin).values(feed_id=feed_id, msg_id=msg_id, pinned_at=datetime.now(timezone.utc)).on_conflict_do_nothing()
     await db.execute(stmt)
     await db.commit()
-    await dispatch(gw.message_pin_update(msg_id=msg_id, feed_id=feed_id, pinned=True))
+    await dispatch(gw.message_pin_update(msg_id=msg_id, feed_id=feed_id, pinned=True), db=db)
 
 
 @router.delete("/api/v1/feeds/{feed_id}/pins/{msg_id}", status_code=204)
@@ -458,7 +513,7 @@ async def unpin_message(
 ):
     await db.execute(delete(Pin).where(Pin.feed_id == feed_id, Pin.msg_id == msg_id))
     await db.commit()
-    await dispatch(gw.message_pin_update(msg_id=msg_id, feed_id=feed_id, pinned=False))
+    await dispatch(gw.message_pin_update(msg_id=msg_id, feed_id=feed_id, pinned=False), db=db)
 
 
 @router.get("/api/v1/feeds/{feed_id}/pins")

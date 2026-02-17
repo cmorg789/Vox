@@ -5,11 +5,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
-from vox.api.files import MAX_FILE_SIZE, UPLOAD_DIR
+from vox.api.files import MAX_FILE_SIZE
+from vox.storage import get_storage
 from vox.db.models import Emoji, Sticker, User
-from vox.limits import limits
+from vox.limits import check_mime, limits
 from vox.permissions import MANAGE_EMOJI
-from vox.models.emoji import EmojiResponse, StickerResponse
+from vox.models.emoji import EmojiResponse, StickerResponse, UpdateEmojiRequest, UpdateStickerRequest
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 
@@ -46,16 +47,35 @@ async def create_emoji(
     content = await image.read()
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {MAX_FILE_SIZE} byte limit."}})
+    emoji_mime = image.content_type or "application/octet-stream"
+    if not check_mime(emoji_mime, limits.allowed_emoji_mimes):
+        raise HTTPException(status_code=415, detail={"error": {"code": "UNSUPPORTED_MEDIA_TYPE", "message": f"MIME type '{emoji_mime}' is not allowed for emoji."}})
     file_id = secrets.token_urlsafe(16)
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    (UPLOAD_DIR / file_id).write_bytes(content)
-    image_url = f"/api/v1/files/{file_id}"
+    storage = get_storage()
+    image_url = await storage.put(file_id, content, emoji_mime)
     emoji = Emoji(name=name, creator_id=user.id, image=image_url)
     db.add(emoji)
     await db.flush()
     await db.commit()
-    await dispatch(gw.emoji_create(emoji_id=emoji.id, name=emoji.name, creator_id=emoji.creator_id))
+    await dispatch(gw.emoji_create(emoji_id=emoji.id, name=emoji.name, creator_id=emoji.creator_id), db=db)
     return EmojiResponse(emoji_id=emoji.id, name=emoji.name, creator_id=emoji.creator_id, image=image_url)
+
+
+@router.patch("/api/v1/emoji/{emoji_id}")
+async def update_emoji(
+    emoji_id: int,
+    body: UpdateEmojiRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = require_permission(MANAGE_EMOJI),
+) -> EmojiResponse:
+    result = await db.execute(select(Emoji).where(Emoji.id == emoji_id))
+    emoji = result.scalar_one_or_none()
+    if emoji is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Emoji not found."}})
+    emoji.name = body.name
+    await db.commit()
+    await dispatch(gw.emoji_update(emoji_id=emoji_id, name=body.name), db=db)
+    return EmojiResponse(emoji_id=emoji.id, name=emoji.name, creator_id=emoji.creator_id, image=emoji.image)
 
 
 @router.delete("/api/v1/emoji/{emoji_id}", status_code=204)
@@ -70,7 +90,7 @@ async def delete_emoji(
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Emoji not found."}})
     await db.delete(emoji)
     await db.commit()
-    await dispatch(gw.emoji_delete(emoji_id=emoji_id))
+    await dispatch(gw.emoji_delete(emoji_id=emoji_id), db=db)
 
 
 # --- Stickers ---
@@ -103,16 +123,35 @@ async def create_sticker(
     content = await image.read()
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {MAX_FILE_SIZE} byte limit."}})
+    sticker_mime = image.content_type or "application/octet-stream"
+    if not check_mime(sticker_mime, limits.allowed_sticker_mimes):
+        raise HTTPException(status_code=415, detail={"error": {"code": "UNSUPPORTED_MEDIA_TYPE", "message": f"MIME type '{sticker_mime}' is not allowed for stickers."}})
     file_id = secrets.token_urlsafe(16)
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    (UPLOAD_DIR / file_id).write_bytes(content)
-    image_url = f"/api/v1/files/{file_id}"
+    storage = get_storage()
+    image_url = await storage.put(file_id, content, sticker_mime)
     sticker = Sticker(name=name, creator_id=user.id, image=image_url)
     db.add(sticker)
     await db.flush()
     await db.commit()
-    await dispatch(gw.sticker_create(sticker_id=sticker.id, name=sticker.name, creator_id=sticker.creator_id))
+    await dispatch(gw.sticker_create(sticker_id=sticker.id, name=sticker.name, creator_id=sticker.creator_id), db=db)
     return StickerResponse(sticker_id=sticker.id, name=sticker.name, creator_id=sticker.creator_id, image=image_url)
+
+
+@router.patch("/api/v1/stickers/{sticker_id}")
+async def update_sticker(
+    sticker_id: int,
+    body: UpdateStickerRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = require_permission(MANAGE_EMOJI),
+) -> StickerResponse:
+    result = await db.execute(select(Sticker).where(Sticker.id == sticker_id))
+    sticker = result.scalar_one_or_none()
+    if sticker is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Sticker not found."}})
+    sticker.name = body.name
+    await db.commit()
+    await dispatch(gw.sticker_update(sticker_id=sticker_id, name=body.name), db=db)
+    return StickerResponse(sticker_id=sticker.id, name=sticker.name, creator_id=sticker.creator_id, image=sticker.image)
 
 
 @router.delete("/api/v1/stickers/{sticker_id}", status_code=204)
@@ -127,4 +166,4 @@ async def delete_sticker(
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Sticker not found."}})
     await db.delete(sticker)
     await db.commit()
-    await dispatch(gw.sticker_delete(sticker_id=sticker_id))
+    await dispatch(gw.sticker_delete(sticker_id=sticker_id), db=db)

@@ -23,7 +23,7 @@ async def test_upload_and_fetch_prekeys(client):
 
     # Alice adds device and uploads prekeys
     await client.post("/api/v1/keys/devices", headers=h1, json={"device_id": "dev_a1", "device_name": "Phone"})
-    r = await client.put("/api/v1/keys/prekeys", headers=h1, json={
+    r = await client.put("/api/v1/keys/prekeys/dev_a1", headers=h1, json={
         "identity_key": "aWRrZXk=",
         "signed_prekey": "c3BrZXk=",
         "one_time_prekeys": ["b3RwMQ==", "b3RwMg=="],
@@ -79,7 +79,7 @@ async def test_initiate_pairing(client):
 
 async def test_upload_prekeys_no_device(client):
     h, _ = await setup(client)
-    r = await client.put("/api/v1/keys/prekeys", headers=h, json={
+    r = await client.put("/api/v1/keys/prekeys/nonexistent", headers=h, json={
         "identity_key": "key", "signed_prekey": "spk", "one_time_prekeys": [],
     })
     assert r.status_code == 404
@@ -90,13 +90,13 @@ async def test_upload_prekeys_update_existing(client):
     await client.post("/api/v1/keys/devices", headers=h, json={"device_id": "dev1", "device_name": "Phone"})
 
     # First upload
-    r = await client.put("/api/v1/keys/prekeys", headers=h, json={
+    r = await client.put("/api/v1/keys/prekeys/dev1", headers=h, json={
         "identity_key": "key1", "signed_prekey": "spk1", "one_time_prekeys": [],
     })
     assert r.status_code == 204
 
     # Update existing prekeys
-    r = await client.put("/api/v1/keys/prekeys", headers=h, json={
+    r = await client.put("/api/v1/keys/prekeys/dev1", headers=h, json={
         "identity_key": "key2", "signed_prekey": "spk2", "one_time_prekeys": ["otp1"],
     })
     assert r.status_code == 204
@@ -120,7 +120,7 @@ async def test_pairing_respond(client):
 async def test_reset_keys(client):
     h, uid = await setup(client)
     await client.post("/api/v1/keys/devices", headers=h, json={"device_id": "dev1", "device_name": "Phone"})
-    await client.put("/api/v1/keys/prekeys", headers=h, json={
+    await client.put("/api/v1/keys/prekeys/dev1", headers=h, json={
         "identity_key": "key", "signed_prekey": "spk", "one_time_prekeys": ["otp1"],
     })
 
@@ -132,5 +132,19 @@ async def test_reset_keys(client):
     h2 = {"Authorization": f"Bearer {r2.json()['token']}"}
     r = await client.get(f"/api/v1/keys/prekeys/{uid}", headers=h2)
     assert r.status_code == 200
-    # No prekeys for the device now
-    assert all(d["identity_key"] is None or d["one_time_prekey"] is None for d in r.json()["devices"]) or len(r.json()["devices"]) == 0
+    # Prekeys deleted — devices without prekeys are excluded from bundle
+    assert len(r.json()["devices"]) == 0
+
+
+async def test_upload_prekeys_wrong_device(client):
+    """Uploading prekeys to a device that does not belong to the user returns 404."""
+    h, _ = await setup(client)
+
+    # Add a real device
+    await client.post("/api/v1/keys/devices", headers=h, json={"device_id": "dev1", "device_name": "Phone"})
+
+    # Try to upload prekeys to a non-existent device
+    r = await client.put("/api/v1/keys/prekeys/dev_wrong", headers=h, json={
+        "identity_key": "key", "signed_prekey": "spk", "one_time_prekeys": [],
+    })
+    assert r.status_code == 404

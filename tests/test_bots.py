@@ -10,6 +10,7 @@ async def _setup_bot(client):
     # Register human user
     r = await client.post("/api/v1/auth/register", json={"username": "alice", "password": "test1234"})
     human_token = r.json()["token"]
+    human_user_id = r.json()["user_id"]
     human_headers = {"Authorization": f"Bearer {human_token}"}
 
     # Create a feed
@@ -24,7 +25,7 @@ async def _setup_bot(client):
     # Directly create Bot record in DB
     factory = get_session_factory()
     async with factory() as db:
-        bot = Bot(user_id=bot_user_id, owner_id=1, created_at=datetime.now(timezone.utc))
+        bot = Bot(user_id=bot_user_id, owner_id=human_user_id, created_at=datetime.now(timezone.utc))
         db.add(bot)
         await db.commit()
         bot_id = bot.id
@@ -262,7 +263,7 @@ async def test_deregister_commands(client):
     _, bot_h, _, _ = await _setup_bot(client)
 
     await client.put("/api/v1/bots/@me/commands", headers=bot_h, json={
-        "commands": [{"name": "ping"}, {"name": "echo"}]
+        "commands": [{"name": "ping", "description": "Pong!"}, {"name": "echo", "description": "Echo!"}]
     })
 
     r = await client.request("DELETE", "/api/v1/bots/@me/commands", headers=bot_h, json={
@@ -317,16 +318,15 @@ async def test_deregister_commands_not_bot(client):
 
 
 async def test_register_duplicate_command(client):
-    """Registering a command with the same name twice returns 409."""
+    """Registering a command with the same name twice upserts (updates description)."""
     human_h, bot_h, _, _ = await _setup_bot(client)
     await client.put("/api/v1/bots/@me/commands", headers=bot_h, json={
         "commands": [{"name": "help", "description": "Show help"}]
     })
     r = await client.put("/api/v1/bots/@me/commands", headers=bot_h, json={
-        "commands": [{"name": "help", "description": "Duplicate"}]
+        "commands": [{"name": "help", "description": "Updated help"}]
     })
-    assert r.status_code == 409
-    assert r.json()["detail"]["error"]["code"] == "CMD_ALREADY_REGISTERED"
+    assert r.status_code == 200
 
 
 async def test_respond_interaction_message_not_found(client):

@@ -34,7 +34,7 @@ class MessageResponse(VoxModel):
     feed_id: int | None = None
     dm_id: int | None = None
     thread_id: int | None = None
-    author_id: int
+    author_id: int | None = None
     body: str | None = None
     opaque_blob: str | None = None
     timestamp: int
@@ -45,6 +45,7 @@ class MessageResponse(VoxModel):
     federated: bool = False
     author_address: str | None = None
     pinned_at: int | None = None
+    webhook_id: int | None = None
 
 
 class MessageListResponse(VoxModel):

@@ -100,10 +100,13 @@ def test_classify_prefix_map():
     assert classify("/api/v1/emoji/1") == "emoji"
     assert classify("/api/v1/voice/join") == "voice"
     assert classify("/api/v1/bots/1") == "bots"
-    assert classify("/api/v1/e2ee/keys") == "e2ee"
+    assert classify("/api/v1/keys/prekeys") == "e2ee"
     assert classify("/api/v1/federation/peers") == "federation"
     assert classify("/api/v1/dms/1") == "messages"
     assert classify("/api/v1/files/upload") == "files"
+    assert classify("/api/v1/reports/1") == "moderation"
+    assert classify("/api/v1/admin/config") == "moderation"
+    assert classify("/api/v1/users/@me") == "members"
 
 
 def test_classify_unknown_falls_back_to_server():

@@ -54,6 +54,8 @@ friends = Table(
     Base.metadata,
     Column("user_id", Integer, ForeignKey("users.id"), primary_key=True),
     Column("friend_id", Integer, ForeignKey("users.id"), primary_key=True),
+    Column("status", String(20), server_default="accepted"),  # pending | accepted
+    Column("created_at", DateTime),
 )
 
 blocks = Table(
@@ -168,6 +170,10 @@ class ConfigKey(str, Enum):
     LIMIT_PAGE_LIMIT_FRIENDS = "limit_page_limit_friends"
     LIMIT_PAGE_LIMIT_STICKERS = "limit_page_limit_stickers"
 
+    ALLOWED_FILE_MIMES = "allowed_file_mimes"
+    ALLOWED_EMOJI_MIMES = "allowed_emoji_mimes"
+    ALLOWED_STICKER_MIMES = "allowed_sticker_mimes"
+
 
 class Config(Base):
     __tablename__ = "config"
@@ -271,6 +277,7 @@ class PermissionOverride(Base):
     __tablename__ = "permission_overrides"
     __table_args__ = (
         Index("ix_perm_override_space", "space_type", "space_id"),
+        UniqueConstraint("space_type", "space_id", "target_type", "target_id", name="uq_perm_override"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -328,7 +335,7 @@ class Message(Base):
     feed_id: Mapped[Optional[int]] = mapped_column(ForeignKey("feeds.id"), index=True)
     dm_id: Mapped[Optional[int]] = mapped_column(ForeignKey("dms.id"), index=True)
     thread_id: Mapped[Optional[int]] = mapped_column(ForeignKey("threads.id", use_alter=True), index=True)
-    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    author_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), index=True)
     body: Mapped[Optional[str]] = mapped_column(Text)
     opaque_blob: Mapped[Optional[str]] = mapped_column(Text)  # E2EE ciphertext
     timestamp: Mapped[int] = mapped_column(BigInteger)  # unix ms
@@ -337,8 +344,9 @@ class Message(Base):
     embed: Mapped[Optional[str]] = mapped_column(Text, default=None)
     federated: Mapped[bool] = mapped_column(Boolean, server_default="0")
     author_address: Mapped[Optional[str]] = mapped_column(String(255))
+    webhook_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webhooks.id"))
 
-    author: Mapped["User"] = relationship()
+    author: Mapped[Optional["User"]] = relationship()
     attachments: Mapped[list["File"]] = relationship(secondary=message_attachments)
 
 
@@ -464,6 +472,7 @@ class Bot(Base):
 
 class BotCommand(Base):
     __tablename__ = "bot_commands"
+    __table_args__ = (UniqueConstraint("bot_id", "name"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     bot_id: Mapped[int] = mapped_column(ForeignKey("bots.id"))

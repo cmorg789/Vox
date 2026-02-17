@@ -80,6 +80,7 @@ class Connection:
         self._replay_buffer: deque[dict[str, Any]] = deque(maxlen=REPLAY_BUFFER_SIZE)
         self._closed: bool = False
         self._compress = compress == "zstd" and _zstd_compressor is not None
+        self._last_typing: dict[int, float] = {}  # feed_id/dm_id -> timestamp
 
     async def send_json(self, data: dict[str, Any]) -> None:
         if not self._closed:
@@ -293,6 +294,12 @@ class Connection:
             if buffered.get("seq", 0) > last_seq:
                 await self.send_json(buffered)
 
+        # Refresh session timeout
+        session.created_at = time.monotonic()
+
+        # Send resumed confirmation (not sequenced — must not pollute replay buffer)
+        await self.send_json(events.resumed(seq=self.seq))
+
     async def _heartbeat_monitor(self) -> None:
         timeout = HEARTBEAT_INTERVAL_MS / 1000 * HEARTBEAT_TIMEOUT_FACTOR
         while not self._closed:
@@ -329,11 +336,19 @@ class Connection:
                 from vox.gateway.dispatch import dispatch
                 feed_id = data.get("feed_id")
                 dm_id = data.get("dm_id")
+                channel_key = ("feed", feed_id) if feed_id is not None else ("dm", dm_id)
+                now = time.monotonic()
+                if now - self._last_typing.get(channel_key, 0) < 5.0:
+                    continue
+                self._last_typing[channel_key] = now
                 evt = events.typing_start(user_id=self.user_id, feed_id=feed_id, dm_id=dm_id)
                 await dispatch(evt)
 
             elif msg_type == "presence_update":
                 status = data.get("status", "online")
+                if status not in ("online", "idle", "dnd", "invisible"):
+                    await self.send_json({"type": "error", "d": {"code": "INVALID_STATUS", "message": "Status must be one of: online, idle, dnd, invisible."}})
+                    continue
                 custom_status = data.get("custom_status")
                 activity = data.get("activity")
                 presence_data: dict[str, Any] = {"status": status}
@@ -345,7 +360,9 @@ class Connection:
                 # If invisible, broadcast offline to others
                 broadcast_status = "offline" if status == "invisible" else status
                 broadcast_data = {**presence_data, "status": broadcast_status}
-                await self.hub.broadcast(events.presence_update(user_id=self.user_id, **broadcast_data))
+                other_ids = [uid for uid in self.hub.connections if uid != self.user_id]
+                if other_ids:
+                    await self.hub.broadcast(events.presence_update(user_id=self.user_id, **broadcast_data), user_ids=other_ids)
 
             elif msg_type == "voice_state_update":
                 from vox.gateway.dispatch import dispatch
@@ -354,6 +371,10 @@ class Connection:
             elif msg_type == "mls_relay":
                 mls_type = data.get("mls_type", "")
                 mls_data = data.get("data", "")
+                from vox.limits import limits as _limits
+                if len(mls_data) > _limits.relay_payload_max:
+                    await self.send_json({"type": "error", "d": {"code": "PAYLOAD_TOO_LARGE", "message": "Relay payload exceeds size limit."}})
+                    continue
                 builder = _MLS_EVENT_MAP.get(mls_type)
                 if builder:
                     evt = builder(data=mls_data)
@@ -364,6 +385,10 @@ class Connection:
                 cpace_type = data.get("cpace_type", "")
                 pair_id = data.get("pair_id", "")
                 cpace_data = data.get("data", "")
+                from vox.limits import limits as _limits
+                if len(cpace_data) > _limits.relay_payload_max:
+                    await self.send_json({"type": "error", "d": {"code": "PAYLOAD_TOO_LARGE", "message": "Relay payload exceeds size limit."}})
+                    continue
                 builder = _CPACE_EVENT_MAP.get(cpace_type)
                 if builder:
                     if cpace_type == "new_device_key":
@@ -377,17 +402,33 @@ class Connection:
             elif msg_type == "voice_codec_neg":
                 media_type = data.get("media_type", "")
                 codec = data.get("codec", "")
-                params = {k: v for k, v in data.items() if k not in ("media_type", "codec")}
+                room_id = data.get("room_id")
+                params = {k: v for k, v in data.items() if k not in ("media_type", "codec", "room_id")}
                 evt = events.voice_codec_neg(media_type=media_type, codec=codec, **params)
-                # Broadcast to all (no room membership tracking yet)
-                await self.hub.broadcast(evt)
+                if room_id is not None:
+                    room_user_ids = await self._get_voice_room_users(room_id, db_factory)
+                    await self.hub.broadcast(evt, user_ids=room_user_ids)
+                else:
+                    await self.hub.broadcast(evt)
 
             elif msg_type == "stage_response":
-                evt = events.stage_response(user_id=self.user_id, **data)
-                # Broadcast to all (no room membership tracking yet)
-                await self.hub.broadcast(evt)
+                room_id = data.get("room_id")
+                stage_data = {k: v for k, v in data.items() if k != "room_id"}
+                evt = events.stage_response(user_id=self.user_id, **stage_data)
+                if room_id is not None:
+                    room_user_ids = await self._get_voice_room_users(room_id, db_factory)
+                    await self.hub.broadcast(evt, user_ids=room_user_ids)
+                else:
+                    await self.hub.broadcast(evt)
 
             # Unknown types are silently ignored per spec tolerance
+
+    async def _get_voice_room_users(self, room_id: int, db_factory: Any) -> list[int]:
+        from vox.db.models import VoiceState
+        from sqlalchemy import select
+        async with db_factory() as db:
+            result = await db.execute(select(VoiceState.user_id).where(VoiceState.room_id == room_id))
+            return [row[0] for row in result.all()]
 
     async def _handle_voice_state_update(self, data: dict[str, Any], db_factory: Any) -> None:
         from vox.gateway.dispatch import dispatch

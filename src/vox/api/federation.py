@@ -174,6 +174,7 @@ async def relay_message(
     await dispatch(
         gw.message_create(msg_id=msg_id, dm_id=dm.id, author_id=sender.id, body=None, timestamp=ts),
         user_ids=pids,
+        db=db,
     )
 
 
@@ -202,7 +203,7 @@ async def relay_typing(
         return  # Silently ignore
 
     pids = await _get_dm_participant_ids(db, dm_id)
-    await dispatch(gw.typing_start(user_id=sender.id, dm_id=dm_id), user_ids=pids)
+    await dispatch(gw.typing_start(user_id=sender.id, dm_id=dm_id), user_ids=pids, db=db)
 
 
 @router.post("/relay/read", status_code=204)
@@ -232,6 +233,7 @@ async def relay_read(
     await dispatch(
         gw.dm_read_notify(dm_id=dm_id, user_id=sender.id, up_to_msg_id=body.up_to_msg_id),
         user_ids=pids,
+        db=db,
     )
 
 
@@ -353,6 +355,7 @@ async def presence_notify(
         await dispatch(
             gw.presence_update(user_id=fed_user.id, status=body.status),
             user_ids=list(local_user_ids),
+            db=db,
         )
 
 

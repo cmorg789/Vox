@@ -96,3 +96,62 @@ async def test_friends_pagination(client):
     r = await client.get(f"/api/v1/users/@me/friends?after={uid_b}", headers={"Authorization": f"Bearer {token_a}"})
     assert r.status_code == 200
     assert len(r.json()["items"]) == 0
+
+
+async def test_friend_request_pending(client):
+    """Sending a friend request shows as pending in the sender's friend list."""
+    token_a, uid_a = await register(client, "alice")
+    token_b, uid_b = await register(client, "bob")
+
+    r = await client.put(f"/api/v1/users/@me/friends/{uid_b}", headers={"Authorization": f"Bearer {token_a}"})
+    assert r.status_code == 204
+
+    r = await client.get("/api/v1/users/@me/friends?status=pending", headers={"Authorization": f"Bearer {token_a}"})
+    assert r.status_code == 200
+    assert len(r.json()["items"]) == 1
+    assert r.json()["items"][0]["user_id"] == uid_b
+    assert r.json()["items"][0]["status"] == "pending"
+
+
+async def test_friend_accept(client):
+    """Accepting a friend request makes both users see each other as accepted."""
+    token_a, uid_a = await register(client, "alice")
+    token_b, uid_b = await register(client, "bob")
+
+    # Alice sends friend request to Bob
+    await client.put(f"/api/v1/users/@me/friends/{uid_b}", headers={"Authorization": f"Bearer {token_a}"})
+
+    # Bob accepts
+    r = await client.post(f"/api/v1/users/@me/friends/{uid_a}/accept", headers={"Authorization": f"Bearer {token_b}"})
+    assert r.status_code == 204
+
+    # Both users should see each other as accepted
+    r = await client.get("/api/v1/users/@me/friends", headers={"Authorization": f"Bearer {token_a}"})
+    assert r.status_code == 200
+    assert len(r.json()["items"]) == 1
+    assert r.json()["items"][0]["user_id"] == uid_b
+    assert r.json()["items"][0]["status"] == "accepted"
+
+    r = await client.get("/api/v1/users/@me/friends", headers={"Authorization": f"Bearer {token_b}"})
+    assert r.status_code == 200
+    assert len(r.json()["items"]) == 1
+    assert r.json()["items"][0]["user_id"] == uid_a
+    assert r.json()["items"][0]["status"] == "accepted"
+
+
+async def test_friend_reject(client):
+    """Rejecting a friend request removes it from the pending list."""
+    token_a, uid_a = await register(client, "alice")
+    token_b, uid_b = await register(client, "bob")
+
+    # Alice sends friend request to Bob
+    await client.put(f"/api/v1/users/@me/friends/{uid_b}", headers={"Authorization": f"Bearer {token_a}"})
+
+    # Bob rejects
+    r = await client.post(f"/api/v1/users/@me/friends/{uid_a}/reject", headers={"Authorization": f"Bearer {token_b}"})
+    assert r.status_code == 204
+
+    # Bob's pending list should be empty
+    r = await client.get("/api/v1/users/@me/friends?status=pending", headers={"Authorization": f"Bearer {token_b}"})
+    assert r.status_code == 200
+    assert len(r.json()["items"]) == 0

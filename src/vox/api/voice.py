@@ -32,7 +32,17 @@ _STAGE_INVITE_TTL = 300  # 5 minutes
 async def _dispatch_voice_state(db: AsyncSession, room_id: int) -> None:
     members = await voice_service.get_room_members(db, room_id)
     evt = gw.voice_state_update(room_id=room_id, members=[m.model_dump() for m in members])
-    await dispatch(evt)
+    await dispatch(evt, db=db)
+
+
+@router.get("/api/v1/rooms/{room_id}/voice")
+async def get_voice_members(
+    room_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    members = await voice_service.get_room_members(db, room_id)
+    return {"room_id": room_id, "members": [m.model_dump() for m in members]}
 
 
 @router.post("/api/v1/rooms/{room_id}/voice/join")
@@ -71,7 +81,7 @@ async def refresh_media_token(
     user: User = Depends(get_current_user),
 ):
     token = await voice_service.refresh_media_token(db, room_id, user.id)
-    await dispatch(gw.media_token_refresh(room_id=room_id, media_token=token), user_ids=[user.id])
+    await dispatch(gw.media_token_refresh(room_id=room_id, media_token=token), user_ids=[user.id], db=db)
     return {"media_token": token}
 
 
@@ -123,7 +133,7 @@ async def stage_request_to_speak(
             moderator_ids.append(uid)
 
     evt = gw.stage_request(room_id=room_id, user_id=user.id)
-    await dispatch(evt, user_ids=moderator_ids if moderator_ids else None)
+    await dispatch(evt, user_ids=moderator_ids if moderator_ids else None, db=db)
 
 
 @router.post("/api/v1/rooms/{room_id}/stage/invite", status_code=204)
@@ -147,7 +157,7 @@ async def stage_invite_to_speak(
         del _pending_stage_invites[k]
 
     evt = gw.stage_invite(room_id=room_id, user_id=body.user_id)
-    await dispatch(evt, user_ids=[body.user_id])
+    await dispatch(evt, user_ids=[body.user_id], db=db)
     _pending_stage_invites[(room_id, body.user_id)] = now
 
 
@@ -174,7 +184,7 @@ async def stage_respond_to_invite(
         await _dispatch_voice_state(db, room_id)
     else:
         evt = gw.stage_invite_decline(room_id=room_id, user_id=user.id)
-        await dispatch(evt)
+        await dispatch(evt, db=db)
 
 
 @router.post("/api/v1/rooms/{room_id}/stage/revoke", status_code=204)
@@ -188,7 +198,7 @@ async def stage_revoke_speaker(
     await db.execute(delete(StageSpeaker).where(StageSpeaker.room_id == room_id, StageSpeaker.user_id == body.user_id))
     await db.commit()
     evt = gw.stage_revoke(room_id=room_id, user_id=body.user_id)
-    await dispatch(evt)
+    await dispatch(evt, db=db)
 
 
 @router.patch("/api/v1/rooms/{room_id}/stage/topic")
@@ -205,5 +215,5 @@ async def stage_set_topic(
     room.topic = body.topic
     await db.commit()
     evt = gw.stage_topic_update(room_id=room_id, topic=body.topic)
-    await dispatch(evt)
+    await dispatch(evt, db=db)
     return {"topic": body.topic}

@@ -5,14 +5,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse as FastAPIFileResponse
+from fastapi.responses import FileResponse as FastAPIFileResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import File, Message, User, dm_participants, message_attachments
+from vox.limits import check_mime, limits
 from vox.models.files import FileResponse
-from vox.permissions import ATTACH_FILES, VIEW_SPACE, has_permission, resolve_permissions
+from vox.permissions import ATTACH_FILES, MANAGE_MESSAGES, VIEW_SPACE, has_permission, resolve_permissions
+from vox.storage import LocalStorage, get_storage
 
 router = APIRouter(tags=["files"])
 
@@ -40,16 +42,21 @@ async def upload_file(
     file_name = name or file.filename or "upload"
     file_mime = mime or file.content_type or "application/octet-stream"
 
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    dest = UPLOAD_DIR / file_id
-    dest.write_bytes(content)
+    if not check_mime(file_mime, limits.allowed_file_mimes):
+        raise HTTPException(
+            status_code=415,
+            detail={"error": {"code": "UNSUPPORTED_MEDIA_TYPE", "message": f"MIME type '{file_mime}' is not allowed."}},
+        )
+
+    storage = get_storage()
+    url = await storage.put(file_id, content, file_mime)
 
     row = File(
         id=file_id,
         name=file_name,
         size=len(content),
         mime=file_mime,
-        url=f"/api/v1/files/{file_id}",
+        url=url,
         uploader_id=user.id,
         created_at=datetime.now(timezone.utc),
     )
@@ -97,11 +104,51 @@ async def download_file(
         # Orphan file: only uploader can access
         raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "You do not have access to this file."}})
 
-    path = UPLOAD_DIR / file_id
-    if not path.exists():
+    storage = get_storage()
+    if not await storage.exists(file_id):
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": "FILE_NOT_FOUND", "message": "File data missing."}},
         )
 
-    return FastAPIFileResponse(path=str(path), media_type=row.mime, filename=row.name)
+    # Fast path for local storage: use FileResponse for streaming
+    if isinstance(storage, LocalStorage):
+        return FastAPIFileResponse(path=str(storage.local_path / file_id), media_type=row.mime, filename=row.name)
+
+    data = await storage.get(file_id)
+    return Response(content=data, media_type=row.mime, headers={"Content-Disposition": f'attachment; filename="{row.name}"'})
+
+
+@router.delete("/api/v1/files/{file_id}", status_code=204)
+async def delete_file(
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    result = await db.execute(select(File).where(File.id == file_id))
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": "FILE_NOT_FOUND", "message": "File does not exist."}},
+        )
+    # Only uploader or users with MANAGE_MESSAGES can delete
+    if row.uploader_id != user.id:
+        # Look up message context for permission resolution
+        msg_result = await db.execute(
+            select(Message)
+            .join(message_attachments, message_attachments.c.msg_id == Message.id)
+            .where(message_attachments.c.file_id == file_id)
+            .limit(1)
+        )
+        msg = msg_result.scalar_one_or_none()
+        if msg and msg.feed_id:
+            resolved = await resolve_permissions(db, user.id, space_type="feed", space_id=msg.feed_id)
+        else:
+            resolved = await resolve_permissions(db, user.id)
+        if not has_permission(resolved, MANAGE_MESSAGES):
+            raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "You can only delete your own files."}})
+    storage = get_storage()
+    await storage.delete(file_id)
+    await db.delete(row)
+    await db.commit()

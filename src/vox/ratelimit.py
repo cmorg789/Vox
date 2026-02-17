@@ -67,10 +67,13 @@ _PREFIX_MAP: list[tuple[str, str]] = [
     ("/api/v1/voice", "voice"),
     ("/api/v1/server", "server"),
     ("/api/v1/bots", "bots"),
-    ("/api/v1/e2ee", "e2ee"),
+    ("/api/v1/keys", "e2ee"),
     ("/api/v1/dms", "messages"),
     ("/api/v1/files", "files"),
     ("/api/v1/federation", "federation"),
+    ("/api/v1/reports", "moderation"),
+    ("/api/v1/admin", "moderation"),
+    ("/api/v1/users", "members"),
 ]
 
 
@@ -112,12 +115,10 @@ def check(key: str, category: str) -> tuple[bool, int, int, int, int]:
     bucket.tokens = min(max_tokens, bucket.tokens + elapsed * refill_rate)
     bucket.last_refill = now
 
-    remaining = int(bucket.tokens)
-    reset_ts = int(now + (max_tokens - bucket.tokens) / refill_rate) if refill_rate else int(now)
-
     if bucket.tokens >= 1.0:
         bucket.tokens -= 1.0
         remaining = int(bucket.tokens)
+        reset_ts = int(now + (max_tokens - bucket.tokens) / refill_rate) if refill_rate else int(now)
         return True, max_tokens, remaining, reset_ts, 0
     else:
         # Time until one token is available

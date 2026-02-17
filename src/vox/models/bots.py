@@ -64,6 +64,18 @@ class WebhookResponse(VoxModel):
     avatar: str | None = None
 
 
+class WebhookListResponse(VoxModel):
+    webhook_id: int
+    feed_id: int
+    name: str
+    avatar: str | None = None
+
+
+class UpdateWebhookRequest(BaseModel):
+    name: Annotated[str, AfterValidator(str_limit(max_attr="webhook_name_max"))] | None = None
+    avatar: str | None = None
+
+
 class ExecuteWebhookRequest(BaseModel):
     body: Annotated[str, AfterValidator(str_limit(max_attr="message_body_max"))]
     embeds: list[Embed] | None = None

@@ -233,3 +233,13 @@ async def test_revoke_role_hierarchy(client):
     r = await client.delete(f"/api/v1/members/{admin_uid}/roles/{senior_role_id}", headers=h_mod)
     assert r.status_code == 403
     assert r.json()["detail"]["error"]["code"] == "ROLE_HIERARCHY"
+
+
+async def test_set_permission_override_invalid_target_type(client):
+    """Setting a permission override with an invalid target type returns 400."""
+    h, _ = await auth(client)
+    await client.post("/api/v1/feeds", headers=h, json={"name": "general", "type": "text"})
+
+    r = await client.put("/api/v1/feeds/1/permissions/badtype/1", headers=h, json={"allow": 3, "deny": 0})
+    assert r.status_code == 400
+    assert r.json()["detail"]["error"]["code"] == "INVALID_TARGET_TYPE"

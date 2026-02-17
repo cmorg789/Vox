@@ -79,3 +79,27 @@ async def test_delete_webhook_not_found(client):
     h = await setup(client)
     r = await client.delete("/api/v1/webhooks/99999", headers=h)
     assert r.status_code == 404
+
+
+async def test_list_webhooks_no_token_in_response(client):
+    """Listing webhooks should not expose the token field."""
+    h = await setup(client)
+    await client.post("/api/v1/feeds/1/webhooks", headers=h, json={"name": "CI Bot"})
+
+    r = await client.get("/api/v1/feeds/1/webhooks", headers=h)
+    assert r.status_code == 200
+    for wh in r.json()["webhooks"]:
+        assert "token" not in wh
+
+
+async def test_get_single_webhook(client):
+    """GET single webhook returns correct data without token."""
+    h = await setup(client)
+    r = await client.post("/api/v1/feeds/1/webhooks", headers=h, json={"name": "Deploy Bot"})
+    wh_id = r.json()["webhook_id"]
+
+    r = await client.get(f"/api/v1/webhooks/{wh_id}", headers=h)
+    assert r.status_code == 200
+    assert r.json()["name"] == "Deploy Bot"
+    assert r.json()["feed_id"] == 1
+    assert "token" not in r.json()

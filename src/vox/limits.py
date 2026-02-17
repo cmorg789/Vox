@@ -108,8 +108,19 @@ class Limits(BaseSettings):
     command_name_max: int = 32
     command_description_max: int = 256
 
+    # --- Emoji / Stickers ---
+    emoji_name_max: int = 32
+
     # --- Federation ---
     federation_address_max: int = 256
+
+    # --- MIME allowlists (comma-separated, supports wildcards like image/*) ---
+    allowed_file_mimes: str = "image/*,video/*,audio/*,application/pdf,text/plain"
+    allowed_emoji_mimes: str = "image/png,image/gif,image/webp"
+    allowed_sticker_mimes: str = "image/png,image/gif,image/webp,image/apng"
+
+    # --- Relay ---
+    relay_payload_max: int = 16384  # 16KB
 
     # --- Pagination ---
     page_limit_messages: int = 100
@@ -200,6 +211,17 @@ def int_limit(*, ge: int | None = None, max_attr: str | None = None):
             raise ValueError(f"Input should be less than or equal to {getattr(limits, max_attr)}")
         return v
     return _validate
+
+
+def check_mime(mime: str, allowlist: str) -> bool:
+    """Check if a MIME type matches a comma-separated allowlist (supports type/* wildcards)."""
+    allowed = [s.strip() for s in allowlist.split(",") if s.strip()]
+    for pattern in allowed:
+        if pattern == mime:
+            return True
+        if pattern.endswith("/*") and mime.startswith(pattern[:-1]):
+            return True
+    return False
 
 
 def list_limit(*, max_attr: str):

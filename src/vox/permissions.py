@@ -129,3 +129,95 @@ async def resolve_permissions(
 def has_permission(resolved: int, required: int) -> bool:
     """Return True if *resolved* contains all bits in *required*."""
     return (resolved & required) == required
+
+
+async def batch_resolve_permissions(
+    db: AsyncSession,
+    user_ids: list[int],
+    *,
+    space_type: str | None = None,
+    space_id: int | None = None,
+) -> dict[int, int]:
+    """Resolve effective permissions for multiple users in bulk.
+
+    Returns a dict mapping user_id -> resolved permission bitfield.
+    """
+    from vox.db.models import User
+
+    # 1. Fetch @everyone base role
+    everyone_result = await db.execute(
+        select(Role).where(Role.position == 0, Role.name == "@everyone")
+    )
+    everyone_role = everyone_result.scalar_one_or_none()
+    everyone_perms = everyone_role.permissions if everyone_role else 0
+    everyone_role_id = everyone_role.id if everyone_role else None
+
+    # 2. Fetch all role assignments for these users
+    rm_result = await db.execute(
+        select(role_members.c.user_id, role_members.c.role_id)
+        .where(role_members.c.user_id.in_(user_ids))
+    )
+    user_role_map: dict[int, set[int]] = {uid: set() for uid in user_ids}
+    for uid, rid in rm_result.all():
+        user_role_map[uid].add(rid)
+
+    # 3. Fetch all roles referenced
+    all_role_ids = set()
+    for rids in user_role_map.values():
+        all_role_ids |= rids
+    role_perms: dict[int, int] = {}
+    if all_role_ids:
+        roles_result = await db.execute(
+            select(Role).where(Role.id.in_(all_role_ids), Role.position != 0)
+        )
+        for role in roles_result.scalars().all():
+            role_perms[role.id] = role.permissions
+
+    # 4. Fetch space overrides (once)
+    overrides = []
+    if space_type and space_id is not None:
+        ov_result = await db.execute(
+            select(PermissionOverride).where(
+                PermissionOverride.space_type == space_type,
+                PermissionOverride.space_id == space_id,
+            )
+        )
+        overrides = ov_result.scalars().all()
+
+    # 5. Compute per-user permissions
+    results: dict[int, int] = {}
+    for uid in user_ids:
+        base = everyone_perms
+        for rid in user_role_map[uid]:
+            base |= role_perms.get(rid, 0)
+
+        if base & ADMINISTRATOR:
+            results[uid] = ALL_PERMISSIONS
+            continue
+
+        if overrides:
+            # @everyone role override
+            for o in overrides:
+                if o.target_type == "role" and o.target_id == everyone_role_id:
+                    base = (base & ~o.deny) | o.allow
+
+            # User's role overrides
+            role_allow = 0
+            role_deny = 0
+            for o in overrides:
+                if o.target_type == "role" and o.target_id in user_role_map[uid]:
+                    role_allow |= o.allow
+                    role_deny |= o.deny
+            base = (base & ~role_deny) | role_allow
+
+            # User-specific override
+            for o in overrides:
+                if o.target_type == "user" and o.target_id == uid:
+                    base = (base & ~o.deny) | o.allow
+
+        if base & ADMINISTRATOR:
+            results[uid] = ALL_PERMISSIONS
+        else:
+            results[uid] = base
+
+    return results

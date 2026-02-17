@@ -115,7 +115,7 @@ async def resolve_report(
     report_id: int,
     body: ResolveReportRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = require_permission(VIEW_REPORTS),
+    actor: User = require_permission(VIEW_REPORTS),
 ):
     result = await db.execute(select(Report).where(Report.id == report_id))
     report = result.scalar_one_or_none()
@@ -123,6 +123,22 @@ async def resolve_report(
         raise HTTPException(status_code=404, detail={"error": {"code": "REPORT_NOT_FOUND", "message": "Report does not exist."}})
     report.status = "resolved"
     report.action = body.action
+    from vox.audit import write_audit
+    await write_audit(db, "report.resolve", actor_id=actor.id, target_id=report_id, extra={"action": body.action})
+    await db.commit()
+
+
+@router.delete("/api/v1/reports/{report_id}", status_code=204)
+async def delete_report(
+    report_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = require_permission(VIEW_REPORTS),
+):
+    result = await db.execute(select(Report).where(Report.id == report_id))
+    report = result.scalar_one_or_none()
+    if report is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "REPORT_NOT_FOUND", "message": "Report does not exist."}})
+    await db.execute(delete(Report).where(Report.id == report_id))
     await db.commit()
 
 

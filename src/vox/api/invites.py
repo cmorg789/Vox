@@ -38,7 +38,7 @@ async def create_invite(
     from vox.audit import write_audit
     await write_audit(db, "invite.create", actor_id=user.id, extra={"code": code})
     await db.commit()
-    await dispatch(gw.invite_create(code=code, creator_id=user.id, feed_id=body.feed_id))
+    await dispatch(gw.invite_create(code=code, creator_id=user.id, feed_id=body.feed_id), db=db)
     return InviteResponse(
         code=code,
         creator_id=user.id,
@@ -64,7 +64,7 @@ async def delete_invite(
     await write_audit(db, "invite.delete", actor_id=actor.id, extra={"code": code})
     await db.delete(invite)
     await db.commit()
-    await dispatch(gw.invite_delete(code=code))
+    await dispatch(gw.invite_delete(code=code), db=db)
 
 
 @router.get("/{code}")

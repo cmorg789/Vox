@@ -11,7 +11,7 @@ from vox.api.deps import get_current_user, get_db, require_permission
 from vox.api.messages import _snowflake
 from vox.db.models import Message, User, Webhook
 from vox.permissions import MANAGE_WEBHOOKS
-from vox.models.bots import CreateWebhookRequest, ExecuteWebhookRequest, WebhookResponse
+from vox.models.bots import CreateWebhookRequest, ExecuteWebhookRequest, UpdateWebhookRequest, WebhookListResponse, WebhookResponse
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 
@@ -30,7 +30,7 @@ async def create_webhook(
     db.add(wh)
     await db.flush()
     await db.commit()
-    await dispatch(gw.webhook_create(webhook_id=wh.id, feed_id=feed_id, name=wh.name))
+    await dispatch(gw.webhook_create(webhook_id=wh.id, feed_id=feed_id, name=wh.name), db=db)
     return WebhookResponse(webhook_id=wh.id, feed_id=feed_id, name=wh.name, token=token, avatar=wh.avatar)
 
 
@@ -38,35 +38,49 @@ async def create_webhook(
 async def list_webhooks(
     feed_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(MANAGE_WEBHOOKS),
 ):
     result = await db.execute(select(Webhook).where(Webhook.feed_id == feed_id))
-    return {"webhooks": [WebhookResponse(webhook_id=w.id, feed_id=w.feed_id, name=w.name, token=w.token, avatar=w.avatar) for w in result.scalars().all()]}
+    return {"webhooks": [WebhookListResponse(webhook_id=w.id, feed_id=w.feed_id, name=w.name, avatar=w.avatar) for w in result.scalars().all()]}
+
+
+@router.get("/api/v1/webhooks/{webhook_id}")
+async def get_webhook(
+    webhook_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = require_permission(MANAGE_WEBHOOKS),
+) -> WebhookListResponse:
+    result = await db.execute(select(Webhook).where(Webhook.id == webhook_id))
+    wh = result.scalar_one_or_none()
+    if wh is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "WEBHOOK_NOT_FOUND", "message": "Webhook does not exist."}})
+    return WebhookListResponse(webhook_id=wh.id, feed_id=wh.feed_id, name=wh.name, avatar=wh.avatar)
 
 
 @router.patch("/api/v1/webhooks/{webhook_id}")
 async def update_webhook(
     webhook_id: int,
-    body: CreateWebhookRequest,
+    body: UpdateWebhookRequest,
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(MANAGE_WEBHOOKS),
-) -> WebhookResponse:
+) -> WebhookListResponse:
     result = await db.execute(select(Webhook).where(Webhook.id == webhook_id))
     wh = result.scalar_one_or_none()
     if wh is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "WEBHOOK_NOT_FOUND", "message": "Webhook does not exist."}})
     changed: dict[str, Any] = {}
-    if body.name != wh.name:
-        changed["name"] = body.name
-    wh.name = body.name
+    if body.name is not None:
+        if body.name != wh.name:
+            changed["name"] = body.name
+        wh.name = body.name
     if body.avatar is not None:
         if body.avatar != wh.avatar:
             changed["avatar"] = body.avatar
         wh.avatar = body.avatar
     await db.commit()
     if changed:
-        await dispatch(gw.webhook_update(webhook_id=wh.id, **changed))
-    return WebhookResponse(webhook_id=wh.id, feed_id=wh.feed_id, name=wh.name, token=wh.token, avatar=wh.avatar)
+        await dispatch(gw.webhook_update(webhook_id=wh.id, **changed), db=db)
+    return WebhookListResponse(webhook_id=wh.id, feed_id=wh.feed_id, name=wh.name, avatar=wh.avatar)
 
 
 @router.delete("/api/v1/webhooks/{webhook_id}", status_code=204)
@@ -81,7 +95,7 @@ async def delete_webhook(
         raise HTTPException(status_code=404, detail={"error": {"code": "WEBHOOK_NOT_FOUND", "message": "Webhook does not exist."}})
     await db.delete(wh)
     await db.commit()
-    await dispatch(gw.webhook_delete(webhook_id=webhook_id))
+    await dispatch(gw.webhook_delete(webhook_id=webhook_id), db=db)
 
 
 @router.post("/api/v1/webhooks/{webhook_id}/{token}", status_code=204)
@@ -98,7 +112,7 @@ async def execute_webhook(
         raise HTTPException(status_code=422, detail={"error": {"code": "WEBHOOK_TOKEN_INVALID", "message": "Webhook token is invalid."}})
     msg_id = await _snowflake()
     ts = int(time.time() * 1000)
-    msg = Message(id=msg_id, feed_id=wh.feed_id, author_id=0, body=body.body, timestamp=ts)
+    msg = Message(id=msg_id, feed_id=wh.feed_id, author_id=None, body=body.body, timestamp=ts, webhook_id=wh.id)
     db.add(msg)
     await db.commit()
-    await dispatch(gw.message_create(msg_id=msg_id, feed_id=wh.feed_id, author_id=0, body=body.body, timestamp=ts))
+    await dispatch(gw.message_create(msg_id=msg_id, feed_id=wh.feed_id, author_id=None, body=body.body, timestamp=ts, webhook_id=wh.id), db=db)

@@ -83,7 +83,8 @@ class MFASetupConfirmResponse(VoxModel):
 
 class MFARemoveRequest(BaseModel):
     method: str
-    code: Annotated[str, AfterValidator(str_limit(max_attr="mfa_code_max"))]
+    code: Annotated[str, AfterValidator(str_limit(max_attr="mfa_code_max"))] | None = None
+    assertion: dict | None = None  # WebAuthn assertion object
 
 
 # --- WebAuthn ---

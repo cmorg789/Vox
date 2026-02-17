@@ -201,9 +201,10 @@ async def test_delete_dm_message_wrong_author(client):
 async def test_update_group_dm_not_found(client):
     h1, uid1, h2, uid2 = await setup(client)
 
+    # Non-existent DM returns 403 (participant check) — doesn't leak existence
     r = await client.patch("/api/v1/dms/99999", headers=h1, json={"name": "New"})
-    assert r.status_code == 404
-    assert r.json()["detail"]["error"]["code"] == "SPACE_NOT_FOUND"
+    assert r.status_code == 403
+    assert r.json()["detail"]["error"]["code"] == "NOT_DM_PARTICIPANT"
 
 
 async def test_send_dm_message_invalid_attachment(client):
@@ -245,11 +246,12 @@ async def test_open_dm_permission_friends_only(client):
 
 
 async def test_open_dm_friends_only_accepted(client):
-    """Opening a DM with friends_only succeeds when users are friends."""
+    """Opening a DM with friends_only succeeds when users are accepted friends."""
     h1, uid1, h2, uid2 = await setup(client)
     await client.patch("/api/v1/users/@me/dm-settings", headers=h2, json={"dm_permission": "friends_only"})
-    # Bob adds Alice as friend
+    # Bob sends friend request to Alice, Alice accepts
     await client.put(f"/api/v1/users/@me/friends/{uid1}", headers=h2)
+    await client.post(f"/api/v1/users/@me/friends/{uid2}/accept", headers=h1)
     r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
     assert r.status_code == 201
 
@@ -423,3 +425,62 @@ async def test_update_dm_settings_existing(client):
     r = await client.patch("/api/v1/users/@me/dm-settings", headers=h1, json={"dm_permission": "nobody"})
     assert r.status_code == 200
     assert r.json()["dm_permission"] == "nobody"
+
+
+async def test_send_dm_not_participant(client):
+    """Non-participant cannot send messages to a DM."""
+    h1, uid1, h2, uid2 = await setup(client)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    dm_id = r.json()["dm_id"]
+
+    # Register a third user who is NOT a participant
+    r3 = await client.post("/api/v1/auth/register", json={"username": "charlie", "password": "test1234"})
+    h3 = {"Authorization": f"Bearer {r3.json()['token']}"}
+
+    r = await client.post(f"/api/v1/dms/{dm_id}/messages", headers=h3, json={"body": "hi"})
+    assert r.status_code == 403
+    assert r.json()["detail"]["error"]["code"] == "NOT_DM_PARTICIPANT"
+
+
+async def test_get_dm_messages_not_participant(client):
+    """Non-participant cannot read messages from a DM."""
+    h1, uid1, h2, uid2 = await setup(client)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    dm_id = r.json()["dm_id"]
+
+    r3 = await client.post("/api/v1/auth/register", json={"username": "charlie", "password": "test1234"})
+    h3 = {"Authorization": f"Bearer {r3.json()['token']}"}
+
+    r = await client.get(f"/api/v1/dms/{dm_id}/messages", headers=h3)
+    assert r.status_code == 403
+
+
+async def test_close_dm_not_participant(client):
+    """Non-participant cannot close a DM."""
+    h1, uid1, h2, uid2 = await setup(client)
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
+    dm_id = r.json()["dm_id"]
+
+    r3 = await client.post("/api/v1/auth/register", json={"username": "charlie", "password": "test1234"})
+    h3 = {"Authorization": f"Bearer {r3.json()['token']}"}
+
+    r = await client.delete(f"/api/v1/dms/{dm_id}", headers=h3)
+    assert r.status_code == 403
+
+
+async def test_update_group_dm_not_participant(client):
+    """Non-participant cannot update a group DM."""
+    h1, uid1, h2, uid2 = await setup(client)
+    r3 = await client.post("/api/v1/auth/register", json={"username": "charlie", "password": "test1234"})
+    uid3 = r3.json()["user_id"]
+
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_ids": [uid2, uid3], "name": "Group"})
+    dm_id = r.json()["dm_id"]
+
+    # Register a fourth user who is NOT a participant
+    r4 = await client.post("/api/v1/auth/register", json={"username": "dave", "password": "test1234"})
+    h4 = {"Authorization": f"Bearer {r4.json()['token']}"}
+
+    r = await client.patch(f"/api/v1/dms/{dm_id}", headers=h4, json={"name": "test"})
+    assert r.status_code == 403
+    assert r.json()["detail"]["error"]["code"] == "NOT_DM_PARTICIPANT"
