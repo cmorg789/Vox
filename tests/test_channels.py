@@ -219,10 +219,10 @@ async def test_thread_subscribe_unsubscribe(client):
     r = await client.post("/api/v1/feeds/1/threads", headers=h, json={"parent_msg_id": msg_id, "name": "Thread"})
     thread_id = r.json()["thread_id"]
 
-    r = await client.put(f"/api/v1/threads/{thread_id}/subscribers/@me", headers=h)
+    r = await client.put(f"/api/v1/feeds/1/threads/{thread_id}/subscribers", headers=h)
     assert r.status_code == 204
 
-    r = await client.delete(f"/api/v1/threads/{thread_id}/subscribers/@me", headers=h)
+    r = await client.delete(f"/api/v1/feeds/1/threads/{thread_id}/subscribers", headers=h)
     assert r.status_code == 204
 
 
