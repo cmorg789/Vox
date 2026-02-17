@@ -16,6 +16,7 @@ from vox.models.moderation import (
     AuditLogResponse,
     Admin2FAResetRequest,
     CreateReportRequest,
+    ReportDetailResponse,
     ReportResponse,
     ResolveReportRequest,
 )
@@ -66,9 +67,47 @@ async def list_reports(
         query = query.where(Report.id > after)
     result = await db.execute(query)
     reports = result.scalars().all()
-    items = [{"report_id": r.id, "reporter_id": r.reporter_id, "reported_user_id": r.reported_user_id, "reason": r.reason, "status": r.status} for r in reports]
+    items = [
+        ReportResponse(
+            report_id=r.id,
+            reporter_id=r.reporter_id,
+            reported_user_id=r.reported_user_id,
+            reason=r.reason,
+            status=r.status,
+            created_at=int(r.created_at.timestamp()),
+        )
+        for r in reports
+    ]
     cursor = str(reports[-1].id) if reports else None
     return {"items": items, "cursor": cursor}
+
+
+@router.get("/api/v1/reports/{report_id}")
+async def get_report(
+    report_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = require_permission(VIEW_REPORTS),
+) -> ReportDetailResponse:
+    import json
+    result = await db.execute(select(Report).where(Report.id == report_id))
+    report = result.scalar_one_or_none()
+    if report is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "REPORT_NOT_FOUND", "message": "Report does not exist."}})
+    evidence = json.loads(report.evidence) if report.evidence else None
+    return ReportDetailResponse(
+        report_id=report.id,
+        reporter_id=report.reporter_id,
+        reported_user_id=report.reported_user_id,
+        feed_id=report.feed_id,
+        msg_id=report.msg_id,
+        dm_id=report.dm_id,
+        reason=report.reason,
+        description=report.description,
+        evidence=evidence,
+        status=report.status,
+        action=report.action,
+        created_at=int(report.created_at.timestamp()),
+    )
 
 
 @router.post("/api/v1/reports/{report_id}/resolve", status_code=204)

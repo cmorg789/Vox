@@ -46,6 +46,7 @@ async def create_invite(
         max_uses=body.max_uses,
         uses=0,
         expires_at=int(expires_at.timestamp()) if expires_at else None,
+        created_at=int(invite.created_at.timestamp()),
     )
 
 
@@ -111,6 +112,7 @@ async def list_invites(
             max_uses=i.max_uses,
             uses=i.uses,
             expires_at=int(i.expires_at.timestamp()) if i.expires_at else None,
+            created_at=int(i.created_at.timestamp()),
         )
         for i in invites
     ]

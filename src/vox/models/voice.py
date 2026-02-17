@@ -14,6 +14,7 @@ class VoiceMemberData(VoxModel):
     deaf: bool
     video: bool
     streaming: bool
+    joined_at: int | None = None
 
 
 class VoiceJoinResponse(VoxModel):

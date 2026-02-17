@@ -1226,13 +1226,13 @@ Requires `SEND_IN_THREADS` permission. Request and response format is identical 
 #### Subscribe to Thread
 
 ```
-PUT /api/v1/threads/{thread_id}/subscribers/@me
+PUT /api/v1/feeds/{feed_id}/threads/{thread_id}/subscribers
 ```
 
 #### Unsubscribe from Thread
 
 ```
-DELETE /api/v1/threads/{thread_id}/subscribers/@me
+DELETE /api/v1/feeds/{feed_id}/threads/{thread_id}/subscribers
 ```
 
 ### Messages

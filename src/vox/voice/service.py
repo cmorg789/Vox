@@ -76,6 +76,7 @@ async def get_room_members(db: AsyncSession, room_id: int) -> list[VoiceMemberDa
             deaf=vs.self_deaf,
             video=vs.video,
             streaming=vs.streaming,
+            joined_at=int(vs.joined_at.timestamp()),
         )
         for vs in rows
     ]

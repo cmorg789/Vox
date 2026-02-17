@@ -31,6 +31,26 @@ class ResolveReportRequest(BaseModel):
 
 class ReportResponse(VoxModel):
     report_id: int
+    reporter_id: int | None = None
+    reported_user_id: int | None = None
+    reason: str | None = None
+    status: str | None = None
+    created_at: int | None = None
+
+
+class ReportDetailResponse(VoxModel):
+    report_id: int
+    reporter_id: int
+    reported_user_id: int
+    feed_id: int | None = None
+    msg_id: int | None = None
+    dm_id: int | None = None
+    reason: str
+    description: str | None = None
+    evidence: list | None = None
+    status: str
+    action: str | None = None
+    created_at: int
 
 
 # --- Audit Log ---

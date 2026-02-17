@@ -56,7 +56,7 @@ async def upload_file(
     db.add(row)
     await db.commit()
 
-    return FileResponse(file_id=file_id, name=file_name, size=len(content), mime=file_mime, url=row.url)
+    return FileResponse(file_id=file_id, name=file_name, size=len(content), mime=file_mime, url=row.url, uploader_id=user.id, created_at=int(row.created_at.timestamp()))
 
 
 @router.get("/api/v1/files/{file_id}")

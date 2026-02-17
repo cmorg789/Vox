@@ -35,7 +35,7 @@ async def get_user(
     if user is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "USER_NOT_FOUND", "message": "User does not exist."}})
     role_ids = await get_user_role_ids(db, user.id)
-    return UserResponse(user_id=user.id, display_name=user.display_name, avatar=user.avatar, bio=user.bio, roles=role_ids)
+    return UserResponse(user_id=user.id, username=user.username, display_name=user.display_name, avatar=user.avatar, bio=user.bio, roles=role_ids, created_at=int(user.created_at.timestamp()), federated=user.federated, home_domain=user.home_domain)
 
 
 @router.patch("/@me")
@@ -58,7 +58,7 @@ async def update_profile(
     if changed:
         await dispatch(events.user_update(user_id=user.id, **changed))
     role_ids = await get_user_role_ids(db, user.id)
-    return UserResponse(user_id=user.id, display_name=user.display_name, avatar=user.avatar, bio=user.bio, roles=role_ids)
+    return UserResponse(user_id=user.id, username=user.username, display_name=user.display_name, avatar=user.avatar, bio=user.bio, roles=role_ids, created_at=int(user.created_at.timestamp()), federated=user.federated, home_domain=user.home_domain)
 
 
 @router.put("/@me/blocks/{user_id}", status_code=204)

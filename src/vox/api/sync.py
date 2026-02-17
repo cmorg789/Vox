@@ -17,9 +17,15 @@ CATEGORY_EVENTS: dict[str, set[str]] = {
     "feeds": {"feed_create", "feed_update", "feed_delete"},
     "rooms": {"room_create", "room_update", "room_delete"},
     "categories": {"category_create", "category_update", "category_delete"},
-    "emoji": {"emoji_create", "emoji_delete"},
+    "emoji": {"emoji_create", "emoji_delete", "sticker_create", "sticker_delete"},
     "bans": {"member_ban", "member_unban"},
     "invites": {"invite_create", "invite_delete"},
+    "permissions": {"permission_override_update", "permission_override_delete"},
+    "threads": {"thread_create", "thread_update", "thread_delete"},
+    "webhooks": {"webhook_create", "webhook_update", "webhook_delete"},
+    "bots": {"bot_commands_update", "bot_commands_delete"},
+    "users": {"user_update"},
+    "server": {"server_update"},
 }
 
 SYNC_RETENTION_MS = 7 * 24 * 60 * 60 * 1000  # 7 days

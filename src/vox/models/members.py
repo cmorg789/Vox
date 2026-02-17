@@ -40,3 +40,4 @@ class BanResponse(VoxModel):
     user_id: int
     display_name: str | None
     reason: str | None
+    created_at: int | None = None

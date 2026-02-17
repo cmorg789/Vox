@@ -40,6 +40,39 @@ async def list_roles(
     return {"items": items, "cursor": cursor}
 
 
+@router.get("/api/v1/roles/{role_id}/members")
+async def list_role_members(
+    role_id: int,
+    limit: int = Query(default=100, ge=1, le=1000),
+    after: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    from vox.models.members import MemberListResponse, MemberResponse
+    from vox.auth.service import get_user_role_ids
+    role = (await db.execute(select(Role).where(Role.id == role_id))).scalar_one_or_none()
+    if role is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Role not found."}})
+    limit = min(limit, limits.page_limit_members)
+    query = (
+        select(User)
+        .join(role_members, role_members.c.user_id == User.id)
+        .where(role_members.c.role_id == role_id)
+        .order_by(User.id)
+        .limit(limit)
+    )
+    if after is not None:
+        query = query.where(User.id > after)
+    result = await db.execute(query)
+    users = result.scalars().all()
+    items = []
+    for u in users:
+        rids = await get_user_role_ids(db, u.id)
+        items.append(MemberResponse(user_id=u.id, display_name=u.display_name, avatar=u.avatar, nickname=u.nickname, role_ids=rids))
+    cursor = str(users[-1].id) if users else None
+    return MemberListResponse(items=items, cursor=cursor)
+
+
 @router.post("/api/v1/roles", status_code=201)
 async def create_role(
     body: CreateRoleRequest,

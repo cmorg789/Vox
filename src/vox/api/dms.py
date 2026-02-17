@@ -14,6 +14,7 @@ from vox.db.models import DM, DMReadState, DMSettings, File, Message, Reaction, 
 from vox.limits import limits
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
+from vox.gateway.notify import notify_for_message, notify_for_reaction
 from vox.models.dms import (
     DMListResponse,
     DMResponse,
@@ -58,7 +59,7 @@ async def open_dm(
             dm = (await db.execute(select(DM).where(DM.id == existing_dm_id))).scalar_one()
             if not dm.is_group:
                 pids = await _dm_participant_ids(db, dm.id)
-                return DMResponse(dm_id=dm.id, participant_ids=pids, is_group=False)
+                return DMResponse(dm_id=dm.id, participant_ids=pids, is_group=False, icon=dm.icon)
 
         # Block check — recipient has blocked sender
         from vox.db.models import blocks, friends
@@ -100,7 +101,7 @@ async def open_dm(
         await db.commit()
         pids = [user.id, body.recipient_id]
         await dispatch(gw.dm_create(dm_id=dm.id, participant_ids=pids, is_group=False), user_ids=pids)
-        return DMResponse(dm_id=dm.id, participant_ids=pids, is_group=False)
+        return DMResponse(dm_id=dm.id, participant_ids=pids, is_group=False, icon=dm.icon)
 
     elif body.recipient_ids is not None:
         # Group DM - deduplicate recipient list
@@ -120,7 +121,7 @@ async def open_dm(
             await db.execute(dm_participants.insert().values(dm_id=dm.id, user_id=uid))
         await db.commit()
         await dispatch(gw.dm_create(dm_id=dm.id, participant_ids=all_ids, is_group=True, name=body.name), user_ids=all_ids)
-        return DMResponse(dm_id=dm.id, participant_ids=all_ids, is_group=True, name=body.name)
+        return DMResponse(dm_id=dm.id, participant_ids=all_ids, is_group=True, name=body.name, icon=dm.icon)
 
     raise HTTPException(status_code=400, detail={"error": {"code": "PROTOCOL_VERSION_MISMATCH", "message": "Provide recipient_id or recipient_ids."}})
 
@@ -147,7 +148,7 @@ async def list_dms(
     items = []
     for dm in dms:
         pids = await _dm_participant_ids(db, dm.id)
-        items.append(DMResponse(dm_id=dm.id, participant_ids=pids, is_group=dm.is_group, name=dm.name))
+        items.append(DMResponse(dm_id=dm.id, participant_ids=pids, is_group=dm.is_group, name=dm.name, icon=dm.icon))
     cursor = str(dms[-1].id) if dms else None
     return DMListResponse(items=items, cursor=cursor)
 
@@ -185,7 +186,7 @@ async def update_group_dm(
     pids = await _dm_participant_ids(db, dm.id)
     if changed:
         await dispatch(gw.dm_update(dm_id=dm_id, **changed), user_ids=pids)
-    return DMResponse(dm_id=dm.id, participant_ids=pids, is_group=dm.is_group, name=dm.name)
+    return DMResponse(dm_id=dm.id, participant_ids=pids, is_group=dm.is_group, name=dm.name, icon=dm.icon)
 
 
 @router.put("/api/v1/dms/{dm_id}/recipients/{user_id}", status_code=204)
@@ -242,7 +243,7 @@ async def convert_dm_to_group(
         dm.is_group = True
         await db.commit()
         await dispatch(gw.dm_update(dm_id=dm_id, is_group=True), user_ids=pids)
-    return DMResponse(dm_id=dm.id, participant_ids=pids, is_group=dm.is_group, name=dm.name)
+    return DMResponse(dm_id=dm.id, participant_ids=pids, is_group=dm.is_group, name=dm.name, icon=dm.icon)
 
 
 @router.post("/api/v1/dms/{dm_id}/read", status_code=204)
@@ -289,7 +290,8 @@ async def send_dm_message(
             await db.execute(message_attachments.insert().values(msg_id=msg_id, file_id=file_id))
     await db.commit()
     pids = await _dm_participant_ids(db, dm_id)
-    await dispatch(gw.message_create(msg_id=msg_id, dm_id=dm_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to), user_ids=pids)
+    await dispatch(gw.message_create(msg_id=msg_id, dm_id=dm_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions), user_ids=pids)
+    await notify_for_message(db, msg_id=msg_id, feed_id=None, thread_id=None, dm_id=dm_id, author_id=user.id, body=body.body, reply_to=body.reply_to, mentions=body.mentions)
 
     # Outbound federation relay for federated participants
     try:
@@ -395,6 +397,7 @@ async def add_dm_reaction(
     await db.execute(stmt)
     await db.commit()
     await dispatch(gw.message_reaction_add(msg_id=msg_id, user_id=user.id, emoji=emoji), user_ids=pids)
+    await notify_for_reaction(db, msg_id=msg_id, reactor_id=user.id, emoji=emoji)
 
 
 @router.delete("/api/v1/dms/{dm_id}/messages/{msg_id}/reactions/{emoji}", status_code=204)

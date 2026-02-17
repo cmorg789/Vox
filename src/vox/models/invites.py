@@ -19,6 +19,7 @@ class InviteResponse(VoxModel):
     max_uses: int | None = None
     uses: int
     expires_at: int | None = None
+    created_at: int | None = None
 
 
 class InvitePreviewResponse(VoxModel):

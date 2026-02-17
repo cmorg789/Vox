@@ -46,6 +46,8 @@ async def register_commands(
             params=json.dumps([p.model_dump() for p in cmd.params]) if cmd.params else None,
         ))
     await db.commit()
+    cmds = [{"name": c.name, "description": c.description, "params": json.loads(c.params) if c.params else []} for c in body.commands]
+    await dispatch(gw.bot_commands_update(bot_id=bot.id, commands=cmds))
     return {"ok": True}
 
 
@@ -63,6 +65,7 @@ async def deregister_commands(
     for name in body.command_names:
         await db.execute(delete(BotCommand).where(BotCommand.bot_id == bot.id, BotCommand.name == name))
     await db.commit()
+    await dispatch(gw.bot_commands_delete(bot_id=bot.id, command_names=body.command_names))
     return {"ok": True}
 
 

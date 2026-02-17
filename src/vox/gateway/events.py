@@ -53,7 +53,7 @@ def ready(
 def message_create(
     msg_id: int, feed_id: int | None = None, dm_id: int | None = None,
     author_id: int = 0, body: str | None = None, timestamp: int = 0,
-    reply_to: int | None = None,
+    reply_to: int | None = None, mentions: list[int] | None = None,
 ) -> dict[str, Any]:
     d: dict[str, Any] = {"msg_id": msg_id, "author_id": author_id, "body": body, "timestamp": timestamp}
     if feed_id is not None:
@@ -62,6 +62,8 @@ def message_create(
         d["dm_id"] = dm_id
     if reply_to is not None:
         d["reply_to"] = reply_to
+    if mentions:
+        d["mentions"] = mentions
     return _event("message_create", d)
 
 
@@ -417,7 +419,59 @@ def key_reset_notify(user_id: int) -> dict[str, Any]:
     return _event("key_reset_notify", {"user_id": user_id})
 
 
+# --- Webhook Events ---
+
+def webhook_create(webhook_id: int, feed_id: int, name: str) -> dict[str, Any]:
+    return _event("webhook_create", {"webhook_id": webhook_id, "feed_id": feed_id, "name": name})
+
+
+def webhook_update(webhook_id: int, **changed: Any) -> dict[str, Any]:
+    return _event("webhook_update", {"webhook_id": webhook_id, **changed})
+
+
+def webhook_delete(webhook_id: int) -> dict[str, Any]:
+    return _event("webhook_delete", {"webhook_id": webhook_id})
+
+
 # --- Bot Events ---
+
+def bot_commands_update(bot_id: int, commands: list[dict[str, Any]]) -> dict[str, Any]:
+    return _event("bot_commands_update", {"bot_id": bot_id, "commands": commands})
+
+
+def bot_commands_delete(bot_id: int, command_names: list[str]) -> dict[str, Any]:
+    return _event("bot_commands_delete", {"bot_id": bot_id, "command_names": command_names})
+
 
 def interaction_create(interaction: dict[str, Any]) -> dict[str, Any]:
     return _event("interaction_create", interaction)
+
+
+# --- Feed Subscription Events ---
+
+def feed_subscribe(feed_id: int, user_id: int) -> dict[str, Any]:
+    return _event("feed_subscribe", {"feed_id": feed_id, "user_id": user_id})
+
+
+def feed_unsubscribe(feed_id: int, user_id: int) -> dict[str, Any]:
+    return _event("feed_unsubscribe", {"feed_id": feed_id, "user_id": user_id})
+
+
+# --- Notification Events ---
+
+def notification_create(
+    user_id: int, type: str, feed_id: int | None, thread_id: int | None,
+    msg_id: int | None, actor_id: int | None, body_preview: str | None,
+) -> dict[str, Any]:
+    d: dict[str, Any] = {"user_id": user_id, "type": type}
+    if feed_id is not None:
+        d["feed_id"] = feed_id
+    if thread_id is not None:
+        d["thread_id"] = thread_id
+    if msg_id is not None:
+        d["msg_id"] = msg_id
+    if actor_id is not None:
+        d["actor_id"] = actor_id
+    if body_preview is not None:
+        d["body_preview"] = body_preview
+    return _event("notification_create", d)

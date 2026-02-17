@@ -10,6 +10,7 @@ class SendMessageRequest(BaseModel):
     body: Annotated[str, AfterValidator(str_limit(max_attr="message_body_max"))]
     reply_to: int | None = None
     attachments: list[str] | None = None  # file_ids
+    mentions: list[int] | None = None
 
 
 class EditMessageRequest(BaseModel):
@@ -20,6 +21,7 @@ class SendMessageResponse(VoxModel):
     msg_id: int
     timestamp: int
     interaction_id: str | None = None
+    mentions: list[int] | None = None
 
 
 class EditMessageResponse(VoxModel):
@@ -31,6 +33,7 @@ class MessageResponse(VoxModel):
     msg_id: int
     feed_id: int | None = None
     dm_id: int | None = None
+    thread_id: int | None = None
     author_id: int
     body: str | None = None
     opaque_blob: str | None = None
@@ -41,6 +44,7 @@ class MessageResponse(VoxModel):
     edit_timestamp: int | None = None
     federated: bool = False
     author_address: str | None = None
+    pinned_at: int | None = None
 
 
 class MessageListResponse(VoxModel):

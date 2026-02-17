@@ -10,9 +10,10 @@ from sqlalchemy.orm import selectinload
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import Bot, BotCommand, Feed, File, Message, Pin, Reaction, Thread, User, message_attachments
 from vox.limits import limits
-from vox.permissions import MANAGE_MESSAGES, MANAGE_SPACES, READ_HISTORY, SEND_IN_THREADS, SEND_MESSAGES, has_permission, resolve_permissions
+from vox.permissions import MANAGE_MESSAGES, MANAGE_SPACES, MENTION_EVERYONE, READ_HISTORY, SEND_IN_THREADS, SEND_MESSAGES, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
+from vox.gateway.notify import notify_for_message, notify_for_reaction
 from vox import interactions
 from vox.models.messages import (
     BulkDeleteRequest,
@@ -55,6 +56,7 @@ def _msg_response(m: Message) -> MessageResponse:
         msg_id=m.id,
         feed_id=m.feed_id,
         dm_id=m.dm_id,
+        thread_id=m.thread_id,
         author_id=m.author_id,
         body=m.body,
         opaque_blob=m.opaque_blob,
@@ -209,6 +211,13 @@ async def send_feed_message(
     intercepted = await _handle_slash_command(body.body, user, feed_id=feed_id, dm_id=None, db=db)
     if intercepted is not None:
         return intercepted
+
+    # Strip @everyone sentinel if user lacks MENTION_EVERYONE permission
+    if body.mentions and 0 in body.mentions:
+        perms = await resolve_permissions(db, user.id, space_type="feed", space_id=feed_id)
+        if not has_permission(perms, MENTION_EVERYONE):
+            body.mentions = [uid for uid in body.mentions if uid != 0]
+
     msg_id = await _snowflake()
     ts = int(time.time() * 1000)
     msg = Message(
@@ -229,25 +238,29 @@ async def send_feed_message(
             await db.execute(message_attachments.insert().values(msg_id=msg_id, file_id=file_id))
 
     # Forum feeds: auto-create a thread for each new message
+    forum_thread = None
     if feed.type == "forum":
         thread_name = (body.body[:64] if body.body else "Thread")
-        thread = Thread(
+        forum_thread = Thread(
             name=thread_name,
             feed_id=feed_id,
             parent_msg_id=msg_id,
         )
-        db.add(thread)
+        db.add(forum_thread)
         await db.flush()
-        await dispatch(gw.thread_create(
-            thread_id=thread.id,
-            parent_feed_id=feed_id,
-            parent_msg_id=msg_id,
-            name=thread_name,
-        ))
 
     await db.commit()
-    await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to))
-    return SendMessageResponse(msg_id=msg_id, timestamp=ts)
+    # Dispatch thread_create before message_create so clients know the thread exists
+    if forum_thread is not None:
+        await dispatch(gw.thread_create(
+            thread_id=forum_thread.id,
+            parent_feed_id=feed_id,
+            parent_msg_id=msg_id,
+            name=forum_thread.name,
+        ))
+    await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions))
+    await notify_for_message(db, msg_id=msg_id, feed_id=feed_id, thread_id=None, dm_id=None, author_id=user.id, body=body.body, reply_to=body.reply_to, mentions=body.mentions)
+    return SendMessageResponse(msg_id=msg_id, timestamp=ts, mentions=body.mentions)
 
 
 @router.patch("/api/v1/feeds/{feed_id}/messages/{msg_id}")
@@ -348,6 +361,13 @@ async def send_thread_message(
     intercepted = await _handle_slash_command(body.body, user, feed_id=feed_id, dm_id=None, db=db)
     if intercepted is not None:
         return intercepted
+
+    # Strip @everyone sentinel if user lacks MENTION_EVERYONE permission
+    if body.mentions and 0 in body.mentions:
+        perms = await resolve_permissions(db, user.id, space_type="feed", space_id=feed_id)
+        if not has_permission(perms, MENTION_EVERYONE):
+            body.mentions = [uid for uid in body.mentions if uid != 0]
+
     msg_id = await _snowflake()
     ts = int(time.time() * 1000)
     msg = Message(
@@ -368,8 +388,9 @@ async def send_thread_message(
                 raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_ATTACHMENT", "message": f"File {file_id} not found."}})
             await db.execute(message_attachments.insert().values(msg_id=msg_id, file_id=file_id))
     await db.commit()
-    await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to))
-    return SendMessageResponse(msg_id=msg_id, timestamp=ts)
+    await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions))
+    await notify_for_message(db, msg_id=msg_id, feed_id=feed_id, thread_id=thread_id, dm_id=None, author_id=user.id, body=body.body, reply_to=body.reply_to, mentions=body.mentions)
+    return SendMessageResponse(msg_id=msg_id, timestamp=ts, mentions=body.mentions)
 
 
 # --- Reactions ---
@@ -390,6 +411,7 @@ async def add_reaction(
     await db.execute(stmt)
     await db.commit()
     await dispatch(gw.message_reaction_add(msg_id=msg_id, user_id=user.id, emoji=emoji))
+    await notify_for_reaction(db, msg_id=msg_id, reactor_id=user.id, emoji=emoji)
 
 
 @router.delete("/api/v1/feeds/{feed_id}/messages/{msg_id}/reactions/{emoji}", status_code=204)
@@ -446,6 +468,11 @@ async def list_pins(
     _: User = Depends(get_current_user),
 ) -> MessageListResponse:
     result = await db.execute(
-        select(Message).options(selectinload(Message.attachments)).join(Pin, Pin.msg_id == Message.id).where(Pin.feed_id == feed_id)
+        select(Message, Pin.pinned_at).options(selectinload(Message.attachments)).join(Pin, Pin.msg_id == Message.id).where(Pin.feed_id == feed_id)
     )
-    return MessageListResponse(messages=[_msg_response(m) for m in result.scalars().all()])
+    messages = []
+    for m, pinned_at in result.all():
+        resp = _msg_response(m)
+        resp.pinned_at = int(pinned_at.timestamp()) if pinned_at else None
+        messages.append(resp)
+    return MessageListResponse(messages=messages)

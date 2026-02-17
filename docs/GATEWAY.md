@@ -128,6 +128,21 @@ All events carry a `seq` field for resume tracking.
 | `media_token_refresh` | New media token before expiry |
 | `sticker_create` | Sticker created |
 | `sticker_delete` | Sticker deleted |
+| `emoji_create` | Custom emoji created |
+| `emoji_delete` | Custom emoji deleted |
+| `webhook_create` | Webhook created |
+| `webhook_update` | Webhook modified |
+| `webhook_delete` | Webhook deleted |
+| `bot_commands_update` | Bot commands registered/updated |
+| `bot_commands_delete` | Bot commands deregistered |
+| `feed_subscribe` | User subscribed to feed |
+| `feed_unsubscribe` | User unsubscribed from feed |
+| `thread_subscribe` | User subscribed to thread |
+| `thread_unsubscribe` | User unsubscribed from thread |
+| `permission_override_update` | Permission override set |
+| `permission_override_delete` | Permission override removed |
+| `user_update` | User profile changed |
+| `notification_create` | Targeted notification |
 | `interaction_create` | User triggered bot interaction |
 
 ## 4. Connection Flow
@@ -446,6 +461,18 @@ Message events are used for both feed messages and DM messages. Each event conta
 | `invite_delete` | `code` |
 | `sticker_create` | `sticker_id`, `name`, `creator_id` |
 | `sticker_delete` | `sticker_id` |
+| `emoji_create` | `emoji_id`, `name`, `creator_id` |
+| `emoji_delete` | `emoji_id` |
+| `webhook_create` | `webhook_id`, `feed_id`, `name` |
+| `webhook_update` | `webhook_id` + changed fields |
+| `webhook_delete` | `webhook_id` |
+| `permission_override_update` | `space_type`, `space_id`, `target_type`, `target_id`, `allow`, `deny` |
+| `permission_override_delete` | `space_type`, `space_id`, `target_type`, `target_id` |
+| `feed_subscribe` | `feed_id`, `user_id` |
+| `feed_unsubscribe` | `feed_id`, `user_id` |
+| `thread_subscribe` | `thread_id`, `user_id` |
+| `thread_unsubscribe` | `thread_id`, `user_id` |
+| `user_update` | `user_id` + changed fields |
 
 ### Presence Events
 
@@ -508,6 +535,14 @@ See `E2EE.md` for protocol details.
 | Event | Key Fields |
 |---|---|
 | `interaction_create` | Interaction object |
+| `bot_commands_update` | `bot_id`, `commands[]` |
+| `bot_commands_delete` | `bot_id`, `command_names[]` |
+
+### Notification Events
+
+| Event | Key Fields |
+|---|---|
+| `notification_create` | `type` (mention/reply/reaction/message), `msg_id`, `feed_id`/`dm_id`, `author_id`, `body_preview` |
 
 ## 7. Close Codes
 

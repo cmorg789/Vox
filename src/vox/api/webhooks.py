@@ -1,6 +1,7 @@
 import secrets
 import time
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -29,7 +30,8 @@ async def create_webhook(
     db.add(wh)
     await db.flush()
     await db.commit()
-    return WebhookResponse(webhook_id=wh.id, feed_id=feed_id, name=wh.name, token=token)
+    await dispatch(gw.webhook_create(webhook_id=wh.id, feed_id=feed_id, name=wh.name))
+    return WebhookResponse(webhook_id=wh.id, feed_id=feed_id, name=wh.name, token=token, avatar=wh.avatar)
 
 
 @router.get("/api/v1/feeds/{feed_id}/webhooks")
@@ -39,7 +41,7 @@ async def list_webhooks(
     _: User = Depends(get_current_user),
 ):
     result = await db.execute(select(Webhook).where(Webhook.feed_id == feed_id))
-    return {"webhooks": [WebhookResponse(webhook_id=w.id, feed_id=w.feed_id, name=w.name, token=w.token) for w in result.scalars().all()]}
+    return {"webhooks": [WebhookResponse(webhook_id=w.id, feed_id=w.feed_id, name=w.name, token=w.token, avatar=w.avatar) for w in result.scalars().all()]}
 
 
 @router.patch("/api/v1/webhooks/{webhook_id}")
@@ -53,11 +55,18 @@ async def update_webhook(
     wh = result.scalar_one_or_none()
     if wh is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "WEBHOOK_NOT_FOUND", "message": "Webhook does not exist."}})
+    changed: dict[str, Any] = {}
+    if body.name != wh.name:
+        changed["name"] = body.name
     wh.name = body.name
     if body.avatar is not None:
+        if body.avatar != wh.avatar:
+            changed["avatar"] = body.avatar
         wh.avatar = body.avatar
     await db.commit()
-    return WebhookResponse(webhook_id=wh.id, feed_id=wh.feed_id, name=wh.name, token=wh.token)
+    if changed:
+        await dispatch(gw.webhook_update(webhook_id=wh.id, **changed))
+    return WebhookResponse(webhook_id=wh.id, feed_id=wh.feed_id, name=wh.name, token=wh.token, avatar=wh.avatar)
 
 
 @router.delete("/api/v1/webhooks/{webhook_id}", status_code=204)
@@ -72,6 +81,7 @@ async def delete_webhook(
         raise HTTPException(status_code=404, detail={"error": {"code": "WEBHOOK_NOT_FOUND", "message": "Webhook does not exist."}})
     await db.delete(wh)
     await db.commit()
+    await dispatch(gw.webhook_delete(webhook_id=webhook_id))
 
 
 @router.post("/api/v1/webhooks/{webhook_id}/{token}", status_code=204)

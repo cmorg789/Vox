@@ -17,6 +17,7 @@ class DMResponse(VoxModel):
     participant_ids: list[int]
     is_group: bool
     name: str | None = None
+    icon: str | None = None
 
 
 class DMListResponse(VoxModel):

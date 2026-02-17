@@ -3,6 +3,8 @@ from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import delete
+
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import Category, Feed, PermissionOverride, Room, Thread, User, feed_subscribers, thread_subscribers
 from vox.permissions import CREATE_THREADS, MANAGE_SPACES, MANAGE_THREADS
@@ -53,7 +55,7 @@ async def get_feed(
     if feed is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Feed does not exist."}})
     overrides = await _overrides_for(db, "feed", feed.id)
-    return FeedResponse(feed_id=feed.id, name=feed.name, type=feed.type, topic=feed.topic, category_id=feed.category_id, permission_overrides=overrides)
+    return FeedResponse(feed_id=feed.id, name=feed.name, type=feed.type, topic=feed.topic, category_id=feed.category_id, position=feed.position, permission_overrides=overrides)
 
 
 @router.post("/api/v1/feeds", status_code=201)
@@ -66,12 +68,15 @@ async def create_feed(
     feed = Feed(name=body.name, type=body.type, category_id=body.category_id, position=max_pos + 1)
     db.add(feed)
     await db.flush()
+    if body.permission_overrides:
+        for o in body.permission_overrides:
+            db.add(PermissionOverride(space_type="feed", space_id=feed.id, target_type=o["target_type"], target_id=o["target_id"], allow=o["allow"], deny=o["deny"]))
     from vox.audit import write_audit
     await write_audit(db, "feed.create", actor_id=actor.id, target_id=feed.id)
     await db.commit()
     await dispatch(gw.feed_create(feed_id=feed.id, name=feed.name, type=feed.type, category_id=feed.category_id))
     overrides = await _overrides_for(db, "feed", feed.id)
-    return FeedResponse(feed_id=feed.id, name=feed.name, type=feed.type, topic=feed.topic, category_id=feed.category_id, permission_overrides=overrides)
+    return FeedResponse(feed_id=feed.id, name=feed.name, type=feed.type, topic=feed.topic, category_id=feed.category_id, position=feed.position, permission_overrides=overrides)
 
 
 @router.patch("/api/v1/feeds/{feed_id}")
@@ -96,7 +101,7 @@ async def update_feed(
     if changed:
         await dispatch(gw.feed_update(feed_id=feed_id, **changed))
     overrides = await _overrides_for(db, "feed", feed.id)
-    return FeedResponse(feed_id=feed.id, name=feed.name, type=feed.type, topic=feed.topic, category_id=feed.category_id, permission_overrides=overrides)
+    return FeedResponse(feed_id=feed.id, name=feed.name, type=feed.type, topic=feed.topic, category_id=feed.category_id, position=feed.position, permission_overrides=overrides)
 
 
 @router.delete("/api/v1/feeds/{feed_id}", status_code=204)
@@ -116,6 +121,36 @@ async def delete_feed(
     await dispatch(gw.feed_delete(feed_id=feed_id))
 
 
+# --- Feed Subscriptions ---
+
+@router.put("/api/v1/feeds/{feed_id}/subscribers", status_code=204)
+async def subscribe_feed(
+    feed_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    result = await db.execute(select(Feed).where(Feed.id == feed_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Feed does not exist."}})
+    await db.execute(sqlite_insert(feed_subscribers).values(feed_id=feed_id, user_id=user.id).on_conflict_do_nothing())
+    await db.commit()
+    await dispatch(gw.feed_subscribe(feed_id=feed_id, user_id=user.id))
+
+
+@router.delete("/api/v1/feeds/{feed_id}/subscribers", status_code=204)
+async def unsubscribe_feed(
+    feed_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    result = await db.execute(select(Feed).where(Feed.id == feed_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Feed does not exist."}})
+    await db.execute(delete(feed_subscribers).where(feed_subscribers.c.feed_id == feed_id, feed_subscribers.c.user_id == user.id))
+    await db.commit()
+    await dispatch(gw.feed_unsubscribe(feed_id=feed_id, user_id=user.id))
+
+
 # --- Rooms ---
 
 @router.get("/api/v1/rooms/{room_id}")
@@ -129,7 +164,7 @@ async def get_room(
     if room is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Room does not exist."}})
     overrides = await _overrides_for(db, "room", room.id)
-    return RoomResponse(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id, permission_overrides=overrides)
+    return RoomResponse(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id, position=room.position, permission_overrides=overrides)
 
 
 @router.post("/api/v1/rooms", status_code=201)
@@ -142,12 +177,15 @@ async def create_room(
     room = Room(name=body.name, type=body.type, category_id=body.category_id, position=max_pos + 1)
     db.add(room)
     await db.flush()
+    if body.permission_overrides:
+        for o in body.permission_overrides:
+            db.add(PermissionOverride(space_type="room", space_id=room.id, target_type=o["target_type"], target_id=o["target_id"], allow=o["allow"], deny=o["deny"]))
     from vox.audit import write_audit
     await write_audit(db, "room.create", actor_id=actor.id, target_id=room.id)
     await db.commit()
     await dispatch(gw.room_create(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id))
     overrides = await _overrides_for(db, "room", room.id)
-    return RoomResponse(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id, permission_overrides=overrides)
+    return RoomResponse(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id, position=room.position, permission_overrides=overrides)
 
 
 @router.patch("/api/v1/rooms/{room_id}")
@@ -169,7 +207,7 @@ async def update_room(
     if changed:
         await dispatch(gw.room_update(room_id=room_id, **changed))
     overrides = await _overrides_for(db, "room", room.id)
-    return RoomResponse(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id, permission_overrides=overrides)
+    return RoomResponse(room_id=room.id, name=room.name, type=room.type, category_id=room.category_id, position=room.position, permission_overrides=overrides)
 
 
 @router.delete("/api/v1/rooms/{room_id}", status_code=204)
@@ -303,24 +341,31 @@ async def delete_thread(
     await dispatch(gw.thread_delete(thread_id=thread_id))
 
 
-@router.put("/api/v1/threads/{thread_id}/subscribers/@me", status_code=204)
+@router.put("/api/v1/feeds/{feed_id}/threads/{thread_id}/subscribers", status_code=204)
 async def subscribe_thread(
+    feed_id: int,
     thread_id: int,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    thread = (await db.execute(select(Thread).where(Thread.id == thread_id))).scalar_one_or_none()
+    if thread is None or thread.feed_id != feed_id:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Thread does not exist in this feed."}})
     await db.execute(sqlite_insert(thread_subscribers).values(thread_id=thread_id, user_id=user.id).on_conflict_do_nothing())
     await db.commit()
     await dispatch(gw.thread_subscribe(thread_id=thread_id, user_id=user.id))
 
 
-@router.delete("/api/v1/threads/{thread_id}/subscribers/@me", status_code=204)
+@router.delete("/api/v1/feeds/{feed_id}/threads/{thread_id}/subscribers", status_code=204)
 async def unsubscribe_thread(
+    feed_id: int,
     thread_id: int,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    from sqlalchemy import delete
+    thread = (await db.execute(select(Thread).where(Thread.id == thread_id))).scalar_one_or_none()
+    if thread is None or thread.feed_id != feed_id:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Thread does not exist in this feed."}})
     await db.execute(delete(thread_subscribers).where(thread_subscribers.c.thread_id == thread_id, thread_subscribers.c.user_id == user.id))
     await db.commit()
     await dispatch(gw.thread_unsubscribe(thread_id=thread_id, user_id=user.id))

@@ -17,6 +17,12 @@ SYNCABLE_EVENTS: set[str] = {
     "emoji_create", "emoji_delete",
     "sticker_create", "sticker_delete",
     "invite_create", "invite_delete",
+    "server_update",
+    "permission_override_update", "permission_override_delete",
+    "thread_create", "thread_update", "thread_delete",
+    "webhook_create", "webhook_update", "webhook_delete",
+    "bot_commands_update", "bot_commands_delete",
+    "user_update",
 }
 
 

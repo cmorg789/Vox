@@ -187,7 +187,7 @@ async def ban_member(
     await write_audit(db, "member.ban", actor_id=actor.id, target_id=user_id, extra={"reason": body.reason})
     await db.commit()
     await dispatch(gw.member_ban(user_id=user_id))
-    return BanResponse(user_id=user_id, display_name=target.display_name, reason=body.reason)
+    return BanResponse(user_id=user_id, display_name=target.display_name, reason=body.reason, created_at=int(ban.created_at.timestamp()))
 
 
 @router.delete("/api/v1/bans/{user_id}", status_code=204)
@@ -219,6 +219,6 @@ async def list_bans(
     items = []
     for b in bans:
         u = (await db.execute(select(User).where(User.id == b.user_id))).scalar_one_or_none()
-        items.append(BanResponse(user_id=b.user_id, display_name=u.display_name if u else None, reason=b.reason))
+        items.append(BanResponse(user_id=b.user_id, display_name=u.display_name if u else None, reason=b.reason, created_at=int(b.created_at.timestamp())))
     cursor = str(bans[-1].user_id) if bans else None
     return {"items": items, "cursor": cursor}

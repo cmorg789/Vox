@@ -19,6 +19,7 @@ class WebhookResponse(VoxModel):
     feed_id: int
     name: str
     token: str
+    avatar: str | None = None
 
 
 class ExecuteWebhookRequest(BaseModel):

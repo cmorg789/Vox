@@ -8,10 +8,14 @@ from vox.models.base import VoxModel
 
 class UserResponse(VoxModel):
     user_id: int
+    username: str
     display_name: str | None
     avatar: str | None
     bio: str | None
     roles: list[int]
+    created_at: int
+    federated: bool = False
+    home_domain: str | None = None
 
 
 class UpdateProfileRequest(BaseModel):

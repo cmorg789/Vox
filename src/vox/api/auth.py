@@ -619,3 +619,43 @@ async def logout(
     await db.execute(delete(DBSession).where(DBSession.token == token, DBSession.user_id == user.id))
     await db.commit()
     return Response(status_code=204)
+
+
+# --- Session Management ---
+
+
+@router.get("/sessions")
+async def list_sessions(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    from vox.db.models import Session as DBSession
+    result = await db.execute(
+        select(DBSession).where(DBSession.user_id == user.id).order_by(DBSession.created_at.desc())
+    )
+    sessions = result.scalars().all()
+    return {
+        "sessions": [
+            {
+                "session_id": s.id,
+                "created_at": int(s.created_at.timestamp()),
+                "expires_at": int(s.expires_at.timestamp()),
+            }
+            for s in sessions
+        ]
+    }
+
+
+@router.delete("/sessions/{session_id}", status_code=204)
+async def revoke_session(
+    session_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    from vox.db.models import Session as DBSession
+    result = await db.execute(select(DBSession).where(DBSession.id == session_id, DBSession.user_id == user.id))
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "SESSION_NOT_FOUND", "message": "Session does not exist."}})
+    await db.delete(session)
+    await db.commit()

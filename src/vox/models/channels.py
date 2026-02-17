@@ -46,6 +46,7 @@ class FeedResponse(VoxModel):
     type: str
     topic: str | None = None
     category_id: int | None = None
+    position: int = 0
     permission_overrides: list = []
 
 
@@ -68,6 +69,7 @@ class RoomResponse(VoxModel):
     name: str
     type: str
     category_id: int | None = None
+    position: int = 0
     permission_overrides: list = []
 
 

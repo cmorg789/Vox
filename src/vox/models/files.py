@@ -7,3 +7,5 @@ class FileResponse(VoxModel):
     size: int
     mime: str
     url: str
+    uploader_id: int | None = None
+    created_at: int | None = None
