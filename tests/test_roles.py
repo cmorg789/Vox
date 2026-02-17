@@ -1,5 +1,5 @@
-async def auth(client):
-    r = await client.post("/api/v1/auth/register", json={"username": "alice", "password": "test1234"})
+async def auth(client, username="alice"):
+    r = await client.post("/api/v1/auth/register", json={"username": username, "password": "test1234"})
     return {"Authorization": f"Bearer {r.json()['token']}"}, r.json()["user_id"]
 
 
@@ -165,3 +165,71 @@ async def test_revoke_role_not_found(client):
     h, uid = await auth(client)
     r = await client.delete(f"/api/v1/members/{uid}/roles/99999", headers=h)
     assert r.status_code == 404
+
+
+async def test_list_role_members(client):
+    """GET /api/v1/roles/{id}/members returns assigned users with pagination."""
+    h_admin, admin_uid = await auth(client, "admin")
+    _, bob_uid = await auth(client, "bob")
+
+    # Create a role
+    r = await client.post("/api/v1/roles", headers=h_admin, json={"name": "Testers", "permissions": 0, "position": 5})
+    assert r.status_code == 201
+    role_id = r.json()["role_id"]
+
+    # Assign both users to the role
+    r = await client.put(f"/api/v1/members/{admin_uid}/roles/{role_id}", headers=h_admin)
+    assert r.status_code == 204
+    r = await client.put(f"/api/v1/members/{bob_uid}/roles/{role_id}", headers=h_admin)
+    assert r.status_code == 204
+
+    # List members
+    r = await client.get(f"/api/v1/roles/{role_id}/members", headers=h_admin)
+    assert r.status_code == 200
+    member_ids = [m["user_id"] for m in r.json()["items"]]
+    assert admin_uid in member_ids
+    assert bob_uid in member_ids
+    assert r.json()["cursor"] is not None
+
+    # Pagination: after first user
+    first_id = r.json()["items"][0]["user_id"]
+    r = await client.get(f"/api/v1/roles/{role_id}/members?after={first_id}", headers=h_admin)
+    assert r.status_code == 200
+    for m in r.json()["items"]:
+        assert m["user_id"] > first_id
+
+
+async def test_list_role_members_not_found(client):
+    """GET members of non-existent role returns 404."""
+    h, _ = await auth(client)
+    r = await client.get("/api/v1/roles/99999/members", headers=h)
+    assert r.status_code == 404
+
+
+async def test_revoke_role_hierarchy(client):
+    """Non-admin cannot revoke a role at or above their own rank (403 ROLE_HIERARCHY)."""
+    h_admin, admin_uid = await auth(client, "admin")
+    h_mod, mod_uid = await auth(client, "moderator")
+
+    # Create a low-rank (high position number) role for the moderator - gives MANAGE_ROLES
+    from vox.permissions import MANAGE_ROLES
+    r = await client.post("/api/v1/roles", headers=h_admin, json={
+        "name": "Mod", "permissions": MANAGE_ROLES, "position": 10,
+    })
+    mod_role_id = r.json()["role_id"]
+
+    # Create a high-rank role (low position number) that outranks the mod
+    r = await client.post("/api/v1/roles", headers=h_admin, json={
+        "name": "Senior", "permissions": 0, "position": 1,
+    })
+    senior_role_id = r.json()["role_id"]
+
+    # Assign mod role to moderator
+    await client.put(f"/api/v1/members/{mod_uid}/roles/{mod_role_id}", headers=h_admin)
+    # Assign senior role to admin
+    await client.put(f"/api/v1/members/{admin_uid}/roles/{senior_role_id}", headers=h_admin)
+
+    # Moderator tries to revoke the senior role from admin -> should get 403
+    r = await client.delete(f"/api/v1/members/{admin_uid}/roles/{senior_role_id}", headers=h_mod)
+    assert r.status_code == 403
+    assert r.json()["detail"]["error"]["code"] == "ROLE_HIERARCHY"

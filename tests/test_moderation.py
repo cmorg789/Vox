@@ -103,3 +103,38 @@ async def test_audit_log_filter_by_actor_and_target(client):
 
     r = await client.get("/api/v1/audit-log?after=0", headers=h)
     assert r.status_code == 200
+
+
+async def test_get_report_detail(client):
+    """GET /api/v1/reports/{id} returns full report with evidence."""
+    h, _ = await auth(client, "admin")
+    _, uid_bob = await auth(client, "bob")
+
+    r = await client.post("/api/v1/reports", headers=h, json={
+        "reported_user_id": uid_bob,
+        "reason": "harassment",
+        "description": "Repeatedly rude",
+        "messages": [{"body": "bad message", "msg_id": 1, "timestamp": 1700000000}],
+    })
+    assert r.status_code == 201
+    report_id = r.json()["report_id"]
+
+    r = await client.get(f"/api/v1/reports/{report_id}", headers=h)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["report_id"] == report_id
+    assert data["reason"] == "harassment"
+    assert data["description"] == "Repeatedly rude"
+    assert data["status"] == "open"
+    assert data["reported_user_id"] == uid_bob
+    assert isinstance(data["evidence"], list)
+    assert len(data["evidence"]) == 1
+    assert data["evidence"][0]["body"] == "bad message"
+    assert data["evidence"][0]["msg_id"] == 1
+
+
+async def test_get_report_not_found(client):
+    """GET non-existent report returns 404."""
+    h, _ = await auth(client)
+    r = await client.get("/api/v1/reports/99999", headers=h)
+    assert r.status_code == 404
