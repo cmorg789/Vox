@@ -222,7 +222,7 @@ class VoiceState(Base):
     __tablename__ = "voice_states"
 
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), primary_key=True)
-    room_id: Mapped[int] = mapped_column(ForeignKey("rooms.id"))
+    room_id: Mapped[int] = mapped_column(ForeignKey("rooms.id"), index=True)
     self_mute: Mapped[bool] = mapped_column(Boolean, server_default="0")
     self_deaf: Mapped[bool] = mapped_column(Boolean, server_default="0")
     video: Mapped[bool] = mapped_column(Boolean, server_default="0")
@@ -269,6 +269,9 @@ class Role(Base):
 
 class PermissionOverride(Base):
     __tablename__ = "permission_overrides"
+    __table_args__ = (
+        Index("ix_perm_override_space", "space_type", "space_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     space_type: Mapped[str] = mapped_column(String(10))  # feed or room
@@ -322,10 +325,10 @@ class Message(Base):
     __tablename__ = "messages"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)  # snowflake
-    feed_id: Mapped[Optional[int]] = mapped_column(ForeignKey("feeds.id"))
-    dm_id: Mapped[Optional[int]] = mapped_column(ForeignKey("dms.id"))
-    thread_id: Mapped[Optional[int]] = mapped_column(ForeignKey("threads.id", use_alter=True))
-    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    feed_id: Mapped[Optional[int]] = mapped_column(ForeignKey("feeds.id"), index=True)
+    dm_id: Mapped[Optional[int]] = mapped_column(ForeignKey("dms.id"), index=True)
+    thread_id: Mapped[Optional[int]] = mapped_column(ForeignKey("threads.id", use_alter=True), index=True)
+    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     body: Mapped[Optional[str]] = mapped_column(Text)
     opaque_blob: Mapped[Optional[str]] = mapped_column(Text)  # E2EE ciphertext
     timestamp: Mapped[int] = mapped_column(BigInteger)  # unix ms
@@ -342,7 +345,7 @@ class Message(Base):
 class Reaction(Base):
     __tablename__ = "reactions"
 
-    msg_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("messages.id"), primary_key=True)
+    msg_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("messages.id"), primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), primary_key=True)
     emoji: Mapped[str] = mapped_column(String(255), primary_key=True)
 
@@ -439,7 +442,7 @@ class Webhook(Base):
     __tablename__ = "webhooks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    feed_id: Mapped[int] = mapped_column(ForeignKey("feeds.id"))
+    feed_id: Mapped[int] = mapped_column(ForeignKey("feeds.id"), index=True)
     name: Mapped[str] = mapped_column(String(255))
     avatar: Mapped[Optional[str]] = mapped_column(Text)
     token: Mapped[str] = mapped_column(String(255), unique=True)
@@ -522,7 +525,7 @@ class Report(Base):
     reason: Mapped[str] = mapped_column(String(50))
     description: Mapped[Optional[str]] = mapped_column(Text)
     evidence: Mapped[Optional[str]] = mapped_column(Text)  # JSON
-    status: Mapped[str] = mapped_column(String(50), server_default="open")
+    status: Mapped[str] = mapped_column(String(50), server_default="open", index=True)
     action: Mapped[Optional[str]] = mapped_column(String(50))
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
@@ -531,8 +534,8 @@ class AuditLog(Base):
     __tablename__ = "audit_log"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    event_type: Mapped[str] = mapped_column(String(255))
-    actor_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    event_type: Mapped[str] = mapped_column(String(255), index=True)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     target_id: Mapped[Optional[int]] = mapped_column(Integer)
     extra: Mapped[Optional[str]] = mapped_column("metadata", Text)  # JSON, column named 'metadata'
     timestamp: Mapped[int] = mapped_column(BigInteger)  # unix ms
