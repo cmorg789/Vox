@@ -54,7 +54,7 @@ async def create_invite(
 async def delete_invite(
     code: str,
     db: AsyncSession = Depends(get_db),
-    actor: User = Depends(get_current_user),
+    actor: User = require_permission(CREATE_INVITES),
 ):
     result = await db.execute(select(Invite).where(Invite.code == code))
     invite = result.scalar_one_or_none()
@@ -96,7 +96,7 @@ async def list_invites(
     limit: int = Query(default=100, ge=1, le=1000),
     after: str | None = None,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(CREATE_INVITES),
 ):
     limit = min(limit, limits.page_limit_invites)
     query = select(Invite).order_by(Invite.code).limit(limit)
