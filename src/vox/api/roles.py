@@ -7,7 +7,7 @@ from vox.api.deps import get_current_user, get_db, require_permission
 from vox.api.members import get_highest_role_position
 from vox.db.models import PermissionOverride, Role, User, role_members
 from vox.limits import limits
-from vox.permissions import ADMINISTRATOR, MANAGE_ROLES, has_permission, resolve_permissions
+from vox.permissions import ADMINISTRATOR, MANAGE_ROLES, VIEW_SPACE, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.roles import (
@@ -18,6 +18,18 @@ from vox.models.roles import (
 )
 
 router = APIRouter(tags=["roles"])
+
+
+async def _get_space_viewers(db: AsyncSession, space_type: str, space_id: int) -> list[int]:
+    """Get user IDs who have VIEW_SPACE permission for a feed/room."""
+    result = await db.execute(select(User.id).where(User.active == True))
+    all_user_ids = result.scalars().all()
+    viewers = []
+    for uid in all_user_ids:
+        resolved = await resolve_permissions(db, uid, space_type=space_type, space_id=space_id)
+        if has_permission(resolved, VIEW_SPACE):
+            viewers.append(uid)
+    return viewers
 
 
 # --- Roles ---
@@ -223,7 +235,8 @@ async def set_feed_permission_override(
     else:
         db.add(PermissionOverride(space_type="feed", space_id=feed_id, target_type=target_type, target_id=target_id, allow=body.allow, deny=body.deny))
     await db.commit()
-    await dispatch(gw.permission_override_update(space_type="feed", space_id=feed_id, target_type=target_type, target_id=target_id, allow=body.allow, deny=body.deny))
+    viewers = await _get_space_viewers(db, "feed", feed_id)
+    await dispatch(gw.permission_override_update(space_type="feed", space_id=feed_id, target_type=target_type, target_id=target_id, allow=body.allow, deny=body.deny), user_ids=viewers)
 
 
 @router.delete("/api/v1/feeds/{feed_id}/permissions/{target_type}/{target_id}", status_code=204)
@@ -243,7 +256,8 @@ async def delete_feed_permission_override(
         )
     )
     await db.commit()
-    await dispatch(gw.permission_override_delete(space_type="feed", space_id=feed_id, target_type=target_type, target_id=target_id))
+    viewers = await _get_space_viewers(db, "feed", feed_id)
+    await dispatch(gw.permission_override_delete(space_type="feed", space_id=feed_id, target_type=target_type, target_id=target_id), user_ids=viewers)
 
 
 @router.put("/api/v1/rooms/{room_id}/permissions/{target_type}/{target_id}", status_code=204)
@@ -270,7 +284,8 @@ async def set_room_permission_override(
     else:
         db.add(PermissionOverride(space_type="room", space_id=room_id, target_type=target_type, target_id=target_id, allow=body.allow, deny=body.deny))
     await db.commit()
-    await dispatch(gw.permission_override_update(space_type="room", space_id=room_id, target_type=target_type, target_id=target_id, allow=body.allow, deny=body.deny))
+    viewers = await _get_space_viewers(db, "room", room_id)
+    await dispatch(gw.permission_override_update(space_type="room", space_id=room_id, target_type=target_type, target_id=target_id, allow=body.allow, deny=body.deny), user_ids=viewers)
 
 
 @router.delete("/api/v1/rooms/{room_id}/permissions/{target_type}/{target_id}", status_code=204)
@@ -290,4 +305,5 @@ async def delete_room_permission_override(
         )
     )
     await db.commit()
-    await dispatch(gw.permission_override_delete(space_type="room", space_id=room_id, target_type=target_type, target_id=target_id))
+    viewers = await _get_space_viewers(db, "room", room_id)
+    await dispatch(gw.permission_override_delete(space_type="room", space_id=room_id, target_type=target_type, target_id=target_id), user_ids=viewers)
