@@ -383,7 +383,7 @@ class Connection:
                 await self.hub.broadcast(evt)
 
             elif msg_type == "stage_response":
-                evt = {"type": "stage_response", "d": {"user_id": self.user_id, **data}}
+                evt = events.stage_response(user_id=self.user_id, **data)
                 # Broadcast to all (no room membership tracking yet)
                 await self.hub.broadcast(evt)
 

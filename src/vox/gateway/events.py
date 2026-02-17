@@ -373,6 +373,12 @@ def stage_topic_update(room_id: int, topic: str) -> dict[str, Any]:
     return _event("stage_topic_update", {"room_id": room_id, "topic": topic})
 
 
+def stage_response(user_id: int, **kwargs: Any) -> dict[str, Any]:
+    d: dict[str, Any] = {"user_id": user_id}
+    d.update(kwargs)
+    return _event("stage_response", d)
+
+
 def media_token_refresh(room_id: int, media_token: str) -> dict[str, Any]:
     return _event("media_token_refresh", {"room_id": room_id, "media_token": media_token})
 
