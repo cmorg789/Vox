@@ -11,6 +11,7 @@ class SendMessageRequest(BaseModel):
     reply_to: int | None = None
     attachments: list[str] | None = None  # file_ids
     mentions: list[int] | None = None
+    embed: str | None = None
 
 
 class EditMessageRequest(BaseModel):

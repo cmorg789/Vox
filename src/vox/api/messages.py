@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import Bot, BotCommand, Feed, File, Message, Pin, Reaction, Thread, User, message_attachments
 from vox.limits import limits
-from vox.permissions import MANAGE_MESSAGES, MANAGE_SPACES, MENTION_EVERYONE, READ_HISTORY, SEND_IN_THREADS, SEND_MESSAGES, has_permission, resolve_permissions
+from vox.permissions import MANAGE_MESSAGES, MANAGE_SPACES, MENTION_EVERYONE, READ_HISTORY, SEND_EMBEDS, SEND_IN_THREADS, SEND_MESSAGES, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.gateway.notify import notify_for_message, notify_for_reaction
@@ -270,6 +270,13 @@ async def send_feed_message(
         if not has_permission(perms, MENTION_EVERYONE):
             body.mentions = [uid for uid in body.mentions if uid != 0]
 
+    # Check SEND_EMBEDS permission if embed provided
+    embed = body.embed
+    if embed is not None:
+        perms = await resolve_permissions(db, user.id, space_type="feed", space_id=feed_id)
+        if not has_permission(perms, SEND_EMBEDS):
+            embed = None  # Silently strip embed if user lacks permission
+
     msg_id = await _snowflake()
     ts = int(time.time() * 1000)
     msg = Message(
@@ -279,6 +286,7 @@ async def send_feed_message(
         body=body.body,
         timestamp=ts,
         reply_to=body.reply_to,
+        embed=embed,
     )
     db.add(msg)
     await db.flush()
@@ -310,7 +318,7 @@ async def send_feed_message(
             parent_msg_id=msg_id,
             name=forum_thread.name,
         ), db=db)
-    await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions), db=db)
+    await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions, embed=embed), db=db)
     await notify_for_message(db, msg_id=msg_id, feed_id=feed_id, thread_id=None, dm_id=None, author_id=user.id, body=body.body, reply_to=body.reply_to, mentions=body.mentions)
     return SendMessageResponse(msg_id=msg_id, timestamp=ts, mentions=body.mentions)
 
@@ -423,6 +431,13 @@ async def send_thread_message(
         if not has_permission(perms, MENTION_EVERYONE):
             body.mentions = [uid for uid in body.mentions if uid != 0]
 
+    # Check SEND_EMBEDS permission if embed provided
+    embed = body.embed
+    if embed is not None:
+        perms = await resolve_permissions(db, user.id, space_type="feed", space_id=feed_id)
+        if not has_permission(perms, SEND_EMBEDS):
+            embed = None
+
     msg_id = await _snowflake()
     ts = int(time.time() * 1000)
     msg = Message(
@@ -433,6 +448,7 @@ async def send_thread_message(
         body=body.body,
         timestamp=ts,
         reply_to=body.reply_to,
+        embed=embed,
     )
     db.add(msg)
     await db.flush()
@@ -443,7 +459,7 @@ async def send_thread_message(
                 raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_ATTACHMENT", "message": f"File {file_id} not found."}})
             await db.execute(message_attachments.insert().values(msg_id=msg_id, file_id=file_id))
     await db.commit()
-    await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions), db=db)
+    await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions, embed=embed), db=db)
     await notify_for_message(db, msg_id=msg_id, feed_id=feed_id, thread_id=thread_id, dm_id=None, author_id=user.id, body=body.body, reply_to=body.reply_to, mentions=body.mentions)
     return SendMessageResponse(msg_id=msg_id, timestamp=ts, mentions=body.mentions)
 

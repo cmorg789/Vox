@@ -121,6 +121,9 @@ async def respond_to_interaction(
     if bot is None or bot.user_id != user.id:
         raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Not authorized to respond to this interaction."}})
 
+    import json as _json
+    embed_json = _json.dumps([e.model_dump() for e in body.embeds]) if body.embeds else None
+
     if body.ephemeral:
         # Dispatch message_create only to the invoking user (not stored)
         msg_id = await _snowflake()
@@ -133,6 +136,7 @@ async def respond_to_interaction(
                 author_id=user.id,
                 body=body.body,
                 timestamp=ts,
+                embed=embed_json,
             ),
             user_ids=[interaction.user_id],
             db=db,
@@ -148,6 +152,7 @@ async def respond_to_interaction(
             author_id=user.id,
             body=body.body,
             timestamp=ts,
+            embed=embed_json,
         )
         db.add(msg)
         await db.commit()
@@ -159,6 +164,7 @@ async def respond_to_interaction(
                 author_id=user.id,
                 body=body.body,
                 timestamp=ts,
+                embed=embed_json,
             ),
             db=db,
         )

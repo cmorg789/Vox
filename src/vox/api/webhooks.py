@@ -1,3 +1,4 @@
+import json
 import secrets
 import time
 from datetime import datetime, timezone
@@ -110,9 +111,10 @@ async def execute_webhook(
     wh = result.scalar_one_or_none()
     if wh is None:
         raise HTTPException(status_code=422, detail={"error": {"code": "WEBHOOK_TOKEN_INVALID", "message": "Webhook token is invalid."}})
+    embed_json = json.dumps([e.model_dump() for e in body.embeds]) if body.embeds else None
     msg_id = await _snowflake()
     ts = int(time.time() * 1000)
-    msg = Message(id=msg_id, feed_id=wh.feed_id, author_id=None, body=body.body, timestamp=ts, webhook_id=wh.id)
+    msg = Message(id=msg_id, feed_id=wh.feed_id, author_id=None, body=body.body, timestamp=ts, webhook_id=wh.id, embed=embed_json)
     db.add(msg)
     await db.commit()
-    await dispatch(gw.message_create(msg_id=msg_id, feed_id=wh.feed_id, author_id=None, body=body.body, timestamp=ts, webhook_id=wh.id), db=db)
+    await dispatch(gw.message_create(msg_id=msg_id, feed_id=wh.feed_id, author_id=None, body=body.body, timestamp=ts, webhook_id=wh.id, embed=embed_json), db=db)
