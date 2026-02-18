@@ -4,11 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vox.api.deps import get_current_user, get_db, require_permission
+from vox.api.deps import get_current_user, get_db, require_permission, resolve_member
 from vox.auth.service import get_user_role_ids
 from vox.db.models import Ban, Invite, Message, Role, User, role_members
 from vox.limits import limits
-from vox.permissions import ADMINISTRATOR, BAN_MEMBERS, KICK_MEMBERS, has_permission, resolve_permissions
+from vox.permissions import ADMINISTRATOR, BAN_MEMBERS, KICK_MEMBERS, MANAGE_NICKNAMES, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.members import (
@@ -90,7 +90,7 @@ async def get_member(
     return MemberResponse(user_id=user.id, display_name=user.display_name, avatar=user.avatar, nickname=user.nickname, role_ids=role_ids)
 
 
-@router.post("/api/v1/members/@me/join", status_code=204)
+@router.post("/api/v1/members/join", status_code=204)
 async def join_server(
     body: JoinRequest,
     db: AsyncSession = Depends(get_db),
@@ -114,50 +114,44 @@ async def join_server(
     await dispatch(gw.member_join(user_id=user.id, display_name=user.display_name), db=db)
 
 
-@router.delete("/api/v1/members/@me", status_code=204)
-async def leave_server(
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    user.active = False
-    await db.commit()
-    await dispatch(gw.member_leave(user_id=user.id), db=db)
-
-
-@router.patch("/api/v1/members/@me")
+@router.patch("/api/v1/members/{user_id}")
 async def update_member(
     body: UpdateMemberRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    resolved: tuple[User, User, bool] = resolve_member(other_perm=MANAGE_NICKNAMES),
 ) -> MemberResponse:
+    actor, target, is_self = resolved
+    if not is_self:
+        await _check_role_hierarchy(db, actor.id, target.id)
     if body.nickname is not None:
-        user.nickname = body.nickname
+        target.nickname = body.nickname
     from vox.audit import write_audit
-    await write_audit(db, "member.update", actor_id=user.id, target_id=user.id, extra={"nickname": user.nickname})
+    await write_audit(db, "member.update", actor_id=actor.id, target_id=target.id, extra={"nickname": target.nickname})
     await db.commit()
-    await dispatch(gw.member_update(user_id=user.id, nickname=user.nickname), db=db)
-    role_ids = await get_user_role_ids(db, user.id)
-    return MemberResponse(user_id=user.id, display_name=user.display_name, avatar=user.avatar, nickname=user.nickname, role_ids=role_ids)
+    await dispatch(gw.member_update(user_id=target.id, nickname=target.nickname), db=db)
+    role_ids = await get_user_role_ids(db, target.id)
+    return MemberResponse(user_id=target.id, display_name=target.display_name, avatar=target.avatar, nickname=target.nickname, role_ids=role_ids)
 
 
 @router.delete("/api/v1/members/{user_id}", status_code=204)
-async def kick_member(
-    user_id: int,
+async def remove_member(
     body: KickRequest | None = None,
     db: AsyncSession = Depends(get_db),
-    actor: User = require_permission(KICK_MEMBERS),
+    resolved: tuple[User, User, bool] = resolve_member(other_perm=KICK_MEMBERS),
 ):
-    result = await db.execute(select(User).where(User.id == user_id))
-    target = result.scalar_one_or_none()
-    if target is None:
-        raise HTTPException(status_code=404, detail={"error": {"code": "USER_NOT_FOUND", "message": "User does not exist."}})
-    await _check_role_hierarchy(db, actor.id, user_id)
+    actor, target, is_self = resolved
+    if is_self:
+        target.active = False
+        await db.commit()
+        await dispatch(gw.member_leave(user_id=target.id), db=db)
+        return
+    await _check_role_hierarchy(db, actor.id, target.id)
     target.active = False
     from vox.audit import write_audit
     extra = {"reason": body.reason} if body and body.reason else None
-    await write_audit(db, "member.kick", actor_id=actor.id, target_id=user_id, extra=extra)
+    await write_audit(db, "member.kick", actor_id=actor.id, target_id=target.id, extra=extra)
     await db.commit()
-    await dispatch(gw.member_leave(user_id=user_id), db=db)
+    await dispatch(gw.member_leave(user_id=target.id), db=db)
 
 
 # --- Bans ---

@@ -5,7 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vox.api.deps import get_current_user, get_db
+from vox.api.deps import get_current_user, get_db, resolve_member
+from vox.permissions import ADMINISTRATOR
 from vox.api.messages import _snowflake
 from vox.db.models import Bot, BotCommand, Message, User
 from vox.gateway import events as gw
@@ -23,14 +24,14 @@ from vox import interactions
 router = APIRouter(tags=["bots"])
 
 
-@router.put("/api/v1/bots/@me/commands")
+@router.put("/api/v1/bots/{user_id}/commands")
 async def register_commands(
     body: RegisterCommandsRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    resolved: tuple[User, User, bool] = resolve_member(other_perm=ADMINISTRATOR),
 ):
-    # Find the bot associated with this user
-    result = await db.execute(select(Bot).where(Bot.user_id == user.id))
+    _, target, _ = resolved
+    result = await db.execute(select(Bot).where(Bot.user_id == target.id))
     bot = result.scalar_one_or_none()
     if bot is None:
         raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Not a bot account."}})
@@ -54,12 +55,13 @@ async def register_commands(
     return {"ok": True}
 
 
-@router.get("/api/v1/bots/@me/commands")
+@router.get("/api/v1/bots/{user_id}/commands")
 async def list_bot_commands(
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    resolved: tuple[User, User, bool] = resolve_member(other_perm=ADMINISTRATOR),
 ):
-    result = await db.execute(select(Bot).where(Bot.user_id == user.id))
+    _, target, _ = resolved
+    result = await db.execute(select(Bot).where(Bot.user_id == target.id))
     bot = result.scalar_one_or_none()
     if bot is None:
         raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Not a bot account."}})
@@ -69,13 +71,14 @@ async def list_bot_commands(
     return {"commands": items}
 
 
-@router.delete("/api/v1/bots/@me/commands")
+@router.delete("/api/v1/bots/{user_id}/commands")
 async def deregister_commands(
     body: DeregisterCommandsRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    resolved: tuple[User, User, bool] = resolve_member(other_perm=ADMINISTRATOR),
 ):
-    result = await db.execute(select(Bot).where(Bot.user_id == user.id))
+    _, target, _ = resolved
+    result = await db.execute(select(Bot).where(Bot.user_id == target.id))
     bot = result.scalar_one_or_none()
     if bot is None:
         raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Not a bot account."}})

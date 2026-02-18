@@ -3,7 +3,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vox.api.deps import get_current_user, get_db
+from vox.api.deps import get_current_user, get_db, resolve_member
 from vox.auth.service import get_user_role_ids
 from vox.db.models import User, blocks, friends
 from vox.limits import limits
@@ -14,27 +14,9 @@ from vox.models.users import (
     UpdateProfileRequest,
     UserResponse,
 )
+from vox.permissions import ADMINISTRATOR
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
-
-
-@router.get("/@me")
-async def get_current_user_profile(
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-) -> UserResponse:
-    role_ids = await get_user_role_ids(db, user.id)
-    return UserResponse(user_id=user.id, username=user.username, display_name=user.display_name, avatar=user.avatar, bio=user.bio, roles=role_ids, created_at=int(user.created_at.timestamp()), federated=user.federated, home_domain=user.home_domain)
-
-
-@router.get("/@me/blocks")
-async def list_blocks(
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    result = await db.execute(select(blocks.c.blocked_id).where(blocks.c.user_id == user.id))
-    blocked_ids = [row[0] for row in result.all()]
-    return {"blocked_user_ids": blocked_ids}
 
 
 @router.get("/{user_id}/presence")
@@ -43,80 +25,57 @@ async def get_user_presence(user_id: int, _: User = Depends(get_current_user)):
     return get_hub().get_presence(user_id)
 
 
-@router.get("/{user_id}")
-async def get_user(
-    user_id: int,
+@router.get("/{user_id}/blocks")
+async def list_blocks(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
-) -> UserResponse:
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise HTTPException(status_code=404, detail={"error": {"code": "USER_NOT_FOUND", "message": "User does not exist."}})
-    role_ids = await get_user_role_ids(db, user.id)
-    return UserResponse(user_id=user.id, username=user.username, display_name=user.display_name, avatar=user.avatar, bio=user.bio, roles=role_ids, created_at=int(user.created_at.timestamp()), federated=user.federated, home_domain=user.home_domain)
+    resolved: tuple[User, User, bool] = resolve_member(other_perm=ADMINISTRATOR),
+):
+    _, target, _ = resolved
+    result = await db.execute(select(blocks.c.blocked_id).where(blocks.c.user_id == target.id))
+    blocked_ids = [row[0] for row in result.all()]
+    return {"blocked_user_ids": blocked_ids}
 
 
-@router.patch("/@me")
-async def update_profile(
-    body: UpdateProfileRequest,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-) -> UserResponse:
-    changed = {}
-    if body.display_name is not None:
-        user.display_name = body.display_name
-        changed["display_name"] = body.display_name
-    if body.avatar is not None:
-        user.avatar = body.avatar
-        changed["avatar"] = body.avatar
-    if body.bio is not None:
-        user.bio = body.bio
-        changed["bio"] = body.bio
-    await db.commit()
-    if changed:
-        await dispatch(events.user_update(user_id=user.id, **changed), db=db)
-    role_ids = await get_user_role_ids(db, user.id)
-    return UserResponse(user_id=user.id, username=user.username, display_name=user.display_name, avatar=user.avatar, bio=user.bio, roles=role_ids, created_at=int(user.created_at.timestamp()), federated=user.federated, home_domain=user.home_domain)
-
-
-@router.put("/@me/blocks/{user_id}", status_code=204)
+@router.put("/{user_id}/blocks/{target_id}", status_code=204)
 async def block_user(
-    user_id: int,
+    target_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    resolved: tuple[User, User, bool] = resolve_member(other_perm=ADMINISTRATOR),
 ):
-    if user_id == user.id:
+    _, owner, _ = resolved
+    if target_id == owner.id:
         raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_TARGET", "message": "You cannot block yourself."}})
-    await db.execute(sqlite_insert(blocks).values(user_id=user.id, blocked_id=user_id).on_conflict_do_nothing())
+    await db.execute(sqlite_insert(blocks).values(user_id=owner.id, blocked_id=target_id).on_conflict_do_nothing())
     await db.commit()
-    await dispatch(events.block_add(user_id=user.id, target_id=user_id), user_ids=[user.id, user_id], db=db)
+    await dispatch(events.block_add(user_id=owner.id, target_id=target_id), user_ids=[owner.id, target_id], db=db)
 
 
-@router.delete("/@me/blocks/{user_id}", status_code=204)
+@router.delete("/{user_id}/blocks/{target_id}", status_code=204)
 async def unblock_user(
-    user_id: int,
+    target_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    resolved: tuple[User, User, bool] = resolve_member(other_perm=ADMINISTRATOR),
 ):
-    await db.execute(delete(blocks).where(blocks.c.user_id == user.id, blocks.c.blocked_id == user_id))
+    _, owner, _ = resolved
+    await db.execute(delete(blocks).where(blocks.c.user_id == owner.id, blocks.c.blocked_id == target_id))
     await db.commit()
-    await dispatch(events.block_remove(user_id=user.id, target_id=user_id), user_ids=[user.id, user_id], db=db)
+    await dispatch(events.block_remove(user_id=owner.id, target_id=target_id), user_ids=[owner.id, target_id], db=db)
 
 
-@router.get("/@me/friends")
+@router.get("/{user_id}/friends")
 async def list_friends(
     limit: int = Query(default=100, ge=1, le=1000),
     after: int | None = None,
     status: str | None = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    resolved: tuple[User, User, bool] = resolve_member(other_perm=ADMINISTRATOR),
 ):
+    _, owner, _ = resolved
     limit = min(limit, limits.page_limit_friends)
     query = (
         select(User, friends.c.status)
         .join(friends, friends.c.friend_id == User.id)
-        .where(friends.c.user_id == user.id)
+        .where(friends.c.user_id == owner.id)
         .order_by(User.id)
         .limit(limit)
     )
@@ -134,68 +93,101 @@ async def list_friends(
     return {"items": items, "cursor": cursor}
 
 
-@router.put("/@me/friends/{user_id}", status_code=204)
+@router.put("/{user_id}/friends/{target_id}", status_code=204)
 async def add_friend(
-    user_id: int,
+    target_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    resolved: tuple[User, User, bool] = resolve_member(other_perm=ADMINISTRATOR),
 ):
-    if user_id == user.id:
+    _, owner, _ = resolved
+    if target_id == owner.id:
         raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_TARGET", "message": "You cannot add yourself as a friend."}})
     from datetime import datetime, timezone
-    await db.execute(sqlite_insert(friends).values(user_id=user.id, friend_id=user_id, status="pending", created_at=datetime.now(timezone.utc)).on_conflict_do_nothing())
+    await db.execute(sqlite_insert(friends).values(user_id=owner.id, friend_id=target_id, status="pending", created_at=datetime.now(timezone.utc)).on_conflict_do_nothing())
     await db.commit()
-    await dispatch(events.friend_request(user_id=user.id, target_id=user_id), user_ids=[user.id, user_id], db=db)
+    await dispatch(events.friend_request(user_id=owner.id, target_id=target_id), user_ids=[owner.id, target_id], db=db)
 
 
-@router.post("/@me/friends/{user_id}/accept", status_code=204)
+@router.post("/{user_id}/friends/{target_id}/accept", status_code=204)
 async def accept_friend(
-    user_id: int,
+    target_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    resolved: tuple[User, User, bool] = resolve_member(other_perm=ADMINISTRATOR),
 ):
-    # Check that user_id sent a pending request to us
+    _, owner, _ = resolved
     from datetime import datetime, timezone
     row = await db.execute(
-        select(friends).where(friends.c.user_id == user_id, friends.c.friend_id == user.id, friends.c.status == "pending")
+        select(friends).where(friends.c.user_id == target_id, friends.c.friend_id == owner.id, friends.c.status == "pending")
     )
     if row.first() is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "REQUEST_NOT_FOUND", "message": "No pending friend request from this user."}})
-    # Update original request to accepted
     from sqlalchemy import update
     await db.execute(
-        update(friends).where(friends.c.user_id == user_id, friends.c.friend_id == user.id).values(status="accepted")
+        update(friends).where(friends.c.user_id == target_id, friends.c.friend_id == owner.id).values(status="accepted")
     )
-    # Insert reverse row as accepted
-    await db.execute(sqlite_insert(friends).values(user_id=user.id, friend_id=user_id, status="accepted", created_at=datetime.now(timezone.utc)).on_conflict_do_nothing())
+    await db.execute(sqlite_insert(friends).values(user_id=owner.id, friend_id=target_id, status="accepted", created_at=datetime.now(timezone.utc)).on_conflict_do_nothing())
     await db.commit()
-    await dispatch(events.friend_add(user_id=user.id, target_id=user_id), user_ids=[user.id, user_id], db=db)
+    await dispatch(events.friend_add(user_id=owner.id, target_id=target_id), user_ids=[owner.id, target_id], db=db)
 
 
-@router.post("/@me/friends/{user_id}/reject", status_code=204)
+@router.post("/{user_id}/friends/{target_id}/reject", status_code=204)
 async def reject_friend(
-    user_id: int,
+    target_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    resolved: tuple[User, User, bool] = resolve_member(other_perm=ADMINISTRATOR),
 ):
-    # Delete the pending request
+    _, owner, _ = resolved
     result = await db.execute(
-        delete(friends).where(friends.c.user_id == user_id, friends.c.friend_id == user.id, friends.c.status == "pending")
+        delete(friends).where(friends.c.user_id == target_id, friends.c.friend_id == owner.id, friends.c.status == "pending")
     )
     if result.rowcount == 0:
         raise HTTPException(status_code=404, detail={"error": {"code": "REQUEST_NOT_FOUND", "message": "No pending friend request from this user."}})
     await db.commit()
-    await dispatch(events.friend_reject(user_id=user.id, target_id=user_id), user_ids=[user.id, user_id], db=db)
+    await dispatch(events.friend_reject(user_id=owner.id, target_id=target_id), user_ids=[owner.id, target_id], db=db)
 
 
-@router.delete("/@me/friends/{user_id}", status_code=204)
+@router.delete("/{user_id}/friends/{target_id}", status_code=204)
 async def remove_friend(
-    user_id: int,
+    target_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    resolved: tuple[User, User, bool] = resolve_member(other_perm=ADMINISTRATOR),
 ):
-    # Delete both directions
-    await db.execute(delete(friends).where(friends.c.user_id == user.id, friends.c.friend_id == user_id))
-    await db.execute(delete(friends).where(friends.c.user_id == user_id, friends.c.friend_id == user.id))
+    _, owner, _ = resolved
+    await db.execute(delete(friends).where(friends.c.user_id == owner.id, friends.c.friend_id == target_id))
+    await db.execute(delete(friends).where(friends.c.user_id == target_id, friends.c.friend_id == owner.id))
     await db.commit()
-    await dispatch(events.friend_remove(user_id=user.id, target_id=user_id), user_ids=[user.id, user_id], db=db)
+    await dispatch(events.friend_remove(user_id=owner.id, target_id=target_id), user_ids=[owner.id, target_id], db=db)
+
+
+@router.get("/{user_id}")
+async def get_user(
+    db: AsyncSession = Depends(get_db),
+    resolved: tuple[User, User, bool] = resolve_member(),
+) -> UserResponse:
+    _, target, _ = resolved
+    role_ids = await get_user_role_ids(db, target.id)
+    return UserResponse(user_id=target.id, username=target.username, display_name=target.display_name, avatar=target.avatar, bio=target.bio, roles=role_ids, created_at=int(target.created_at.timestamp()), federated=target.federated, home_domain=target.home_domain)
+
+
+@router.patch("/{user_id}")
+async def update_profile(
+    body: UpdateProfileRequest,
+    db: AsyncSession = Depends(get_db),
+    resolved: tuple[User, User, bool] = resolve_member(other_perm=ADMINISTRATOR),
+) -> UserResponse:
+    _, target, _ = resolved
+    changed = {}
+    if body.display_name is not None:
+        target.display_name = body.display_name
+        changed["display_name"] = body.display_name
+    if body.avatar is not None:
+        target.avatar = body.avatar
+        changed["avatar"] = body.avatar
+    if body.bio is not None:
+        target.bio = body.bio
+        changed["bio"] = body.bio
+    await db.commit()
+    if changed:
+        await dispatch(events.user_update(user_id=target.id, **changed), db=db)
+    role_ids = await get_user_role_ids(db, target.id)
+    return UserResponse(user_id=target.id, username=target.username, display_name=target.display_name, avatar=target.avatar, bio=target.bio, roles=role_ids, created_at=int(target.created_at.timestamp()), federated=target.federated, home_domain=target.home_domain)

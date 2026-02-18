@@ -8,7 +8,8 @@ from sqlalchemy.orm import selectinload
 
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from vox.api.deps import get_current_user, get_db
+from vox.api.deps import get_current_user, get_db, resolve_member
+from vox.permissions import ADMINISTRATOR
 from vox.api.messages import _handle_slash_command, _msg_response, _snowflake
 from vox.db.models import DM, DMReadState, DMSettings, File, Message, Reaction, User, dm_participants, message_attachments, role_members
 from vox.limits import limits
@@ -452,27 +453,29 @@ async def remove_dm_reaction(
 
 # --- DM Settings ---
 
-@router.get("/api/v1/users/@me/dm-settings")
+@router.get("/api/v1/users/{user_id}/dm-settings")
 async def get_dm_settings(
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    resolved: tuple[User, User, bool] = resolve_member(other_perm=ADMINISTRATOR),
 ) -> DMSettingsResponse:
-    result = await db.execute(select(DMSettings).where(DMSettings.user_id == user.id))
+    _, target, _ = resolved
+    result = await db.execute(select(DMSettings).where(DMSettings.user_id == target.id))
     settings = result.scalar_one_or_none()
     return DMSettingsResponse(dm_permission=settings.dm_permission if settings else "everyone")
 
 
-@router.patch("/api/v1/users/@me/dm-settings")
+@router.patch("/api/v1/users/{user_id}/dm-settings")
 async def update_dm_settings(
     body: UpdateDMSettingsRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    resolved: tuple[User, User, bool] = resolve_member(other_perm=ADMINISTRATOR),
 ) -> DMSettingsResponse:
-    result = await db.execute(select(DMSettings).where(DMSettings.user_id == user.id))
+    _, target, _ = resolved
+    result = await db.execute(select(DMSettings).where(DMSettings.user_id == target.id))
     settings = result.scalar_one_or_none()
     if settings:
         settings.dm_permission = body.dm_permission
     else:
-        db.add(DMSettings(user_id=user.id, dm_permission=body.dm_permission))
+        db.add(DMSettings(user_id=target.id, dm_permission=body.dm_permission))
     await db.commit()
     return DMSettingsResponse(dm_permission=body.dm_permission)
