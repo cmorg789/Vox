@@ -387,7 +387,7 @@ async def remove_2fa(
         try:
             await verify_webauthn_authentication(db, challenge_id, body.assertion)
             verified = True
-        except Exception:
+        except HTTPException:
             pass
     elif body.code:
         if body.method == "totp":

@@ -66,6 +66,59 @@ async def upload_file(
     return FileResponse(file_id=file_id, name=file_name, size=len(content), mime=file_mime, url=row.url, uploader_id=user.id, created_at=int(row.created_at.timestamp()))
 
 
+@router.post("/api/v1/dms/{dm_id}/files", status_code=201)
+async def upload_dm_file(
+    dm_id: int,
+    file: UploadFile,
+    name: str | None = Form(default=None),
+    mime: str | None = Form(default=None),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> FileResponse:
+    from vox.api.dms import require_dm_participant, _dm_participant_ids
+    # Verify user is DM participant
+    pids = await _dm_participant_ids(db, dm_id)
+    if user.id not in pids:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": "NOT_DM_PARTICIPANT", "message": "You are not a participant in this DM."}},
+        )
+
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {MAX_FILE_SIZE} byte limit."}},
+        )
+
+    file_id = secrets.token_urlsafe(16)
+    file_name = name or file.filename or "upload"
+    file_mime = mime or file.content_type or "application/octet-stream"
+
+    if not check_mime(file_mime, limits.allowed_file_mimes):
+        raise HTTPException(
+            status_code=415,
+            detail={"error": {"code": "UNSUPPORTED_MEDIA_TYPE", "message": f"MIME type '{file_mime}' is not allowed."}},
+        )
+
+    storage = get_storage()
+    url = await storage.put(file_id, content, file_mime)
+
+    row = File(
+        id=file_id,
+        name=file_name,
+        size=len(content),
+        mime=file_mime,
+        url=url,
+        uploader_id=user.id,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(row)
+    await db.commit()
+
+    return FileResponse(file_id=file_id, name=file_name, size=len(content), mime=file_mime, url=row.url, uploader_id=user.id, created_at=int(row.created_at.timestamp()))
+
+
 @router.get("/api/v1/files/{file_id}")
 async def download_file(
     file_id: str,

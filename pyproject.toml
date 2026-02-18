@@ -34,6 +34,9 @@ dev = [
     "maturin>=1.7",
 ]
 
+[project.scripts]
+vox = "vox.__main__:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
