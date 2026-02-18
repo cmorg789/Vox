@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 
 from fastapi import Depends, Header, HTTPException, Request
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.auth.service import get_user_by_token
@@ -68,3 +69,46 @@ def require_permission(
         return user
 
     return Depends(checker)
+
+
+def resolve_member(*, other_perm: int | None = None):
+    """Dependency factory: resolves user_id path param, checks permissions when acting on others.
+
+    Returns (actor, target, is_self).
+    If other_perm is None, any authenticated user can act on others (e.g. viewing profiles).
+    """
+
+    async def _inner(
+        user_id: str,
+        db: AsyncSession = Depends(get_db),
+        actor: User = Depends(get_current_user),
+    ) -> tuple[User, User, bool]:
+        try:
+            target_id = int(user_id)
+        except (ValueError, OverflowError):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": "INVALID_USER_ID", "message": "user_id must be a numeric ID."}},
+            )
+
+        if target_id == actor.id:
+            return (actor, actor, True)
+
+        if other_perm is not None:
+            resolved = await resolve_permissions(db, actor.id)
+            if not has_permission(resolved, other_perm):
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": {"code": "MISSING_PERMISSIONS", "message": "You lack the required permissions."}},
+                )
+
+        result = await db.execute(select(User).where(User.id == target_id))
+        target = result.scalar_one_or_none()
+        if target is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": "USER_NOT_FOUND", "message": "User does not exist."}},
+            )
+        return (actor, target, False)
+
+    return Depends(_inner)
