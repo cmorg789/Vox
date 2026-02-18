@@ -1,6 +1,8 @@
+import logging
 import time
 from datetime import datetime, timezone
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +35,7 @@ from vox.models.messages import (
 from vox.models.users import DMSettingsResponse, UpdateDMSettingsRequest
 
 router = APIRouter(tags=["dms"])
+logger = logging.getLogger(__name__)
 
 
 async def _dm_participant_ids(db: AsyncSession, dm_id: int) -> list[int]:
@@ -122,6 +125,16 @@ async def open_dm(
         await db.commit()
         pids = [user.id, body.recipient_id]
         await dispatch(gw.dm_create(dm_id=dm.id, participant_ids=pids, is_group=False), user_ids=pids, db=db)
+
+        # Subscribe to federated user's presence if applicable
+        try:
+            recipient = (await db.execute(select(User).where(User.id == body.recipient_id))).scalar_one_or_none()
+            if recipient and recipient.federated and recipient.home_domain:
+                from vox.federation.client import subscribe_presence
+                await subscribe_presence(db, recipient.username)
+        except (httpx.HTTPError, ConnectionError, OSError):
+            pass  # Fire-and-forget
+
         return DMResponse(dm_id=dm.id, participant_ids=pids, is_group=False, icon=dm.icon)
 
     elif body.recipient_ids is not None:
@@ -290,6 +303,24 @@ async def send_read_receipt(
     pids = await _dm_participant_ids(db, dm_id)
     await dispatch(gw.dm_read_notify(dm_id=dm_id, user_id=user.id, up_to_msg_id=body.up_to_msg_id), user_ids=pids, db=db)
 
+    # Federated read receipt relay
+    try:
+        from vox.federation.client import relay_read_receipt
+        from vox.federation.service import get_our_domain
+
+        our_domain = await get_our_domain(db)
+        if our_domain:
+            participants = await db.execute(
+                select(User).join(dm_participants, dm_participants.c.user_id == User.id)
+                .where(dm_participants.c.dm_id == dm_id, User.federated == True)
+            )
+            from_addr = f"{user.username}@{our_domain}"
+            for fed_user in participants.scalars().all():
+                if fed_user.home_domain:
+                    await relay_read_receipt(db, from_addr, fed_user.username, body.up_to_msg_id)
+    except (httpx.HTTPError, ConnectionError, OSError):
+        pass  # Fire-and-forget
+
 
 # --- DM Messages ---
 
@@ -340,8 +371,8 @@ async def send_dm_message(
                     from_address = f"{user.username}@{our_domain}"
                     to_address = participant.username  # Already user@domain for fed users
                     await relay_dm_message(db, from_address, to_address, body.body or "")
-    except Exception:
-        pass  # Fire-and-forget
+    except (httpx.HTTPError, ConnectionError, OSError) as exc:
+        logger.warning("Federation DM relay failed: %s", exc)
 
     return SendMessageResponse(msg_id=msg_id, timestamp=ts)
 

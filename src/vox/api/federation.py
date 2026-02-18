@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vox.api.deps import get_db
+from vox.api.deps import get_current_user, get_db
 from vox.api.messages import _snowflake
 from vox.db.models import (
     AuditLog,
@@ -38,10 +38,12 @@ from vox.federation.service import (
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.federation import (
+    AdminFederationBlockRequest,
     FederatedDevicePrekey,
     FederatedPrekeyResponse,
     FederatedUserProfile,
     FederationBlockRequest,
+    FederationJoinClientRequest,
     FederationJoinRequest,
     FederationJoinResponse,
     PresenceNotifyRequest,
@@ -321,7 +323,8 @@ async def presence_subscribe(
             status_code=404,
             detail={"error": {"code": "FED_USER_NOT_FOUND", "message": "User not found on this server."}},
         )
-    add_presence_sub(origin, body.user_address)
+    await add_presence_sub(db, origin, body.user_address)
+    await db.commit()
 
 
 @router.post("/presence/notify", status_code=204)
@@ -473,6 +476,83 @@ async def federation_block(
         event_type="federation_block_received",
         actor_id=0,
         extra=json.dumps({"origin": origin, "reason": body.reason}),
+        timestamp=int(time.time() * 1000),
+    ))
+    await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Client-facing Federation Endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post("/join-request")
+async def client_join_request(
+    body: FederationJoinClientRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    from vox.federation.service import check_federation_allowed, get_our_domain
+    from vox.federation.client import send_join_request
+
+    our_domain = await get_our_domain(db)
+    if our_domain is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": "FED_NOT_CONFIGURED", "message": "Federation domain not configured."}},
+        )
+    if not await check_federation_allowed(db, body.target_domain, "outbound"):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": "FED_BLOCKED", "message": "Outbound federation to this domain is not allowed."}},
+        )
+
+    user_address = f"{user.username}@{our_domain}"
+    result = await send_join_request(db, user_address, body.target_domain, body.invite_code)
+    if result is None:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": {"code": "FED_UNAVAILABLE", "message": "Remote server did not accept the join request."}},
+        )
+    return result
+
+
+@router.post("/admin/block", status_code=204)
+async def admin_federation_block(
+    body: AdminFederationBlockRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    from vox.permissions import ADMINISTRATOR, has_permission, resolve_permissions
+    from vox.federation.client import send_block_notification
+
+    perms = await resolve_permissions(db, user.id)
+    if not has_permission(perms, ADMINISTRATOR):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": "MISSING_PERMISSIONS", "message": "Administrator permission required."}},
+        )
+
+    # Send block notification to the remote domain (fire-and-forget)
+    await send_block_notification(db, body.domain, body.reason)
+
+    # Add domain to local blocklist
+    existing = await db.execute(
+        select(FederationEntry).where(FederationEntry.entry == body.domain)
+    )
+    if existing.scalar_one_or_none() is None:
+        db.add(FederationEntry(
+            entry=body.domain,
+            reason=body.reason or "Blocked by administrator",
+            created_at=datetime.now(timezone.utc),
+        ))
+
+    # Audit log
+    db.add(AuditLog(
+        id=await _snowflake(),
+        event_type="federation_block_sent",
+        actor_id=user.id,
+        extra=json.dumps({"domain": body.domain, "reason": body.reason}),
         timestamp=int(time.time() * 1000),
     ))
     await db.commit()

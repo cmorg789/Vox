@@ -343,6 +343,9 @@ class Connection:
                 self._last_typing[channel_key] = now
                 evt = events.typing_start(user_id=self.user_id, feed_id=feed_id, dm_id=dm_id)
                 await dispatch(evt)
+                # Federated DM typing relay (fire-and-forget)
+                if dm_id is not None:
+                    asyncio.create_task(self._relay_federated_typing(db_factory, dm_id))
 
             elif msg_type == "presence_update":
                 status = data.get("status", "online")
@@ -363,6 +366,8 @@ class Connection:
                 other_ids = [uid for uid in self.hub.connections if uid != self.user_id]
                 if other_ids:
                     await self.hub.broadcast(events.presence_update(user_id=self.user_id, **broadcast_data), user_ids=other_ids)
+                # Federated presence notification (fire-and-forget)
+                asyncio.create_task(self._notify_federated_presence(db_factory, broadcast_status, activity))
 
             elif msg_type == "voice_state_update":
                 from vox.gateway.dispatch import dispatch
@@ -423,6 +428,44 @@ class Connection:
 
             # Unknown types are silently ignored per spec tolerance
 
+    async def _relay_federated_typing(self, db_factory: Any, dm_id: int) -> None:
+        try:
+            from vox.db.models import User, dm_participants
+            from vox.federation.client import relay_typing
+            from vox.federation.service import get_our_domain
+            from sqlalchemy import select as _select
+            async with db_factory() as _db:
+                our_domain = await get_our_domain(_db)
+                if our_domain:
+                    parts = await _db.execute(
+                        _select(User).join(dm_participants, dm_participants.c.user_id == User.id)
+                        .where(dm_participants.c.dm_id == dm_id, User.federated == True)
+                    )
+                    for fed_user in parts.scalars().all():
+                        if fed_user.home_domain:
+                            from_addr = f"{(await _db.execute(_select(User).where(User.id == self.user_id))).scalar_one().username}@{our_domain}"
+                            await relay_typing(_db, from_addr, fed_user.username)
+        except Exception:
+            pass  # Fire-and-forget
+
+    async def _notify_federated_presence(self, db_factory: Any, status: str, activity: Any) -> None:
+        try:
+            from vox.federation.service import get_our_domain, get_presence_subscribers
+            from vox.federation.client import notify_presence
+            from vox.db.models import User
+            from sqlalchemy import select as _select
+            async with db_factory() as _db:
+                our_domain = await get_our_domain(_db)
+                if our_domain:
+                    local_user = (await _db.execute(_select(User).where(User.id == self.user_id))).scalar_one_or_none()
+                    if local_user:
+                        user_address = f"{local_user.username}@{our_domain}"
+                        domains = await get_presence_subscribers(_db, user_address)
+                        for domain in domains:
+                            await notify_presence(_db, domain, user_address, status, activity=activity)
+        except Exception:
+            pass  # Fire-and-forget
+
     async def _get_voice_room_users(self, room_id: int, db_factory: Any) -> list[int]:
         from vox.db.models import VoiceState
         from sqlalchemy import select
@@ -434,6 +477,7 @@ class Connection:
         from vox.gateway.dispatch import dispatch
         from vox.db.models import VoiceState
         from vox.voice.service import get_room_members
+        from vox.permissions import VIDEO, STREAM, has_permission, resolve_permissions
         from sqlalchemy import select
 
         async with db_factory() as db:
@@ -447,8 +491,18 @@ class Connection:
             if "self_deaf" in data:
                 vs.self_deaf = data["self_deaf"]
             if "video" in data:
+                if data["video"]:
+                    perms = await resolve_permissions(db, self.user_id, space_type="room", space_id=vs.room_id)
+                    if not has_permission(perms, VIDEO):
+                        await self.send_json({"type": "error", "d": {"code": "MISSING_PERMISSIONS", "message": "You lack the VIDEO permission."}})
+                        return
                 vs.video = data["video"]
             if "streaming" in data:
+                if data["streaming"]:
+                    perms = await resolve_permissions(db, self.user_id, space_type="room", space_id=vs.room_id)
+                    if not has_permission(perms, STREAM):
+                        await self.send_json({"type": "error", "d": {"code": "MISSING_PERMISSIONS", "message": "You lack the STREAM permission."}})
+                        return
                 vs.streaming = data["streaming"]
             await db.commit()
 

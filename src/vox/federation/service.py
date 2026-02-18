@@ -281,24 +281,25 @@ async def verify_voucher(voucher: str, expected_target: str, db: AsyncSession | 
 
 
 # ---------------------------------------------------------------------------
-# Presence Subscriptions (in-memory)
+# Presence Subscriptions (DB-backed)
 # ---------------------------------------------------------------------------
 
-# remote_domain -> {user_address, ...}
-_presence_subs: dict[str, set[str]] = {}
+
+async def add_presence_sub(db: AsyncSession, domain: str, address: str) -> None:
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+    from vox.db.models import FederationPresenceSub
+    stmt = sqlite_insert(FederationPresenceSub).values(domain=domain, user_address=address).on_conflict_do_nothing()
+    await db.execute(stmt)
+    await db.flush()
 
 
-def add_presence_sub(domain: str, address: str) -> None:
-    _presence_subs.setdefault(domain, set()).add(address)
-
-
-def get_presence_subscribers(address: str) -> list[str]:
+async def get_presence_subscribers(db: AsyncSession, address: str) -> list[str]:
     """Return list of domains subscribed to this user's presence."""
-    domains = []
-    for domain, addresses in _presence_subs.items():
-        if address in addresses:
-            domains.append(domain)
-    return domains
+    from vox.db.models import FederationPresenceSub
+    result = await db.execute(
+        select(FederationPresenceSub.domain).where(FederationPresenceSub.user_address == address)
+    )
+    return list(result.scalars().all())
 
 
 # ---------------------------------------------------------------------------

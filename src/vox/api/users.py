@@ -165,6 +165,23 @@ async def get_user(
     resolved: tuple[User, User, bool] = resolve_member(),
 ) -> UserResponse:
     _, target, _ = resolved
+
+    # Fetch remote profile for federated users and update cached fields
+    if target.federated and target.home_domain:
+        try:
+            from vox.federation.client import fetch_remote_profile
+            remote = await fetch_remote_profile(db, target.username)
+            if remote:
+                if remote.get("display_name"):
+                    target.display_name = remote["display_name"]
+                if remote.get("avatar_url"):
+                    target.avatar = remote["avatar_url"]
+                if remote.get("bio"):
+                    target.bio = remote["bio"]
+                await db.commit()
+        except Exception:
+            pass  # Fire-and-forget on failure
+
     role_ids = await get_user_role_ids(db, target.id)
     return UserResponse(user_id=target.id, username=target.username, display_name=target.display_name, avatar=target.avatar, bio=target.bio, roles=role_ids, created_at=int(target.created_at.timestamp()), federated=target.federated, home_domain=target.home_domain)
 

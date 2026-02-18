@@ -82,9 +82,8 @@ async def _fed_request(client, method, path, body, private_key, pub_b64, origin=
 
 @pytest.fixture(autouse=True)
 def _clear_federation_state():
-    fed_service._presence_subs.clear()
+    # DB-backed presence subs are cleaned per-test via DB rollback
     yield
-    fed_service._presence_subs.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -376,7 +375,10 @@ async def test_presence_subscribe_and_notify(client):
     r = await _fed_request(client, "POST", "/api/v1/federation/presence/subscribe", sub_body, private_key, pub_b64)
     assert r.status_code == 204
 
-    subs = fed_service.get_presence_subscribers("alice@test.local")
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        subs = await fed_service.get_presence_subscribers(db, "alice@test.local")
     assert "remote.example" in subs
 
     # Create a federated user stub via relay
@@ -928,18 +930,22 @@ async def test_cleanup_nonces(client):
 
 async def test_presence_subs(client):
     """add_presence_sub and get_presence_subscribers work correctly."""
-    fed_service.add_presence_sub("domain1.example", "alice@test.local")
-    fed_service.add_presence_sub("domain2.example", "alice@test.local")
-    fed_service.add_presence_sub("domain1.example", "bob@test.local")
+    from vox.db.engine import get_session_factory
+    factory = get_session_factory()
+    async with factory() as db:
+        await fed_service.add_presence_sub(db, "domain1.example", "alice@test.local")
+        await fed_service.add_presence_sub(db, "domain2.example", "alice@test.local")
+        await fed_service.add_presence_sub(db, "domain1.example", "bob@test.local")
+        await db.commit()
 
-    subs = fed_service.get_presence_subscribers("alice@test.local")
-    assert sorted(subs) == ["domain1.example", "domain2.example"]
+        subs = await fed_service.get_presence_subscribers(db, "alice@test.local")
+        assert sorted(subs) == ["domain1.example", "domain2.example"]
 
-    subs_bob = fed_service.get_presence_subscribers("bob@test.local")
-    assert subs_bob == ["domain1.example"]
+        subs_bob = await fed_service.get_presence_subscribers(db, "bob@test.local")
+        assert subs_bob == ["domain1.example"]
 
-    subs_nobody = fed_service.get_presence_subscribers("nobody@test.local")
-    assert subs_nobody == []
+        subs_nobody = await fed_service.get_presence_subscribers(db, "nobody@test.local")
+        assert subs_nobody == []
 
 
 async def test_send_federation_request_exception(client):

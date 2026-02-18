@@ -60,6 +60,18 @@ async def get_prekey_bundle(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> PrekeyBundleResponse:
+    # Check if target user is federated
+    target_user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if target_user and target_user.federated and target_user.home_domain:
+        from vox.federation.client import fetch_remote_prekeys
+        remote = await fetch_remote_prekeys(db, target_user.username)
+        if remote:
+            return PrekeyBundleResponse(
+                user_id=user_id,
+                devices=[DevicePrekey(**d) for d in remote.get("devices", [])],
+            )
+        return PrekeyBundleResponse(user_id=user_id, devices=[])
+
     devices_result = await db.execute(select(Device).where(Device.user_id == user_id))
     devices = devices_result.scalars().all()
 
@@ -146,7 +158,7 @@ async def initiate_pairing(
         gw.device_pair_prompt(
             device_name=body.device_name,
             ip=request.client.host if request.client else "unknown",
-            location="",
+            location=request.client.host if request.client else "unknown",
             pair_id=pair_id,
         ),
         user_ids=[user.id],

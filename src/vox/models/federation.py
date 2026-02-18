@@ -71,3 +71,13 @@ class FederationJoinResponse(VoxModel):
 
 class FederationBlockRequest(BaseModel):
     reason: Annotated[str, AfterValidator(str_limit(max_attr="ban_reason_max"))] | None = None
+
+
+class FederationJoinClientRequest(BaseModel):
+    target_domain: str
+    invite_code: str | None = None
+
+
+class AdminFederationBlockRequest(BaseModel):
+    domain: str
+    reason: str | None = None
