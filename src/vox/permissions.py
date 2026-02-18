@@ -16,7 +16,6 @@ ATTACH_FILES       = 1 << 3
 ADD_REACTIONS      = 1 << 4
 READ_HISTORY       = 1 << 5
 MENTION_EVERYONE   = 1 << 6
-USE_EXTERNAL_EMOJI = 1 << 7
 CONNECT            = 1 << 8
 SPEAK              = 1 << 9
 VIDEO              = 1 << 10

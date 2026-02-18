@@ -35,7 +35,10 @@ async def _periodic_cleanup(db_factory):
             pass  # Best-effort cleanup
 
 
-def create_app(database_url: str) -> FastAPI:
+def create_app(database_url: str | None = None) -> FastAPI:
+    if database_url is None:
+        import os
+        database_url = os.environ.get("VOX_DATABASE_URL", "sqlite+aiosqlite:///vox.db")
     init_engine(database_url)
 
     @asynccontextmanager
@@ -44,6 +47,17 @@ def create_app(database_url: str) -> FastAPI:
         engine = get_engine()
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # SQLite ALTER TABLE migration for new columns on existing tables
+            from sqlalchemy import text, inspect as sa_inspect
+            def _migrate(connection):
+                inspector = sa_inspect(connection)
+                if "voice_states" in inspector.get_table_names():
+                    cols = {c["name"] for c in inspector.get_columns("voice_states")}
+                    if "server_mute" not in cols:
+                        connection.execute(text("ALTER TABLE voice_states ADD COLUMN server_mute BOOLEAN DEFAULT 0 NOT NULL"))
+                    if "server_deaf" not in cols:
+                        connection.execute(text("ALTER TABLE voice_states ADD COLUMN server_deaf BOOLEAN DEFAULT 0 NOT NULL"))
+            await conn.run_sync(_migrate)
         # Initialize storage backend
         from vox.storage import init_storage
         init_storage()

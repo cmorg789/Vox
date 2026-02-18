@@ -14,6 +14,8 @@ class VoiceMemberData(VoxModel):
     deaf: bool
     video: bool
     streaming: bool
+    server_mute: bool = False
+    server_deaf: bool = False
     joined_at: int | None = None
 
 
@@ -42,6 +44,16 @@ class StageInviteResponseRequest(BaseModel):
 
 class StageRevokeRequest(BaseModel):
     user_id: int
+
+
+class VoiceServerMuteRequest(BaseModel):
+    user_id: int
+    muted: bool
+
+
+class VoiceServerDeafenRequest(BaseModel):
+    user_id: int
+    deafened: bool
 
 
 class StageTopicRequest(BaseModel):

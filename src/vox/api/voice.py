@@ -18,8 +18,10 @@ from vox.models.voice import (
     VoiceJoinResponse,
     VoiceKickRequest,
     VoiceMoveRequest,
+    VoiceServerDeafenRequest,
+    VoiceServerMuteRequest,
 )
-from vox.permissions import CONNECT, MOVE_MEMBERS, STAGE_MODERATOR, has_permission, resolve_permissions
+from vox.permissions import CONNECT, DEAFEN_MEMBERS, MOVE_MEMBERS, MUTE_MEMBERS, SPEAK, STAGE_MODERATOR, has_permission, resolve_permissions
 from vox.voice import service as voice_service
 
 router = APIRouter(tags=["voice"])
@@ -56,6 +58,11 @@ async def join_voice(
     result = await db.execute(select(Room).where(Room.id == room_id))
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "NOT_FOUND", "message": "Room not found."}})
+
+    # Enforce SPEAK permission
+    perms = await resolve_permissions(db, user.id, space_type="room", space_id=room_id)
+    if not has_permission(perms, SPEAK):
+        raise HTTPException(status_code=403, detail={"error": {"code": "MISSING_PERMISSIONS", "message": "You lack the SPEAK permission for this room."}})
 
     token, members = await voice_service.join_room(db, room_id, user.id, body.self_mute, body.self_deaf)
     media_url = await voice_service.get_media_url(db)
@@ -106,6 +113,42 @@ async def move_to_room(
     await voice_service.move_user(db, room_id, body.to_room_id, body.user_id)
     await _dispatch_voice_state(db, room_id)
     await _dispatch_voice_state(db, body.to_room_id)
+
+
+@router.post("/api/v1/rooms/{room_id}/voice/mute", status_code=204)
+async def server_mute(
+    room_id: int,
+    body: VoiceServerMuteRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = require_permission(MUTE_MEMBERS, space_type="room", space_id_param="room_id"),
+):
+    result = await db.execute(
+        select(VoiceState).where(VoiceState.user_id == body.user_id, VoiceState.room_id == room_id)
+    )
+    vs = result.scalar_one_or_none()
+    if vs is None:
+        raise HTTPException(status_code=400, detail={"error": {"code": "NOT_IN_VOICE", "message": "Target user is not in this voice room."}})
+    vs.server_mute = body.muted
+    await db.commit()
+    await _dispatch_voice_state(db, room_id)
+
+
+@router.post("/api/v1/rooms/{room_id}/voice/deafen", status_code=204)
+async def server_deafen(
+    room_id: int,
+    body: VoiceServerDeafenRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = require_permission(DEAFEN_MEMBERS, space_type="room", space_id_param="room_id"),
+):
+    result = await db.execute(
+        select(VoiceState).where(VoiceState.user_id == body.user_id, VoiceState.room_id == room_id)
+    )
+    vs = result.scalar_one_or_none()
+    if vs is None:
+        raise HTTPException(status_code=400, detail={"error": {"code": "NOT_IN_VOICE", "message": "Target user is not in this voice room."}})
+    vs.server_deaf = body.deafened
+    await db.commit()
+    await _dispatch_voice_state(db, room_id)
 
 
 # --- Stage ---

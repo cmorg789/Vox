@@ -233,6 +233,8 @@ class VoiceState(Base):
     self_deaf: Mapped[bool] = mapped_column(Boolean, server_default="0")
     video: Mapped[bool] = mapped_column(Boolean, server_default="0")
     streaming: Mapped[bool] = mapped_column(Boolean, server_default="0")
+    server_mute: Mapped[bool] = mapped_column(Boolean, server_default="0")
+    server_deaf: Mapped[bool] = mapped_column(Boolean, server_default="0")
     joined_at: Mapped[datetime] = mapped_column(DateTime)
 
 
@@ -517,6 +519,17 @@ class FederationNonce(Base):
     nonce: Mapped[str] = mapped_column(String(255), primary_key=True)
     seen_at: Mapped[datetime] = mapped_column(DateTime)
     expires_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class FederationPresenceSub(Base):
+    __tablename__ = "federation_presence_subs"
+    __table_args__ = (
+        UniqueConstraint("domain", "user_address"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    domain: Mapped[str] = mapped_column(String(255))
+    user_address: Mapped[str] = mapped_column(String(255))
 
 
 # --- Moderation ---
