@@ -79,13 +79,13 @@ async def test_dm_read_receipt(client):
 
 
 async def test_dm_settings(client):
-    h1, _, _, _ = await setup(client)
+    h1, uid1, _, _ = await setup(client)
 
-    r = await client.get("/api/v1/users/@me/dm-settings", headers=h1)
+    r = await client.get(f"/api/v1/users/{uid1}/dm-settings", headers=h1)
     assert r.status_code == 200
     assert r.json()["dm_permission"] == "everyone"
 
-    r = await client.patch("/api/v1/users/@me/dm-settings", headers=h1, json={"dm_permission": "friends_only"})
+    r = await client.patch(f"/api/v1/users/{uid1}/dm-settings", headers=h1, json={"dm_permission": "friends_only"})
     assert r.status_code == 200
     assert r.json()["dm_permission"] == "friends_only"
 
@@ -221,7 +221,7 @@ async def test_open_dm_blocked(client):
     """Opening a DM when blocked by recipient returns 403."""
     h1, uid1, h2, uid2 = await setup(client)
     # Bob blocks Alice
-    await client.put(f"/api/v1/users/@me/blocks/{uid1}", headers=h2)
+    await client.put(f"/api/v1/users/{uid2}/blocks/{uid1}", headers=h2)
     r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
     assert r.status_code == 403
     assert r.json()["detail"]["error"]["code"] == "USER_BLOCKED"
@@ -230,7 +230,7 @@ async def test_open_dm_blocked(client):
 async def test_open_dm_permission_nobody(client):
     """Opening a DM when recipient has dm_permission=nobody returns 403."""
     h1, uid1, h2, uid2 = await setup(client)
-    await client.patch("/api/v1/users/@me/dm-settings", headers=h2, json={"dm_permission": "nobody"})
+    await client.patch(f"/api/v1/users/{uid2}/dm-settings", headers=h2, json={"dm_permission": "nobody"})
     r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
     assert r.status_code == 403
     assert r.json()["detail"]["error"]["code"] == "DM_PERMISSION_DENIED"
@@ -239,7 +239,7 @@ async def test_open_dm_permission_nobody(client):
 async def test_open_dm_permission_friends_only(client):
     """Opening a DM when recipient has friends_only and sender is not a friend returns 403."""
     h1, uid1, h2, uid2 = await setup(client)
-    await client.patch("/api/v1/users/@me/dm-settings", headers=h2, json={"dm_permission": "friends_only"})
+    await client.patch(f"/api/v1/users/{uid2}/dm-settings", headers=h2, json={"dm_permission": "friends_only"})
     r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
     assert r.status_code == 403
     assert r.json()["detail"]["error"]["code"] == "DM_PERMISSION_DENIED"
@@ -248,10 +248,10 @@ async def test_open_dm_permission_friends_only(client):
 async def test_open_dm_friends_only_accepted(client):
     """Opening a DM with friends_only succeeds when users are accepted friends."""
     h1, uid1, h2, uid2 = await setup(client)
-    await client.patch("/api/v1/users/@me/dm-settings", headers=h2, json={"dm_permission": "friends_only"})
+    await client.patch(f"/api/v1/users/{uid2}/dm-settings", headers=h2, json={"dm_permission": "friends_only"})
     # Bob sends friend request to Alice, Alice accepts
-    await client.put(f"/api/v1/users/@me/friends/{uid1}", headers=h2)
-    await client.post(f"/api/v1/users/@me/friends/{uid2}/accept", headers=h1)
+    await client.put(f"/api/v1/users/{uid2}/friends/{uid1}", headers=h2)
+    await client.post(f"/api/v1/users/{uid1}/friends/{uid2}/accept", headers=h1)
     r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
     assert r.status_code == 201
 
@@ -421,8 +421,8 @@ async def test_dm_remove_reaction_message_not_found(client):
 async def test_update_dm_settings_existing(client):
     """Updating DM settings when a row already exists."""
     h1, uid1, _, _ = await setup(client)
-    await client.patch("/api/v1/users/@me/dm-settings", headers=h1, json={"dm_permission": "friends_only"})
-    r = await client.patch("/api/v1/users/@me/dm-settings", headers=h1, json={"dm_permission": "nobody"})
+    await client.patch(f"/api/v1/users/{uid1}/dm-settings", headers=h1, json={"dm_permission": "friends_only"})
+    r = await client.patch(f"/api/v1/users/{uid1}/dm-settings", headers=h1, json={"dm_permission": "nobody"})
     assert r.status_code == 200
     assert r.json()["dm_permission"] == "nobody"
 

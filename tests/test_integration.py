@@ -135,7 +135,7 @@ class TestFullLifecycle:
 
                 # Alice adds Bob as friend
                 r = tc.put(
-                    f"/api/v1/users/@me/friends/{uid_b}",
+                    f"/api/v1/users/{uid_a}/friends/{uid_b}",
                     headers={"Authorization": f"Bearer {token_a}"},
                 )
                 assert r.status_code == 204
@@ -147,7 +147,7 @@ class TestFullLifecycle:
 
                 # Alice blocks Bob
                 r = tc.put(
-                    f"/api/v1/users/@me/blocks/{uid_b}",
+                    f"/api/v1/users/{uid_a}/blocks/{uid_b}",
                     headers={"Authorization": f"Bearer {token_a}"},
                 )
                 assert r.status_code == 204

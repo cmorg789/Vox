@@ -12,8 +12,8 @@ async def test_list_members(client):
 
 
 async def test_update_member_nickname(client):
-    h, _ = await auth(client)
-    r = await client.patch("/api/v1/members/@me", headers=h, json={"nickname": "Ali"})
+    h, uid = await auth(client)
+    r = await client.patch(f"/api/v1/members/{uid}", headers=h, json={"nickname": "Ali"})
     assert r.status_code == 200
     assert r.json()["nickname"] == "Ali"
 
@@ -70,7 +70,7 @@ async def test_join_max_uses_invite(client):
     await auth(client, "bob")
     h_bob = (await client.post("/api/v1/auth/login", json={"username": "bob", "password": "test1234"})).json()
     h2 = {"Authorization": f"Bearer {h_bob['token']}"}
-    r = await client.post("/api/v1/members/@me/join", headers=h2, json={"invite_code": "maxed"})
+    r = await client.post("/api/v1/members/join", headers=h2, json={"invite_code": "maxed"})
     assert r.status_code == 422
 
 
@@ -97,13 +97,13 @@ async def test_join_banned_user(client):
     # Actually use bob's token - but bob is banned and inactive so can't log in easily
     # Instead test with admin banning charlie then charlie trying to join
     await client.put(f"/api/v1/bans/{charlie_uid}", headers=h_admin, json={"reason": "bad"})
-    r = await client.post("/api/v1/members/@me/join", headers=h_bob, json={"invite_code": "valid"})
+    r = await client.post("/api/v1/members/join", headers=h_bob, json={"invite_code": "valid"})
     assert r.status_code == 403
 
 
 async def test_leave_server(client):
-    h, _ = await auth(client, "alice")
-    r = await client.delete("/api/v1/members/@me", headers=h)
+    h, uid = await auth(client, "alice")
+    r = await client.delete(f"/api/v1/members/{uid}", headers=h)
     assert r.status_code == 204
 
 
@@ -122,7 +122,7 @@ async def test_ban_member_not_found(client):
 async def test_join_invalid_invite(client):
     """Joining with a non-existent invite code returns 422."""
     h, _ = await auth(client, "alice")
-    r = await client.post("/api/v1/members/@me/join", headers=h, json={"invite_code": "nonexistent"})
+    r = await client.post("/api/v1/members/join", headers=h, json={"invite_code": "nonexistent"})
     assert r.status_code == 422
     assert r.json()["detail"]["error"]["code"] == "INVITE_INVALID"
 
@@ -149,7 +149,7 @@ async def test_join_expired_invite(client):
     with patch("vox.api.members.datetime") as mock_dt:
         mock_dt.now.return_value = datetime(2025, 1, 1)
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-        r = await client.post("/api/v1/members/@me/join", headers=h, json={"invite_code": "expired"})
+        r = await client.post("/api/v1/members/join", headers=h, json={"invite_code": "expired"})
     assert r.status_code == 410
     assert r.json()["detail"]["error"]["code"] == "INVITE_EXPIRED"
 
@@ -196,3 +196,11 @@ async def test_unban_not_banned_returns_404(client):
 
     r = await client.delete(f"/api/v1/bans/{uid_bob}", headers=h_admin)
     assert r.status_code == 404
+
+
+async def test_invalid_user_id_returns_400(client):
+    """Non-numeric user_id returns 400."""
+    h, _ = await auth(client)
+    r = await client.delete("/api/v1/members/notanumber", headers=h)
+    assert r.status_code == 400
+    assert r.json()["detail"]["error"]["code"] == "INVALID_USER_ID"

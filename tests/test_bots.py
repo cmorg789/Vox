@@ -34,10 +34,10 @@ async def _setup_bot(client):
 
 
 async def test_register_and_list_commands(client):
-    human_h, bot_h, _, _ = await _setup_bot(client)
+    human_h, bot_h, bot_uid, _ = await _setup_bot(client)
 
     # Register commands as bot
-    r = await client.put("/api/v1/bots/@me/commands", headers=bot_h, json={
+    r = await client.put(f"/api/v1/bots/{bot_uid}/commands", headers=bot_h, json={
         "commands": [{"name": "ping", "description": "Pong!"}]
     })
     assert r.status_code == 200
@@ -51,11 +51,11 @@ async def test_register_and_list_commands(client):
 
 async def test_slash_command_interception(client):
     """Sending /ping in a feed should intercept and return interaction_id."""
-    human_h, bot_h, _, _ = await _setup_bot(client)
+    human_h, bot_h, bot_uid, _ = await _setup_bot(client)
     interactions.reset()
 
     # Register the command
-    await client.put("/api/v1/bots/@me/commands", headers=bot_h, json={
+    await client.put(f"/api/v1/bots/{bot_uid}/commands", headers=bot_h, json={
         "commands": [{"name": "ping", "description": "Pong!"}]
     })
 
@@ -68,10 +68,10 @@ async def test_slash_command_interception(client):
 
 
 async def test_slash_command_with_params(client):
-    human_h, bot_h, _, _ = await _setup_bot(client)
+    human_h, bot_h, bot_uid, _ = await _setup_bot(client)
     interactions.reset()
 
-    await client.put("/api/v1/bots/@me/commands", headers=bot_h, json={
+    await client.put(f"/api/v1/bots/{bot_uid}/commands", headers=bot_h, json={
         "commands": [{"name": "echo", "description": "Echo text"}]
     })
 
@@ -108,10 +108,10 @@ async def test_unregistered_command_not_intercepted(client):
 
 async def test_interaction_response_creates_message(client):
     """Bot responds to interaction, creating a real message."""
-    human_h, bot_h, bot_user_id, _ = await _setup_bot(client)
+    human_h, bot_h, bot_uid, _ = await _setup_bot(client)
     interactions.reset()
 
-    await client.put("/api/v1/bots/@me/commands", headers=bot_h, json={
+    await client.put(f"/api/v1/bots/{bot_uid}/commands", headers=bot_h, json={
         "commands": [{"name": "ping", "description": "Pong!"}]
     })
 
@@ -131,15 +131,15 @@ async def test_interaction_response_creates_message(client):
     msgs = r.json()["messages"]
     assert len(msgs) == 1
     assert msgs[0]["body"] == "Pong!"
-    assert msgs[0]["author_id"] == bot_user_id
+    assert msgs[0]["author_id"] == bot_uid
 
 
 async def test_interaction_response_ephemeral(client):
     """Ephemeral response should not create a stored message."""
-    human_h, bot_h, _, _ = await _setup_bot(client)
+    human_h, bot_h, bot_uid, _ = await _setup_bot(client)
     interactions.reset()
 
-    await client.put("/api/v1/bots/@me/commands", headers=bot_h, json={
+    await client.put(f"/api/v1/bots/{bot_uid}/commands", headers=bot_h, json={
         "commands": [{"name": "ping", "description": "Pong!"}]
     })
 
@@ -174,10 +174,10 @@ async def test_interaction_response_expired(client):
 
 async def test_interaction_response_wrong_bot(client):
     """A different user can't respond to another bot's interaction."""
-    human_h, bot_h, _, _ = await _setup_bot(client)
+    human_h, bot_h, bot_uid, _ = await _setup_bot(client)
     interactions.reset()
 
-    await client.put("/api/v1/bots/@me/commands", headers=bot_h, json={
+    await client.put(f"/api/v1/bots/{bot_uid}/commands", headers=bot_h, json={
         "commands": [{"name": "ping", "description": "Pong!"}]
     })
 
@@ -195,10 +195,10 @@ async def test_interaction_response_wrong_bot(client):
 
 async def test_interaction_consumed_once(client):
     """Interaction can only be responded to once."""
-    human_h, bot_h, _, _ = await _setup_bot(client)
+    human_h, bot_h, bot_uid, _ = await _setup_bot(client)
     interactions.reset()
 
-    await client.put("/api/v1/bots/@me/commands", headers=bot_h, json={
+    await client.put(f"/api/v1/bots/{bot_uid}/commands", headers=bot_h, json={
         "commands": [{"name": "ping", "description": "Pong!"}]
     })
 
@@ -224,7 +224,7 @@ async def test_interaction_consumed_once(client):
 
 async def test_component_interaction(client):
     """Component interaction creates an interaction for the bot."""
-    human_h, bot_h, bot_user_id, _ = await _setup_bot(client)
+    human_h, bot_h, bot_uid, _ = await _setup_bot(client)
     interactions.reset()
 
     # Bot sends a message (directly as a normal message)
@@ -260,13 +260,13 @@ async def test_component_interaction_non_bot_message(client):
 
 
 async def test_deregister_commands(client):
-    _, bot_h, _, _ = await _setup_bot(client)
+    _, bot_h, bot_uid, _ = await _setup_bot(client)
 
-    await client.put("/api/v1/bots/@me/commands", headers=bot_h, json={
+    await client.put(f"/api/v1/bots/{bot_uid}/commands", headers=bot_h, json={
         "commands": [{"name": "ping", "description": "Pong!"}, {"name": "echo", "description": "Echo!"}]
     })
 
-    r = await client.request("DELETE", "/api/v1/bots/@me/commands", headers=bot_h, json={
+    r = await client.request("DELETE", f"/api/v1/bots/{bot_uid}/commands", headers=bot_h, json={
         "command_names": ["ping"]
     })
     assert r.status_code == 200
@@ -278,16 +278,16 @@ async def test_deregister_commands(client):
 
 async def test_slash_command_in_dm(client):
     """Slash commands should also be intercepted in DMs."""
-    human_h, bot_h, bot_user_id, _ = await _setup_bot(client)
+    human_h, bot_h, bot_uid, _ = await _setup_bot(client)
     interactions.reset()
 
     # Register command
-    await client.put("/api/v1/bots/@me/commands", headers=bot_h, json={
+    await client.put(f"/api/v1/bots/{bot_uid}/commands", headers=bot_h, json={
         "commands": [{"name": "help", "description": "Show help"}]
     })
 
     # Open DM with bot
-    r = await client.post("/api/v1/dms", headers=human_h, json={"recipient_id": bot_user_id})
+    r = await client.post("/api/v1/dms", headers=human_h, json={"recipient_id": bot_uid})
     dm_id = r.json()["dm_id"]
 
     # Send slash command in DM
@@ -299,8 +299,9 @@ async def test_slash_command_in_dm(client):
 async def test_register_commands_not_bot(client):
     """Non-bot user cannot register commands."""
     r = await client.post("/api/v1/auth/register", json={"username": "alice", "password": "test1234"})
+    uid = r.json()["user_id"]
     h = {"Authorization": f"Bearer {r.json()['token']}"}
-    r = await client.put("/api/v1/bots/@me/commands", headers=h, json={
+    r = await client.put(f"/api/v1/bots/{uid}/commands", headers=h, json={
         "commands": [{"name": "test", "description": "Test"}]
     })
     assert r.status_code == 403
@@ -310,8 +311,9 @@ async def test_register_commands_not_bot(client):
 async def test_deregister_commands_not_bot(client):
     """Non-bot user cannot deregister commands."""
     r = await client.post("/api/v1/auth/register", json={"username": "alice", "password": "test1234"})
+    uid = r.json()["user_id"]
     h = {"Authorization": f"Bearer {r.json()['token']}"}
-    r = await client.request("DELETE", "/api/v1/bots/@me/commands", headers=h, json={
+    r = await client.request("DELETE", f"/api/v1/bots/{uid}/commands", headers=h, json={
         "command_names": ["test"]
     })
     assert r.status_code == 403
@@ -319,11 +321,11 @@ async def test_deregister_commands_not_bot(client):
 
 async def test_register_duplicate_command(client):
     """Registering a command with the same name twice upserts (updates description)."""
-    human_h, bot_h, _, _ = await _setup_bot(client)
-    await client.put("/api/v1/bots/@me/commands", headers=bot_h, json={
+    human_h, bot_h, bot_uid, _ = await _setup_bot(client)
+    await client.put(f"/api/v1/bots/{bot_uid}/commands", headers=bot_h, json={
         "commands": [{"name": "help", "description": "Show help"}]
     })
-    r = await client.put("/api/v1/bots/@me/commands", headers=bot_h, json={
+    r = await client.put(f"/api/v1/bots/{bot_uid}/commands", headers=bot_h, json={
         "commands": [{"name": "help", "description": "Updated help"}]
     })
     assert r.status_code == 200

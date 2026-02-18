@@ -319,7 +319,7 @@ class TestGatewayEvents:
                 ws.send_json({"type": "heartbeat"})
                 ws.receive_json()  # heartbeat_ack
 
-                tc.post("/api/v1/members/@me/join", json={"invite_code": code}, headers=headers2)
+                tc.post("/api/v1/members/join", json={"invite_code": code}, headers=headers2)
 
                 event = ws.receive_json()
                 assert event["type"] == "member_join"

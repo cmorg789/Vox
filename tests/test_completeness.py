@@ -80,14 +80,14 @@ async def test_bulk_delete_too_many(client):
 
 
 async def test_update_profile_bio_too_long(client):
-    h, _, _ = await auth(client)
-    r = await client.patch("/api/v1/users/@me", headers=h, json={"bio": "x" * 257})
+    h, uid, _ = await auth(client)
+    r = await client.patch(f"/api/v1/users/{uid}", headers=h, json={"bio": "x" * 257})
     assert r.status_code == 422
 
 
 async def test_update_profile_avatar_too_long(client):
-    h, _, _ = await auth(client)
-    r = await client.patch("/api/v1/users/@me", headers=h, json={"avatar": "x" * 513})
+    h, uid, _ = await auth(client)
+    r = await client.patch(f"/api/v1/users/{uid}", headers=h, json={"avatar": "x" * 513})
     assert r.status_code == 422
 
 
@@ -157,8 +157,8 @@ async def test_report_reason_too_long(client):
 
 
 async def test_nickname_too_long(client):
-    h, _, _ = await auth(client)
-    r = await client.patch("/api/v1/members/@me", headers=h, json={"nickname": "x" * 65})
+    h, uid, _ = await auth(client)
+    r = await client.patch(f"/api/v1/members/{uid}", headers=h, json={"nickname": "x" * 65})
     assert r.status_code == 422
 
 

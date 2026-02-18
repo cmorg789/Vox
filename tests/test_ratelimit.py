@@ -106,7 +106,7 @@ def test_classify_prefix_map():
     assert classify("/api/v1/files/upload") == "files"
     assert classify("/api/v1/reports/1") == "moderation"
     assert classify("/api/v1/admin/config") == "moderation"
-    assert classify("/api/v1/users/@me") == "members"
+    assert classify("/api/v1/users/123") == "members"
 
 
 def test_classify_unknown_falls_back_to_server():
