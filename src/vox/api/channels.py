@@ -12,6 +12,7 @@ from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.server import PermissionOverrideData
 from vox.models.channels import (
+    CategoryListResponse,
     CategoryResponse,
     CreateCategoryRequest,
     CreateFeedRequest,
@@ -19,6 +20,7 @@ from vox.models.channels import (
     CreateThreadRequest,
     FeedResponse,
     RoomResponse,
+    ThreadListResponse,
     ThreadResponse,
     UpdateCategoryRequest,
     UpdateFeedRequest,
@@ -296,10 +298,10 @@ async def delete_category(
 async def list_categories(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
-):
+) -> CategoryListResponse:
     result = await db.execute(select(Category).order_by(Category.position))
     cats = result.scalars().all()
-    return {"items": [CategoryResponse(category_id=c.id, name=c.name, position=c.position) for c in cats]}
+    return CategoryListResponse(items=[CategoryResponse(category_id=c.id, name=c.name, position=c.position) for c in cats])
 
 
 @router.get("/api/v1/categories/{category_id}")
@@ -335,9 +337,9 @@ async def list_feed_threads(
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
-):
-    from vox.config import limits
-    limit = min(limit, limits.page_limit_messages)
+) -> ThreadListResponse:
+    from vox.config import config
+    limit = min(limit, config.limits.page_limit_messages)
     query = select(Thread).where(Thread.feed_id == feed_id).order_by(Thread.id).limit(limit)
     if after is not None:
         query = query.where(Thread.id > after)
@@ -345,7 +347,7 @@ async def list_feed_threads(
     threads = result.scalars().all()
     items = [ThreadResponse(thread_id=t.id, parent_feed_id=t.feed_id, parent_msg_id=t.parent_msg_id, name=t.name, archived=t.archived, locked=t.locked) for t in threads]
     cursor = str(threads[-1].id) if threads else None
-    return {"items": items, "cursor": cursor}
+    return ThreadListResponse(items=items, cursor=cursor)
 
 
 @router.post("/api/v1/feeds/{feed_id}/threads", status_code=201)

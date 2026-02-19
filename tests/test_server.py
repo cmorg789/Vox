@@ -123,7 +123,7 @@ async def test_update_limits_invalid(client):
 
 async def test_load_limits(client):
     """load_limits loads overrides from DB."""
-    from vox.config import load_config, limits
+    from vox.config import config, load_config
     from vox.db.engine import get_session_factory
     from vox.db.models import Config
 
@@ -135,7 +135,7 @@ async def test_load_limits(client):
     async with factory() as db:
         await load_config(db)
 
-    assert limits.message_body_max == 9999
+    assert config.limits.message_body_max == 9999
 
     # Clean up
     from sqlalchemy import delete

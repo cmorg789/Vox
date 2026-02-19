@@ -9,8 +9,8 @@ from __future__ import annotations
 
 def _limits():
     """Lazy import to avoid circular dependency at module level."""
-    from vox.config import limits
-    return limits
+    from vox.config import config
+    return config.limits
 
 
 def str_limit(*, min_attr: str | None = None, max_attr: str | None = None):

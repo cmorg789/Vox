@@ -9,14 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import AuditLog, RecoveryCode, Report, TOTPSecret, User, WebAuthnCredential
-from vox.config import limits
-from vox.permissions import MANAGE_2FA, VIEW_AUDIT_LOG, VIEW_REPORTS
+from vox.config import config
+from vox.permissions import MANAGE_2FA, MANAGE_REPORTS, VIEW_AUDIT_LOG, VIEW_REPORTS
 from vox.models.moderation import (
     AuditLogEntry,
     AuditLogResponse,
     Admin2FAResetRequest,
     CreateReportRequest,
     ReportDetailResponse,
+    ReportListResponse,
     ReportResponse,
     ResolveReportRequest,
 )
@@ -58,8 +59,8 @@ async def list_reports(
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(VIEW_REPORTS),
-):
-    limit = min(limit, limits.page_limit_reports)
+) -> ReportListResponse:
+    limit = min(limit, config.limits.page_limit_reports)
     query = select(Report).order_by(Report.id).limit(limit)
     if status is not None:
         query = query.where(Report.status == status)
@@ -79,7 +80,7 @@ async def list_reports(
         for r in reports
     ]
     cursor = str(reports[-1].id) if reports else None
-    return {"items": items, "cursor": cursor}
+    return ReportListResponse(items=items, cursor=cursor)
 
 
 @router.get("/api/v1/reports/{report_id}")
@@ -115,7 +116,7 @@ async def resolve_report(
     report_id: int,
     body: ResolveReportRequest,
     db: AsyncSession = Depends(get_db),
-    actor: User = require_permission(VIEW_REPORTS),
+    actor: User = require_permission(MANAGE_REPORTS),
 ):
     result = await db.execute(select(Report).where(Report.id == report_id))
     report = result.scalar_one_or_none()
@@ -132,7 +133,7 @@ async def resolve_report(
 async def delete_report(
     report_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = require_permission(VIEW_REPORTS),
+    _: User = require_permission(MANAGE_REPORTS),
 ):
     result = await db.execute(select(Report).where(Report.id == report_id))
     report = result.scalar_one_or_none()
@@ -154,7 +155,7 @@ async def query_audit_log(
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(VIEW_AUDIT_LOG),
 ) -> AuditLogResponse:
-    limit = min(limit, limits.page_limit_audit_log)
+    limit = min(limit, config.limits.page_limit_audit_log)
     query = select(AuditLog).order_by(AuditLog.id).limit(limit)
     if event_type is not None:
         escaped = event_type.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_").replace("*", "%")

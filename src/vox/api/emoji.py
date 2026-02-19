@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.storage import get_storage
 from vox.db.models import Emoji, Sticker, User
-from vox.config import check_mime, config, limits
+from vox.config import check_mime, config
 from vox.permissions import MANAGE_EMOJI
-from vox.models.emoji import EmojiResponse, StickerResponse, UpdateEmojiRequest, UpdateStickerRequest
+from vox.models.emoji import EmojiListResponse, EmojiResponse, StickerListResponse, StickerResponse, UpdateEmojiRequest, UpdateStickerRequest
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 
@@ -24,8 +24,8 @@ async def list_emoji(
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
-):
-    limit = min(limit, limits.page_limit_emoji)
+) -> EmojiListResponse:
+    limit = min(limit, config.limits.page_limit_emoji)
     query = select(Emoji).order_by(Emoji.id).limit(limit)
     if after is not None:
         query = query.where(Emoji.id > after)
@@ -33,7 +33,7 @@ async def list_emoji(
     emoji = result.scalars().all()
     items = [EmojiResponse(emoji_id=e.id, name=e.name, creator_id=e.creator_id, image=e.image) for e in emoji]
     cursor = str(emoji[-1].id) if emoji else None
-    return {"items": items, "cursor": cursor}
+    return EmojiListResponse(items=items, cursor=cursor)
 
 
 @router.post("/api/v1/emoji", status_code=201)
@@ -44,8 +44,8 @@ async def create_emoji(
     user: User = require_permission(MANAGE_EMOJI),
 ) -> EmojiResponse:
     content = await image.read()
-    if len(content) > limits.file_upload_max_bytes:
-        raise HTTPException(status_code=413, detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {limits.file_upload_max_bytes} byte limit."}})
+    if len(content) > config.limits.file_upload_max_bytes:
+        raise HTTPException(status_code=413, detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {config.limits.file_upload_max_bytes} byte limit."}})
     emoji_mime = image.content_type or "application/octet-stream"
     if not check_mime(emoji_mime, config.media.allowed_emoji_mimes):
         raise HTTPException(status_code=415, detail={"error": {"code": "UNSUPPORTED_MEDIA_TYPE", "message": f"MIME type '{emoji_mime}' is not allowed for emoji."}})
@@ -100,8 +100,8 @@ async def list_stickers(
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
-):
-    limit = min(limit, limits.page_limit_stickers)
+) -> StickerListResponse:
+    limit = min(limit, config.limits.page_limit_stickers)
     query = select(Sticker).order_by(Sticker.id).limit(limit)
     if after is not None:
         query = query.where(Sticker.id > after)
@@ -109,7 +109,7 @@ async def list_stickers(
     stickers = result.scalars().all()
     items = [StickerResponse(sticker_id=s.id, name=s.name, creator_id=s.creator_id, image=s.image) for s in stickers]
     cursor = str(stickers[-1].id) if stickers else None
-    return {"items": items, "cursor": cursor}
+    return StickerListResponse(items=items, cursor=cursor)
 
 
 @router.post("/api/v1/stickers", status_code=201)
@@ -120,8 +120,8 @@ async def create_sticker(
     user: User = require_permission(MANAGE_EMOJI),
 ) -> StickerResponse:
     content = await image.read()
-    if len(content) > limits.file_upload_max_bytes:
-        raise HTTPException(status_code=413, detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {limits.file_upload_max_bytes} byte limit."}})
+    if len(content) > config.limits.file_upload_max_bytes:
+        raise HTTPException(status_code=413, detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {config.limits.file_upload_max_bytes} byte limit."}})
     sticker_mime = image.content_type or "application/octet-stream"
     if not check_mime(sticker_mime, config.media.allowed_sticker_mimes):
         raise HTTPException(status_code=415, detail={"error": {"code": "UNSUPPORTED_MEDIA_TYPE", "message": f"MIME type '{sticker_mime}' is not allowed for stickers."}})

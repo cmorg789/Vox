@@ -6,11 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vox.api.deps import get_current_user, get_db, resolve_member
 from vox.auth.service import get_user_role_ids
 from vox.db.models import User, blocks, friends
-from vox.config import limits
+from vox.config import config
 from vox.gateway import events
 from vox.gateway.dispatch import dispatch
 from vox.models.users import (
+    BlockListResponse,
+    FriendListResponse,
     FriendResponse,
+    PresenceResponse,
     UpdateProfileRequest,
     UserResponse,
 )
@@ -20,20 +23,26 @@ router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
 
 @router.get("/{user_id}/presence")
-async def get_user_presence(user_id: int, _: User = Depends(get_current_user)):
+async def get_user_presence(user_id: int, _: User = Depends(get_current_user)) -> PresenceResponse:
     from vox.gateway.hub import get_hub
-    return get_hub().get_presence(user_id)
+    data = get_hub().get_presence(user_id)
+    return PresenceResponse(
+        user_id=data.get("user_id", user_id),
+        status=data.get("status", "offline"),
+        custom_status=data.get("custom_status"),
+        activity=data.get("activity"),
+    )
 
 
 @router.get("/{user_id}/blocks")
 async def list_blocks(
     db: AsyncSession = Depends(get_db),
     resolved: tuple[User, User, bool] = resolve_member(other_perm=ADMINISTRATOR),
-):
+) -> BlockListResponse:
     _, target, _ = resolved
     result = await db.execute(select(blocks.c.blocked_id).where(blocks.c.user_id == target.id))
     blocked_ids = [row[0] for row in result.all()]
-    return {"blocked_user_ids": blocked_ids}
+    return BlockListResponse(blocked_user_ids=blocked_ids)
 
 
 @router.put("/{user_id}/blocks/{target_id}", status_code=204)
@@ -69,9 +78,9 @@ async def list_friends(
     status: str | None = None,
     db: AsyncSession = Depends(get_db),
     resolved: tuple[User, User, bool] = resolve_member(other_perm=ADMINISTRATOR),
-):
+) -> FriendListResponse:
     _, owner, _ = resolved
-    limit = min(limit, limits.page_limit_friends)
+    limit = min(limit, config.limits.page_limit_friends)
     query = (
         select(User, friends.c.status)
         .join(friends, friends.c.friend_id == User.id)
@@ -90,7 +99,7 @@ async def list_friends(
         for f, s in rows
     ]
     cursor = str(rows[-1][0].id) if rows else None
-    return {"items": items, "cursor": cursor}
+    return FriendListResponse(items=items, cursor=cursor)
 
 
 @router.put("/{user_id}/friends/{target_id}", status_code=204)

@@ -7,11 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vox.api.deps import get_current_user, get_db, require_permission, resolve_member
 from vox.auth.service import get_user_role_ids
 from vox.db.models import Ban, Invite, Message, Role, User, role_members
-from vox.config import limits
+from vox.config import config
 from vox.permissions import ADMINISTRATOR, BAN_MEMBERS, KICK_MEMBERS, MANAGE_NICKNAMES, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.members import (
+    BanListResponse,
     BanRequest,
     BanResponse,
     JoinRequest,
@@ -62,7 +63,7 @@ async def list_members(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> MemberListResponse:
-    limit = min(limit, limits.page_limit_members)
+    limit = min(limit, config.limits.page_limit_members)
     query = select(User).where(User.active == True).order_by(User.id).limit(limit)
     if after is not None:
         query = query.where(User.id > after)
@@ -224,8 +225,8 @@ async def list_bans(
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(BAN_MEMBERS),
-):
-    limit = min(limit, limits.page_limit_bans)
+) -> BanListResponse:
+    limit = min(limit, config.limits.page_limit_bans)
     query = select(Ban).order_by(Ban.user_id).limit(limit)
     if after is not None:
         query = query.where(Ban.user_id > after)
@@ -236,4 +237,4 @@ async def list_bans(
         u = (await db.execute(select(User).where(User.id == b.user_id))).scalar_one_or_none()
         items.append(BanResponse(user_id=b.user_id, display_name=u.display_name if u else None, reason=b.reason, created_at=int(b.created_at.timestamp())))
     cursor = str(bans[-1].user_id) if bans else None
-    return {"items": items, "cursor": cursor}
+    return BanListResponse(items=items, cursor=cursor)

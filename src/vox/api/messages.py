@@ -1,6 +1,9 @@
 import asyncio
+import ipaddress
 import json
+import socket
 import time
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -10,30 +13,38 @@ from sqlalchemy.orm import selectinload
 
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import Bot, BotCommand, Feed, File, Message, Pin, Reaction, Thread, User, message_attachments
-from vox.config import limits
+from vox.config import config
 from vox.permissions import MANAGE_MESSAGES, MANAGE_SPACES, MENTION_EVERYONE, READ_HISTORY, SEND_EMBEDS, SEND_IN_THREADS, SEND_MESSAGES, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.gateway.notify import notify_for_message, notify_for_reaction
 from vox import interactions
-from vox.models.errors import ErrorEnvelope
 from vox.models.messages import (
     BulkDeleteRequest,
     EditMessageRequest,
     EditMessageResponse,
     MessageListResponse,
     MessageResponse,
+    ReactionGroup,
+    ReactionListResponse,
     SendMessageRequest,
     SendMessageResponse,
 )
 
 router = APIRouter(tags=["messages"])
 
-_error_responses = {
-    401: {"model": ErrorEnvelope},
-    403: {"model": ErrorEnvelope},
-    404: {"model": ErrorEnvelope},
-}
+
+def _is_safe_url(url: str) -> bool:
+    """Validate a URL is safe to call (SSRF prevention)."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("https", "http"):
+        return False
+    hostname = parsed.hostname or ""
+    try:
+        addr = ipaddress.ip_address(socket.gethostbyname(hostname))
+        return not (addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved)
+    except (socket.gaierror, ValueError):
+        return False
 
 # Simple snowflake: 42-bit timestamp (ms) + 22-bit sequence
 _seq = 0
@@ -150,7 +161,9 @@ async def _handle_slash_command(
     }
 
     if bot.interaction_url:
-        # HTTP callback bot
+        # HTTP callback bot — validate URL to prevent SSRF
+        if not _is_safe_url(bot.interaction_url):
+            return None
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(bot.interaction_url, json=payload, timeout=5.0)
@@ -203,7 +216,7 @@ async def _handle_slash_command(
 
 # --- Feed Messages ---
 
-@router.get("/api/v1/feeds/{feed_id}/messages", responses=_error_responses)
+@router.get("/api/v1/feeds/{feed_id}/messages")
 async def get_feed_messages(
     feed_id: int,
     limit: int = Query(default=50, ge=1, le=1000),
@@ -212,7 +225,7 @@ async def get_feed_messages(
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(READ_HISTORY, space_type="feed", space_id_param="feed_id"),
 ) -> MessageListResponse:
-    limit = min(limit, limits.page_limit_messages)
+    limit = min(limit, config.limits.page_limit_messages)
     query = select(Message).options(selectinload(Message.attachments)).where(Message.feed_id == feed_id, Message.thread_id == None).order_by(Message.id.desc()).limit(limit)
     if before is not None:
         query = query.where(Message.id < before)
@@ -242,7 +255,7 @@ async def list_message_reactions(
     msg_id: int,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
-):
+) -> ReactionListResponse:
     msg = (await db.execute(select(Message).where(Message.id == msg_id, Message.feed_id == feed_id))).scalar_one_or_none()
     if msg is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "MESSAGE_NOT_FOUND", "message": "Message does not exist."}})
@@ -251,10 +264,10 @@ async def list_message_reactions(
     grouped: dict[str, list[int]] = {}
     for r in reactions:
         grouped.setdefault(r.emoji, []).append(r.user_id)
-    return {"reactions": [{"emoji": emoji, "user_ids": uids} for emoji, uids in grouped.items()]}
+    return ReactionListResponse(reactions=[ReactionGroup(emoji=emoji, user_ids=uids) for emoji, uids in grouped.items()])
 
 
-@router.post("/api/v1/feeds/{feed_id}/messages", status_code=201, responses=_error_responses)
+@router.post("/api/v1/feeds/{feed_id}/messages", status_code=201)
 async def send_feed_message(
     feed_id: int,
     body: SendMessageRequest,
@@ -413,7 +426,7 @@ async def get_thread_messages(
     thread = (await db.execute(select(Thread).where(Thread.id == thread_id))).scalar_one_or_none()
     if thread is None or thread.feed_id != feed_id:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Thread does not exist in this feed."}})
-    limit = min(limit, limits.page_limit_messages)
+    limit = min(limit, config.limits.page_limit_messages)
     query = select(Message).options(selectinload(Message.attachments)).where(Message.thread_id == thread_id).order_by(Message.id.desc()).limit(limit)
     if before is not None:
         query = query.where(Message.id < before)

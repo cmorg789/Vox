@@ -65,8 +65,8 @@ async def sync(
     cursor: int | None = None
 
     if event_types:
-        from vox.config import limits
-        limit = min(body.limit, limits.page_limit_messages)
+        from vox.config import config
+        limit = min(body.limit, config.limits.page_limit_messages)
 
         stmt = (
             select(EventLog)

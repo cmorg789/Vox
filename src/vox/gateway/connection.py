@@ -374,8 +374,8 @@ class Connection:
             elif msg_type == "mls_relay":
                 mls_type = data.get("mls_type", "")
                 mls_data = data.get("data", "")
-                from vox.config import limits as _limits
-                if len(mls_data) > _limits.relay_payload_max:
+                from vox.config import config as _config
+                if len(mls_data) > _config.limits.relay_payload_max:
                     await self.send_json({"type": "error", "d": {"code": "PAYLOAD_TOO_LARGE", "message": "Relay payload exceeds size limit."}})
                     continue
                 builder = _MLS_EVENT_MAP.get(mls_type)
@@ -388,8 +388,8 @@ class Connection:
                 cpace_type = data.get("cpace_type", "")
                 pair_id = data.get("pair_id", "")
                 cpace_data = data.get("data", "")
-                from vox.config import limits as _limits
-                if len(cpace_data) > _limits.relay_payload_max:
+                from vox.config import config as _config
+                if len(cpace_data) > _config.limits.relay_payload_max:
                     await self.send_json({"type": "error", "d": {"code": "PAYLOAD_TOO_LARGE", "message": "Relay payload exceeds size limit."}})
                     continue
                 builder = _CPACE_EVENT_MAP.get(cpace_type)

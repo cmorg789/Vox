@@ -8,11 +8,14 @@ from starlette.requests import Request
 
 from vox.api.deps import get_current_user, get_db
 from vox.db.models import Device, KeyBackup, OneTimePrekey, Prekey, User, dm_participants
-from vox.config import limits
+from vox.config import config
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.e2ee import (
     AddDeviceRequest,
+    AddDeviceResponse,
+    DeviceInfo,
+    DeviceListResponse,
     DevicePrekey,
     KeyBackupRequest,
     KeyBackupResponse,
@@ -100,10 +103,10 @@ async def get_prekey_bundle(
 async def list_devices(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-):
+) -> DeviceListResponse:
     result = await db.execute(select(Device).where(Device.user_id == user.id))
     devices = result.scalars().all()
-    return {"devices": [{"device_id": d.id, "device_name": d.device_name, "created_at": int(d.created_at.timestamp()) if d.created_at else None} for d in devices]}
+    return DeviceListResponse(devices=[DeviceInfo(device_id=d.id, device_name=d.device_name, created_at=int(d.created_at.timestamp()) if d.created_at else None) for d in devices])
 
 
 @router.post("/devices", status_code=201)
@@ -111,22 +114,22 @@ async def add_device(
     body: AddDeviceRequest,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-):
+) -> AddDeviceResponse:
     # Enforce device limit
     count = await db.scalar(
         select(func.count()).select_from(Device).where(Device.user_id == user.id)
     )
-    if count is not None and count >= limits.max_devices:
+    if count is not None and count >= config.limits.max_devices:
         raise HTTPException(
             status_code=403,
-            detail={"error": {"code": "DEVICE_LIMIT_REACHED", "message": f"Maximum of {limits.max_devices} devices allowed."}},
+            detail={"error": {"code": "DEVICE_LIMIT_REACHED", "message": f"Maximum of {config.limits.max_devices} devices allowed."}},
         )
     db.add(Device(id=body.device_id, user_id=user.id, device_name=body.device_name, created_at=datetime.now(timezone.utc)))
     await db.commit()
     devices_result = await db.execute(select(Device).where(Device.user_id == user.id))
     device_list = [{"device_id": d.id, "device_name": d.device_name} for d in devices_result.scalars().all()]
     await dispatch(gw.device_list_update(device_list), user_ids=[user.id], db=db)
-    return {"device_id": body.device_id}
+    return AddDeviceResponse(device_id=body.device_id)
 
 
 @router.delete("/devices/{device_id}", status_code=204)

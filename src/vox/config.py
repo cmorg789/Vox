@@ -60,22 +60,26 @@ class DbSource(PydanticBaseSettingsSource):
         return d
 
 
-def _db_settings_sources(
-    cls: type[BaseSettings],
-    init_settings: PydanticBaseSettingsSource,
-    env_settings: PydanticBaseSettingsSource,
-    dotenv_settings: PydanticBaseSettingsSource,
-    file_secret_settings: PydanticBaseSettingsSource,
-) -> tuple[PydanticBaseSettingsSource, ...]:
-    """Shared customise_sources: env wins over DB, DB wins over defaults."""
-    return (init_settings, env_settings, DbSource(cls))
+class _DbSettings(BaseSettings):
+    """Base for all sub-configs: wires in DbSource so env > DB > defaults."""
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (init_settings, env_settings, DbSource(settings_cls))
 
 
 # ---------------------------------------------------------------------------
 # Sub-configs — all BaseSettings with DB key maps
 # ---------------------------------------------------------------------------
 
-class LimitsConfig(BaseSettings):
+class LimitsConfig(_DbSettings):
     model_config = {"env_prefix": "VOX_LIMIT_"}
 
     _DB_KEY_MAP: ClassVar[dict[str, str]] = {}  # auto-generated below
@@ -167,23 +171,12 @@ class LimitsConfig(BaseSettings):
     page_limit_friends: int = 200
     page_limit_stickers: int = 200
 
-    @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        return _db_settings_sources(settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings)
-
 
 # Auto-generate the key map: limit_{field} -> field
 LimitsConfig._DB_KEY_MAP = {f"limit_{f}": f for f in LimitsConfig.model_fields}
 
 
-class ServerIdentityConfig(BaseSettings):
+class ServerIdentityConfig(_DbSettings):
     model_config = {"env_prefix": "VOX_SERVER_"}
 
     _DB_KEY_MAP: ClassVar[dict[str, str]] = {
@@ -198,12 +191,8 @@ class ServerIdentityConfig(BaseSettings):
     description: str | None = None
     gateway_url: str = "wss://localhost/gateway"
 
-    @classmethod
-    def settings_customise_sources(cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings):
-        return _db_settings_sources(settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings)
 
-
-class AuthConfig(BaseSettings):
+class AuthConfig(_DbSettings):
     model_config = {"env_prefix": "VOX_AUTH_"}
 
     _DB_KEY_MAP: ClassVar[dict[str, str]] = {
@@ -212,12 +201,8 @@ class AuthConfig(BaseSettings):
 
     session_ttl_days: int = 30
 
-    @classmethod
-    def settings_customise_sources(cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings):
-        return _db_settings_sources(settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings)
 
-
-class MediaConfig(BaseSettings):
+class MediaConfig(_DbSettings):
     model_config = {"env_prefix": "VOX_MEDIA_"}
 
     _DB_KEY_MAP: ClassVar[dict[str, str]] = {
@@ -232,12 +217,8 @@ class MediaConfig(BaseSettings):
     allowed_emoji_mimes: str = "image/png,image/gif,image/webp"
     allowed_sticker_mimes: str = "image/png,image/gif,image/webp,image/apng"
 
-    @classmethod
-    def settings_customise_sources(cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings):
-        return _db_settings_sources(settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings)
 
-
-class WebAuthnConfig(BaseSettings):
+class WebAuthnConfig(_DbSettings):
     model_config = {"env_prefix": "VOX_WEBAUTHN_"}
 
     _DB_KEY_MAP: ClassVar[dict[str, str]] = {
@@ -248,12 +229,8 @@ class WebAuthnConfig(BaseSettings):
     rp_id: str = "localhost"
     origin: str = "http://localhost:8000"
 
-    @classmethod
-    def settings_customise_sources(cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings):
-        return _db_settings_sources(settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings)
 
-
-class FederationConfig(BaseSettings):
+class FederationConfig(_DbSettings):
     model_config = {"env_prefix": "VOX_FEDERATION_"}
 
     _DB_KEY_MAP: ClassVar[dict[str, str]] = {
@@ -262,15 +239,13 @@ class FederationConfig(BaseSettings):
         "federation_private_key": "private_key",
         "federation_public_key": "public_key",
     }
+    # _SENSITIVE lists fields that must never be returned by admin config endpoints.
+    _SENSITIVE: ClassVar[set[str]] = {"private_key"}
 
     domain: str | None = None
     policy: str = "open"
     private_key: str | None = None
     public_key: str | None = None
-
-    @classmethod
-    def settings_customise_sources(cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings):
-        return _db_settings_sources(settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings)
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +280,6 @@ class ServerConfig(BaseModel):
 
 # Module-level singletons
 config = ServerConfig()
-limits = config.limits  # backward-compat alias
 
 
 # ---------------------------------------------------------------------------
@@ -313,15 +287,9 @@ limits = config.limits  # backward-compat alias
 # ---------------------------------------------------------------------------
 
 def _reload_section(section_name: str) -> None:
-    """Rebuild a single sub-config from DB values + env, preserving object identity for limits."""
-    cls = _SECTIONS[section_name]
-    new_obj = cls()
-    old_obj = getattr(config, section_name)
-    # Copy fields onto existing object so importers who hold a reference see changes
-    for field_name in cls.model_fields:
-        object.__setattr__(old_obj, field_name, getattr(new_obj, field_name))
-    # Reassign on config to keep config.<section> pointing to the same object
-    setattr(config, section_name, old_obj)
+    """Rebuild a single sub-config from DB values + env."""
+    new_obj = _SECTIONS[section_name]()
+    setattr(config, section_name, new_obj)
 
 
 def _reload_all() -> None:

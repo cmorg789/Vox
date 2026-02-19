@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import File, Message, User, dm_participants, message_attachments
-from vox.config import check_mime, config, limits
+from vox.config import check_mime, config
 from vox.models.files import FileResponse
 from vox.permissions import ATTACH_FILES, MANAGE_MESSAGES, VIEW_SPACE, has_permission, resolve_permissions
 from vox.storage import LocalStorage, get_storage
@@ -31,10 +31,10 @@ async def upload_file(
     user: User = require_permission(ATTACH_FILES, space_type="feed", space_id_param="feed_id"),
 ) -> FileResponse:
     content = await file.read()
-    if len(content) > limits.file_upload_max_bytes:
+    if len(content) > config.limits.file_upload_max_bytes:
         raise HTTPException(
             status_code=413,
-            detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {limits.file_upload_max_bytes} byte limit."}},
+            detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {config.limits.file_upload_max_bytes} byte limit."}},
         )
 
     file_id = secrets.token_urlsafe(16)
@@ -84,10 +84,10 @@ async def upload_dm_file(
         )
 
     content = await file.read()
-    if len(content) > limits.file_upload_max_bytes:
+    if len(content) > config.limits.file_upload_max_bytes:
         raise HTTPException(
             status_code=413,
-            detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {limits.file_upload_max_bytes} byte limit."}},
+            detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {config.limits.file_upload_max_bytes} byte limit."}},
         )
 
     file_id = secrets.token_urlsafe(16)

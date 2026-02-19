@@ -6,7 +6,7 @@ from sqlalchemy.orm import selectinload
 from vox.api.deps import get_current_user, get_db
 from vox.api.messages import _msg_response
 from vox.db.models import Feed, Message, Pin, User, dm_participants, message_attachments
-from vox.config import limits
+from vox.config import config
 from vox.models.messages import SearchResponse
 from vox.permissions import VIEW_SPACE, has_permission, resolve_permissions
 
@@ -29,7 +29,7 @@ async def search_messages(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> SearchResponse:
-    limit = min(limit, limits.page_limit_search)
+    limit = min(limit, config.limits.page_limit_search)
 
     escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     stmt = select(Message).options(selectinload(Message.attachments)).where(Message.body.ilike(f"%{escaped}%", escape="\\")).order_by(Message.id.desc()).limit(limit)

@@ -42,6 +42,7 @@ VIEW_AUDIT_LOG     = 1 << 34
 MANAGE_MESSAGES    = 1 << 35
 VIEW_REPORTS       = 1 << 36
 MANAGE_2FA         = 1 << 37
+MANAGE_REPORTS     = 1 << 38
 ADMINISTRATOR      = 1 << 62
 
 ALL_PERMISSIONS = (1 << 63) - 1

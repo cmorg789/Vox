@@ -6,13 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.api.members import get_highest_role_position
 from vox.db.models import PermissionOverride, Role, User, role_members
-from vox.config import limits
+from vox.config import config
 from vox.permissions import ADMINISTRATOR, MANAGE_ROLES, VIEW_SPACE, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.roles import (
     CreateRoleRequest,
     PermissionOverrideRequest,
+    RoleListResponse,
     RoleResponse,
     UpdateRoleRequest,
 )
@@ -39,8 +40,8 @@ async def list_roles(
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
-):
-    limit = min(limit, limits.page_limit_roles)
+) -> RoleListResponse:
+    limit = min(limit, config.limits.page_limit_roles)
     query = select(Role).order_by(Role.id).limit(limit)
     if after is not None:
         query = query.where(Role.id > after)
@@ -48,7 +49,7 @@ async def list_roles(
     roles = result.scalars().all()
     items = [RoleResponse(role_id=r.id, name=r.name, color=r.color, permissions=r.permissions, position=r.position) for r in roles]
     cursor = str(roles[-1].id) if roles else None
-    return {"items": items, "cursor": cursor}
+    return RoleListResponse(items=items, cursor=cursor)
 
 
 @router.get("/api/v1/roles/{role_id}/members")
@@ -64,7 +65,7 @@ async def list_role_members(
     role = (await db.execute(select(Role).where(Role.id == role_id))).scalar_one_or_none()
     if role is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Role not found."}})
-    limit = min(limit, limits.page_limit_members)
+    limit = min(limit, config.limits.page_limit_members)
     query = (
         select(User)
         .join(role_members, role_members.c.user_id == User.id)

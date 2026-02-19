@@ -51,8 +51,8 @@ async def test_upload_too_large(client, monkeypatch):
     h = await setup(client)
 
     # Patch file_upload_max_bytes to something small for testing
-    from vox.config import limits
-    monkeypatch.setattr(limits, "file_upload_max_bytes", 100)
+    from vox.config import config
+    monkeypatch.setattr(config.limits, "file_upload_max_bytes", 100)
 
     r = await client.post(
         "/api/v1/feeds/1/files",

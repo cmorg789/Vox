@@ -7,11 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import Invite, User
-from vox.config import config, limits
+from vox.config import config
 from vox.permissions import CREATE_INVITES
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
-from vox.models.invites import CreateInviteRequest, InvitePreviewResponse, InviteResponse
+from vox.models.invites import CreateInviteRequest, InviteListResponse, InvitePreviewResponse, InviteResponse
 
 router = APIRouter(prefix="/api/v1/invites", tags=["invites"])
 
@@ -93,8 +93,8 @@ async def list_invites(
     after: str | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(CREATE_INVITES),
-):
-    limit = min(limit, limits.page_limit_invites)
+) -> InviteListResponse:
+    limit = min(limit, config.limits.page_limit_invites)
     query = select(Invite).order_by(Invite.code).limit(limit)
     if after is not None:
         query = query.where(Invite.code > after)
@@ -113,4 +113,4 @@ async def list_invites(
         for i in invites
     ]
     cursor = invites[-1].code if invites else None
-    return {"items": items, "cursor": cursor}
+    return InviteListResponse(items=items, cursor=cursor)

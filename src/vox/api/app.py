@@ -32,7 +32,8 @@ async def _periodic_cleanup(db_factory):
                 )
                 await db.commit()
         except Exception:
-            pass  # Best-effort cleanup
+            import logging
+            logging.getLogger(__name__).warning("Periodic cleanup failed", exc_info=True)
 
 
 def create_app(database_url: str | None = None) -> FastAPI:
@@ -84,15 +85,34 @@ def create_app(database_url: str | None = None) -> FastAPI:
         # Dispose engine on shutdown
         await engine.dispose()
 
+    from vox.models.errors import ErrorEnvelope
+
     app = FastAPI(
         title="Vox",
         version="1.0.0",
         description="Vox chat platform API",
         lifespan=lifespan,
+        responses={
+            401: {"model": ErrorEnvelope},
+            403: {"model": ErrorEnvelope},
+            404: {"model": ErrorEnvelope},
+            422: {"model": ErrorEnvelope},
+            429: {"model": ErrorEnvelope},
+        },
     )
 
     # Rate limiting middleware
     app.add_middleware(RateLimitMiddleware)
+
+    from fastapi.exceptions import RequestValidationError
+    from fastapi.responses import JSONResponse
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request, exc):
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"code": "VALIDATION_ERROR", "message": str(exc)}},
+        )
 
     # Register routers
     from vox.api.auth import router as auth_router

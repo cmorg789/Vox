@@ -14,7 +14,7 @@ from vox.api.deps import get_current_user, get_db, resolve_member
 from vox.permissions import ADMINISTRATOR
 from vox.api.messages import _handle_slash_command, _msg_response, _snowflake
 from vox.db.models import DM, DMReadState, DMSettings, File, Message, Reaction, User, dm_participants, message_attachments, role_members
-from vox.config import limits
+from vox.config import config
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.gateway.notify import notify_for_message, notify_for_reaction
@@ -140,8 +140,8 @@ async def open_dm(
     elif body.recipient_ids is not None:
         # Group DM - deduplicate recipient list
         all_ids = list(dict.fromkeys([user.id] + body.recipient_ids))
-        if len(all_ids) > limits.group_dm_recipients_max:
-            raise HTTPException(status_code=400, detail={"error": {"code": "TOO_MANY_RECIPIENTS", "message": f"Group DMs are limited to {limits.group_dm_recipients_max} participants."}})
+        if len(all_ids) > config.limits.group_dm_recipients_max:
+            raise HTTPException(status_code=400, detail={"error": {"code": "TOO_MANY_RECIPIENTS", "message": f"Group DMs are limited to {config.limits.group_dm_recipients_max} participants."}})
         # Validate all recipient IDs exist
         existing = await db.execute(select(User.id).where(User.id.in_(body.recipient_ids)))
         valid_ids = {row[0] for row in existing.all()}
@@ -167,7 +167,7 @@ async def list_dms(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> DMListResponse:
-    limit = min(limit, limits.page_limit_dms)
+    limit = min(limit, config.limits.page_limit_dms)
     query = (
         select(DM)
         .join(dm_participants, dm_participants.c.dm_id == DM.id)
@@ -242,8 +242,8 @@ async def add_dm_recipient(
     pids = await _dm_participant_ids(db, dm_id)
     if caller.id not in pids:
         raise HTTPException(status_code=403, detail={"error": {"code": "NOT_DM_PARTICIPANT", "message": "You are not a participant in this DM."}})
-    if len(pids) >= limits.group_dm_recipients_max:
-        raise HTTPException(status_code=400, detail={"error": {"code": "TOO_MANY_RECIPIENTS", "message": f"Group DMs are limited to {limits.group_dm_recipients_max} participants."}})
+    if len(pids) >= config.limits.group_dm_recipients_max:
+        raise HTTPException(status_code=400, detail={"error": {"code": "TOO_MANY_RECIPIENTS", "message": f"Group DMs are limited to {config.limits.group_dm_recipients_max} participants."}})
     await db.execute(sqlite_insert(dm_participants).values(dm_id=dm_id, user_id=user_id).on_conflict_do_nothing())
     await db.commit()
     pids = await _dm_participant_ids(db, dm_id)
@@ -388,7 +388,7 @@ async def get_dm_messages(
     db: AsyncSession = Depends(get_db),
     _: User = require_dm_participant(),
 ) -> MessageListResponse:
-    limit = min(limit, limits.page_limit_messages)
+    limit = min(limit, config.limits.page_limit_messages)
     query = select(Message).options(selectinload(Message.attachments)).where(Message.dm_id == dm_id).order_by(Message.id.desc()).limit(limit)
     if before is not None:
         query = query.where(Message.id < before)
