@@ -28,6 +28,11 @@ class UpdateRoleRequest(BaseModel):
     position: int | None = None
 
 
+class RoleListResponse(VoxModel):
+    items: list[RoleResponse]
+    cursor: str | None = None
+
+
 class PermissionOverrideRequest(BaseModel):
     allow: int
     deny: int

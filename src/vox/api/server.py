@@ -105,15 +105,18 @@ class UpdateLimitsRequest(BaseModel):
     limits: dict[str, int]
 
 
-@router.get("/limits")
+from vox.config import LimitsConfig
+
+
+@router.get("/limits", response_model=LimitsConfig)
 async def get_limits(
     _: User = require_permission(MANAGE_SERVER),
 ):
     """Returns all limits with current (effective) values."""
-    return config.limits.model_dump()
+    return config.limits
 
 
-@router.patch("/limits")
+@router.patch("/limits", response_model=LimitsConfig)
 async def update_limits(
     body: UpdateLimitsRequest,
     db: AsyncSession = Depends(get_db),
@@ -126,4 +129,4 @@ async def update_limits(
             raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_LIMIT", "message": f"Unknown limit: {name}"}})
         await save_limit(db, name, value)
     await db.commit()
-    return config.limits.model_dump()
+    return config.limits

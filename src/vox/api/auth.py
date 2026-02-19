@@ -47,18 +47,12 @@ from vox.models.auth import (
     WebAuthnCredentialResponse,
     WebAuthnLoginRequest,
 )
-from vox.models.errors import ErrorEnvelope
 from vox.permissions import ADMINISTRATOR, EVERYONE_DEFAULTS
-
-_error_responses = {
-    401: {"model": ErrorEnvelope},
-    403: {"model": ErrorEnvelope},
-}
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
-@router.post("/register", status_code=201, responses=_error_responses)
+@router.post("/register", status_code=201)
 async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)) -> RegisterResponse:
     # Check if username is taken
     existing = await db.execute(select(User).where(User.username == body.username))
@@ -87,7 +81,7 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)) ->
     return RegisterResponse(user_id=user.id, token=token)
 
 
-@router.post("/login", responses=_error_responses)
+@router.post("/login")
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> LoginResponse | MFARequiredResponse:
     user = await authenticate(db, body.username, body.password)
     if user is None:

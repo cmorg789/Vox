@@ -108,3 +108,12 @@ class ThreadResponse(VoxModel):
     name: str
     archived: bool
     locked: bool
+
+
+class CategoryListResponse(VoxModel):
+    items: list[CategoryResponse]
+
+
+class ThreadListResponse(VoxModel):
+    items: list[ThreadResponse]
+    cursor: str | None = None

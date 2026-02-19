@@ -22,6 +22,11 @@ class InviteResponse(VoxModel):
     created_at: int | None = None
 
 
+class InviteListResponse(VoxModel):
+    items: list[InviteResponse]
+    cursor: str | None = None
+
+
 class InvitePreviewResponse(VoxModel):
     code: str
     server_name: str

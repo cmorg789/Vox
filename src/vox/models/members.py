@@ -41,3 +41,8 @@ class BanResponse(VoxModel):
     display_name: str | None
     reason: str | None
     created_at: int | None = None
+
+
+class BanListResponse(VoxModel):
+    items: list[BanResponse]
+    cursor: str | None = None

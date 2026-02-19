@@ -56,5 +56,19 @@ class KeyBackupRequest(BaseModel):
     encrypted_blob: Annotated[str, AfterValidator(str_limit(max_attr="key_backup_max"))]  # base64
 
 
+class DeviceInfo(VoxModel):
+    device_id: str
+    device_name: str
+    created_at: int | None = None
+
+
+class DeviceListResponse(VoxModel):
+    devices: list[DeviceInfo]
+
+
+class AddDeviceResponse(VoxModel):
+    device_id: str
+
+
 class KeyBackupResponse(VoxModel):
     encrypted_blob: str

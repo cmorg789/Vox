@@ -38,6 +38,11 @@ class ReportResponse(VoxModel):
     created_at: int | None = None
 
 
+class ReportListResponse(VoxModel):
+    items: list[ReportResponse]
+    cursor: str | None = None
+
+
 class ReportDetailResponse(VoxModel):
     report_id: int
     reporter_id: int

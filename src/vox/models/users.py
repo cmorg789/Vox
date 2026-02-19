@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import AfterValidator, BaseModel
 
@@ -33,6 +33,22 @@ class FriendResponse(VoxModel):
 
 class DMSettingsResponse(VoxModel):
     dm_permission: str  # everyone | friends_only | mutual_servers | nobody
+
+
+class PresenceResponse(VoxModel):
+    user_id: int
+    status: str
+    custom_status: str | None = None
+    activity: Any | None = None
+
+
+class BlockListResponse(VoxModel):
+    blocked_user_ids: list[int]
+
+
+class FriendListResponse(VoxModel):
+    items: list[FriendResponse]
+    cursor: str | None = None
 
 
 class UpdateDMSettingsRequest(BaseModel):
