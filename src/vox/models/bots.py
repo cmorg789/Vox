@@ -2,7 +2,7 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel
 
-from vox.limits import str_limit
+from vox.config import str_limit
 from vox.models.base import VoxModel
 
 
@@ -16,12 +16,25 @@ class EmbedField(BaseModel):
 
 
 class Embed(BaseModel):
+    # OpenGraph core
     title: str | None = None
     description: str | None = None
     url: str | None = None
+    site_name: str | None = None
+    # OG media
+    image: str | None = None
+    image_width: int | None = None
+    image_height: int | None = None
+    video: str | None = None
+    video_width: int | None = None
+    video_height: int | None = None
+    audio: str | None = None
+    # OG meta
+    type: str | None = None
+    locale: str | None = None
+    # Bot/webhook extensions (not OG)
     color: int | None = None
     fields: list[EmbedField] | None = None
-    image: str | None = None
     thumbnail: str | None = None
 
 
@@ -108,6 +121,18 @@ class CommandResponse(VoxModel):
     name: str
     description: str | None = None
     params: list[CommandParam] = []
+
+
+class CommandListResponse(VoxModel):
+    commands: list[CommandResponse]
+
+
+class OkResponse(VoxModel):
+    ok: bool = True
+
+
+class WebhookListWrapper(VoxModel):
+    webhooks: list[WebhookListResponse]
 
 
 # --- Interactions ---

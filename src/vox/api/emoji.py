@@ -5,10 +5,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
-from vox.api.files import MAX_FILE_SIZE
 from vox.storage import get_storage
 from vox.db.models import Emoji, Sticker, User
-from vox.limits import check_mime, limits
+from vox.config import check_mime, config, limits
 from vox.permissions import MANAGE_EMOJI
 from vox.models.emoji import EmojiResponse, StickerResponse, UpdateEmojiRequest, UpdateStickerRequest
 from vox.gateway import events as gw
@@ -45,10 +44,10 @@ async def create_emoji(
     user: User = require_permission(MANAGE_EMOJI),
 ) -> EmojiResponse:
     content = await image.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {MAX_FILE_SIZE} byte limit."}})
+    if len(content) > limits.file_upload_max_bytes:
+        raise HTTPException(status_code=413, detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {limits.file_upload_max_bytes} byte limit."}})
     emoji_mime = image.content_type or "application/octet-stream"
-    if not check_mime(emoji_mime, limits.allowed_emoji_mimes):
+    if not check_mime(emoji_mime, config.media.allowed_emoji_mimes):
         raise HTTPException(status_code=415, detail={"error": {"code": "UNSUPPORTED_MEDIA_TYPE", "message": f"MIME type '{emoji_mime}' is not allowed for emoji."}})
     file_id = secrets.token_urlsafe(16)
     storage = get_storage()
@@ -121,10 +120,10 @@ async def create_sticker(
     user: User = require_permission(MANAGE_EMOJI),
 ) -> StickerResponse:
     content = await image.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {MAX_FILE_SIZE} byte limit."}})
+    if len(content) > limits.file_upload_max_bytes:
+        raise HTTPException(status_code=413, detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {limits.file_upload_max_bytes} byte limit."}})
     sticker_mime = image.content_type or "application/octet-stream"
-    if not check_mime(sticker_mime, limits.allowed_sticker_mimes):
+    if not check_mime(sticker_mime, config.media.allowed_sticker_mimes):
         raise HTTPException(status_code=415, detail={"error": {"code": "UNSUPPORTED_MEDIA_TYPE", "message": f"MIME type '{sticker_mime}' is not allowed for stickers."}})
     file_id = secrets.token_urlsafe(16)
     storage = get_storage()

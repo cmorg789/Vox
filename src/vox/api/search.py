@@ -6,7 +6,7 @@ from sqlalchemy.orm import selectinload
 from vox.api.deps import get_current_user, get_db
 from vox.api.messages import _msg_response
 from vox.db.models import Feed, Message, Pin, User, dm_participants, message_attachments
-from vox.limits import limits
+from vox.config import limits
 from vox.models.messages import SearchResponse
 from vox.permissions import VIEW_SPACE, has_permission, resolve_permissions
 

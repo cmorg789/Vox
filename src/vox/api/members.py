@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vox.api.deps import get_current_user, get_db, require_permission, resolve_member
 from vox.auth.service import get_user_role_ids
 from vox.db.models import Ban, Invite, Message, Role, User, role_members
-from vox.limits import limits
+from vox.config import limits
 from vox.permissions import ADMINISTRATOR, BAN_MEMBERS, KICK_MEMBERS, MANAGE_NICKNAMES, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch

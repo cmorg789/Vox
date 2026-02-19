@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vox.db.models import Config, ConfigKey, Room, StageSpeaker, VoiceState
+from vox.db.models import Room, StageSpeaker, VoiceState
 from vox.models.voice import VoiceMemberData
 
 try:
@@ -196,6 +196,5 @@ async def refresh_media_token(db: AsyncSession, room_id: int, user_id: int) -> s
 
 
 async def get_media_url(db: AsyncSession) -> str:
-    result = await db.execute(select(Config).where(Config.key == ConfigKey.MEDIA_URL))
-    row = result.scalar_one_or_none()
-    return row.value if row else "quic://localhost:4443"
+    from vox.config import config
+    return config.media.url

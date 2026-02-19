@@ -2,12 +2,19 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel
 
-from vox.limits import str_limit
+from vox.config import str_limit
 from vox.models.base import VoxModel
 
 
 class PermissionOverrideInput(BaseModel):
     target_type: Literal["role", "user"]
+    target_id: int
+    allow: int
+    deny: int
+
+
+class PermissionOverrideOutput(VoxModel):
+    target_type: str
     target_id: int
     allow: int
     deny: int
@@ -54,7 +61,7 @@ class FeedResponse(VoxModel):
     topic: str | None = None
     category_id: int | None = None
     position: int = 0
-    permission_overrides: list = []
+    permission_overrides: list[PermissionOverrideOutput] = []
 
 
 # --- Rooms ---
@@ -77,7 +84,7 @@ class RoomResponse(VoxModel):
     type: str
     category_id: int | None = None
     position: int = 0
-    permission_overrides: list = []
+    permission_overrides: list[PermissionOverrideOutput] = []
 
 
 # --- Threads ---

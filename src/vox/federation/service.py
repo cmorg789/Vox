@@ -21,27 +21,7 @@ from cryptography.hazmat.primitives.serialization import (
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vox.db.models import Config, ConfigKey, FederationEntry, FederationNonce
-
-# ---------------------------------------------------------------------------
-# Config helpers (same pattern as server.py)
-# ---------------------------------------------------------------------------
-
-
-async def _get_config(db: AsyncSession, key: str) -> str | None:
-    result = await db.execute(select(Config).where(Config.key == key))
-    row = result.scalar_one_or_none()
-    return row.value if row else None
-
-
-async def _set_config(db: AsyncSession, key: str, value: str) -> None:
-    existing = await db.execute(select(Config).where(Config.key == key))
-    row = existing.scalar_one_or_none()
-    if row:
-        row.value = value
-    else:
-        db.add(Config(key=key, value=value))
-
+from vox.db.models import FederationEntry, FederationNonce
 
 # ---------------------------------------------------------------------------
 # Key Management
@@ -51,8 +31,10 @@ async def _set_config(db: AsyncSession, key: str, value: str) -> None:
 async def get_or_create_keypair(
     db: AsyncSession,
 ) -> tuple[Ed25519PrivateKey, Ed25519PublicKey]:
-    priv_b64 = await _get_config(db, ConfigKey.FEDERATION_PRIVATE_KEY)
-    pub_b64 = await _get_config(db, ConfigKey.FEDERATION_PUBLIC_KEY)
+    from vox.config import config, save_config_value
+
+    priv_b64 = config.federation.private_key
+    pub_b64 = config.federation.public_key
 
     if priv_b64 and pub_b64:
         priv_bytes = base64.b64decode(priv_b64)
@@ -63,8 +45,8 @@ async def get_or_create_keypair(
     priv_bytes = private_key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
     pub_bytes = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
 
-    await _set_config(db, ConfigKey.FEDERATION_PRIVATE_KEY, base64.b64encode(priv_bytes).decode())
-    await _set_config(db, ConfigKey.FEDERATION_PUBLIC_KEY, base64.b64encode(pub_bytes).decode())
+    await save_config_value(db, "federation_private_key", base64.b64encode(priv_bytes).decode())
+    await save_config_value(db, "federation_public_key", base64.b64encode(pub_bytes).decode())
     await db.commit()
 
     return private_key, private_key.public_key()
@@ -178,7 +160,8 @@ async def check_federation_allowed(
         return False
 
     if direction == "inbound":
-        policy = await _get_config(db, ConfigKey.FEDERATION_POLICY)
+        from vox.config import config
+        policy = config.federation.policy
         if policy == "closed":
             return False
         if policy == "allowlist":
@@ -198,7 +181,8 @@ async def check_federation_allowed(
 
 
 async def get_our_domain(db: AsyncSession) -> str | None:
-    return await _get_config(db, ConfigKey.FEDERATION_DOMAIN)
+    from vox.config import config
+    return config.federation.domain
 
 
 # ---------------------------------------------------------------------------

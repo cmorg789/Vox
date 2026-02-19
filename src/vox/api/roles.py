@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.api.members import get_highest_role_position
 from vox.db.models import PermissionOverride, Role, User, role_members
-from vox.limits import limits
+from vox.config import limits
 from vox.permissions import ADMINISTRATOR, MANAGE_ROLES, VIEW_SPACE, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch

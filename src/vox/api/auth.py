@@ -39,17 +39,26 @@ from vox.models.auth import (
     MFAStatusResponse,
     RegisterRequest,
     RegisterResponse,
+    SessionInfo,
+    SessionListResponse,
+    SuccessResponse,
     WebAuthnChallengeRequest,
     WebAuthnChallengeResponse,
     WebAuthnCredentialResponse,
     WebAuthnLoginRequest,
 )
+from vox.models.errors import ErrorEnvelope
 from vox.permissions import ADMINISTRATOR, EVERYONE_DEFAULTS
+
+_error_responses = {
+    401: {"model": ErrorEnvelope},
+    403: {"model": ErrorEnvelope},
+}
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
-@router.post("/register", status_code=201)
+@router.post("/register", status_code=201, responses=_error_responses)
 async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)) -> RegisterResponse:
     # Check if username is taken
     existing = await db.execute(select(User).where(User.username == body.username))
@@ -78,7 +87,7 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)) ->
     return RegisterResponse(user_id=user.id, token=token)
 
 
-@router.post("/login")
+@router.post("/login", responses=_error_responses)
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> LoginResponse | MFARequiredResponse:
     user = await authenticate(db, body.username, body.password)
     if user is None:
@@ -379,7 +388,7 @@ async def remove_2fa(
     authorization: str = Header(),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> dict:
+) -> SuccessResponse:
     # Verify identity via code (TOTP, WebAuthn assertion, or recovery)
     verified = False
     if body.method == "webauthn" and body.assertion:
@@ -442,7 +451,7 @@ async def remove_2fa(
         )
 
     await db.commit()
-    return {"success": True}
+    return SuccessResponse()
 
 
 # --- WebAuthn Credentials ---
@@ -473,7 +482,7 @@ async def delete_webauthn_credential(
     credential_id: str,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> dict:
+) -> SuccessResponse:
     result = await db.execute(
         select(WebAuthnCredential).where(
             WebAuthnCredential.credential_id == credential_id,
@@ -488,7 +497,7 @@ async def delete_webauthn_credential(
         )
     await db.delete(cred)
     await db.commit()
-    return {"success": True}
+    return SuccessResponse()
 
 
 # --- Passwordless WebAuthn Login ---
@@ -585,7 +594,7 @@ async def login_federation(
 ) -> LoginResponse:
     from vox.auth.service import get_user_by_token
 
-    user = await get_user_by_token(db, body.federation_token)
+    user, _sess = await get_user_by_token(db, body.federation_token)
     if user is None:
         raise HTTPException(
             status_code=401,
@@ -649,22 +658,22 @@ async def logout(
 async def list_sessions(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-):
+) -> SessionListResponse:
     from vox.db.models import Session as DBSession
     result = await db.execute(
         select(DBSession).where(DBSession.user_id == user.id).order_by(DBSession.created_at.desc())
     )
     sessions = result.scalars().all()
-    return {
-        "sessions": [
-            {
-                "session_id": s.id,
-                "created_at": int(s.created_at.timestamp()),
-                "expires_at": int(s.expires_at.timestamp()),
-            }
+    return SessionListResponse(
+        sessions=[
+            SessionInfo(
+                session_id=s.id,
+                created_at=int(s.created_at.timestamp()),
+                expires_at=int(s.expires_at.timestamp()),
+            )
             for s in sessions
         ]
-    }
+    )
 
 
 @router.delete("/sessions/{session_id}", status_code=204)

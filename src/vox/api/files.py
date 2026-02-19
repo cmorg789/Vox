@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import File, Message, User, dm_participants, message_attachments
-from vox.limits import check_mime, limits
+from vox.config import check_mime, config, limits
 from vox.models.files import FileResponse
 from vox.permissions import ATTACH_FILES, MANAGE_MESSAGES, VIEW_SPACE, has_permission, resolve_permissions
 from vox.storage import LocalStorage, get_storage
@@ -19,7 +19,6 @@ from vox.storage import LocalStorage, get_storage
 router = APIRouter(tags=["files"])
 
 UPLOAD_DIR = Path("uploads")
-MAX_FILE_SIZE = 25 * 1024 * 1024  # 25 MB
 
 
 @router.post("/api/v1/feeds/{feed_id}/files", status_code=201)
@@ -32,17 +31,17 @@ async def upload_file(
     user: User = require_permission(ATTACH_FILES, space_type="feed", space_id_param="feed_id"),
 ) -> FileResponse:
     content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
+    if len(content) > limits.file_upload_max_bytes:
         raise HTTPException(
             status_code=413,
-            detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {MAX_FILE_SIZE} byte limit."}},
+            detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {limits.file_upload_max_bytes} byte limit."}},
         )
 
     file_id = secrets.token_urlsafe(16)
     file_name = name or file.filename or "upload"
     file_mime = mime or file.content_type or "application/octet-stream"
 
-    if not check_mime(file_mime, limits.allowed_file_mimes):
+    if not check_mime(file_mime, config.media.allowed_file_mimes):
         raise HTTPException(
             status_code=415,
             detail={"error": {"code": "UNSUPPORTED_MEDIA_TYPE", "message": f"MIME type '{file_mime}' is not allowed."}},
@@ -85,17 +84,17 @@ async def upload_dm_file(
         )
 
     content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
+    if len(content) > limits.file_upload_max_bytes:
         raise HTTPException(
             status_code=413,
-            detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {MAX_FILE_SIZE} byte limit."}},
+            detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {limits.file_upload_max_bytes} byte limit."}},
         )
 
     file_id = secrets.token_urlsafe(16)
     file_name = name or file.filename or "upload"
     file_mime = mime or file.content_type or "application/octet-stream"
 
-    if not check_mime(file_mime, limits.allowed_file_mimes):
+    if not check_mime(file_mime, config.media.allowed_file_mimes):
         raise HTTPException(
             status_code=415,
             detail={"error": {"code": "UNSUPPORTED_MEDIA_TYPE", "message": f"MIME type '{file_mime}' is not allowed."}},

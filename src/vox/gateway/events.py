@@ -58,7 +58,8 @@ def message_create(
     msg_id: int, feed_id: int | None = None, dm_id: int | None = None,
     author_id: int | None = None, body: str | None = None, timestamp: int = 0,
     reply_to: int | None = None, mentions: list[int] | None = None,
-    webhook_id: int | None = None, embed: str | None = None,
+    webhook_id: int | None = None, embed: dict | None = None,
+    attachments: list[dict] | None = None,
 ) -> dict[str, Any]:
     d: dict[str, Any] = {"msg_id": msg_id, "author_id": author_id, "body": body, "timestamp": timestamp}
     if feed_id is not None:
@@ -73,6 +74,8 @@ def message_create(
         d["webhook_id"] = webhook_id
     if embed is not None:
         d["embed"] = embed
+    if attachments:
+        d["attachments"] = attachments
     return _event("message_create", d)
 
 

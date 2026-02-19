@@ -2,7 +2,7 @@ from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel
 
-from vox.limits import str_limit
+from vox.config import str_limit
 from vox.models.base import VoxModel
 
 

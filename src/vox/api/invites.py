@@ -6,8 +6,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
-from vox.db.models import Config, ConfigKey, Invite, User
-from vox.limits import limits
+from vox.db.models import Invite, User
+from vox.config import config, limits
 from vox.permissions import CREATE_INVITES
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
@@ -77,16 +77,12 @@ async def resolve_invite(
     if invite is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "INVITE_INVALID", "message": "Invite not found."}})
 
-    name_row = await db.execute(select(Config).where(Config.key == ConfigKey.SERVER_NAME))
-    name = name_row.scalar_one_or_none()
-    icon_row = await db.execute(select(Config).where(Config.key == ConfigKey.SERVER_ICON))
-    icon = icon_row.scalar_one_or_none()
     count = (await db.execute(select(func.count()).select_from(User).where(User.active == True, User.federated == False))).scalar() or 0
 
     return InvitePreviewResponse(
         code=code,
-        server_name=name.value if name else "Vox Server",
-        server_icon=icon.value if icon else None,
+        server_name=config.server.name,
+        server_icon=config.server.icon,
         member_count=count,
     )
 

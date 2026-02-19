@@ -5,8 +5,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
-from vox.db.models import Category, Config, ConfigKey, Feed, PermissionOverride, Room, User
-from vox.limits import limits, save_limit
+from vox.db.models import Category, Feed, PermissionOverride, Room, User
+from vox.config import config, save_config_value, save_limit
 from vox.permissions import MANAGE_SERVER
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
@@ -23,32 +23,19 @@ from vox.models.server import (
 router = APIRouter(prefix="/api/v1/server", tags=["server"])
 
 
-async def _get_config(db: AsyncSession, key: str) -> str | None:
-    result = await db.execute(select(Config).where(Config.key == key))
-    row = result.scalar_one_or_none()
-    return row.value if row else None
-
-
-async def _set_config(db: AsyncSession, key: str, value: str):
-    existing = await db.execute(select(Config).where(Config.key == key))
-    row = existing.scalar_one_or_none()
-    if row:
-        row.value = value
-    else:
-        db.add(Config(key=key, value=value))
-
-
 @router.get("")
 async def get_server_info(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> ServerInfoResponse:
-    name = await _get_config(db, ConfigKey.SERVER_NAME) or "Vox Server"
-    icon = await _get_config(db, ConfigKey.SERVER_ICON)
-    description = await _get_config(db, ConfigKey.SERVER_DESCRIPTION)
     result = await db.execute(select(func.count()).select_from(User).where(User.federated == False, User.active == True))
     member_count = result.scalar() or 0
-    return ServerInfoResponse(name=name, icon=icon, description=description, member_count=member_count)
+    return ServerInfoResponse(
+        name=config.server.name,
+        icon=config.server.icon,
+        description=config.server.description,
+        member_count=member_count,
+    )
 
 
 @router.patch("")
@@ -59,13 +46,13 @@ async def update_server(
 ):
     changed = {}
     if body.name is not None:
-        await _set_config(db, ConfigKey.SERVER_NAME, body.name)
+        await save_config_value(db, "server_name", body.name)
         changed["name"] = body.name
     if body.icon is not None:
-        await _set_config(db, ConfigKey.SERVER_ICON, body.icon)
+        await save_config_value(db, "server_icon", body.icon)
         changed["icon"] = body.icon
     if body.description is not None:
-        await _set_config(db, ConfigKey.SERVER_DESCRIPTION, body.description)
+        await save_config_value(db, "server_description", body.description)
         changed["description"] = body.description
     from vox.audit import write_audit
     await write_audit(db, "server.update", actor_id=actor.id, extra=changed if changed else None)
@@ -123,7 +110,7 @@ async def get_limits(
     _: User = require_permission(MANAGE_SERVER),
 ):
     """Returns all limits with current (effective) values."""
-    return limits.model_dump()
+    return config.limits.model_dump()
 
 
 @router.patch("/limits")
@@ -133,10 +120,10 @@ async def update_limits(
     _: User = require_permission(MANAGE_SERVER),
 ):
     """Update specific limits. Writes to DB and hot-reloads in-memory."""
-    valid_fields = set(limits.model_fields)
+    valid_fields = set(type(config.limits).model_fields)
     for name, value in body.limits.items():
         if name not in valid_fields:
             raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_LIMIT", "message": f"Unknown limit: {name}"}})
         await save_limit(db, name, value)
     await db.commit()
-    return limits.model_dump()
+    return config.limits.model_dump()

@@ -12,7 +12,7 @@ from vox.api.deps import get_current_user, get_db, require_permission
 from vox.api.messages import _snowflake
 from vox.db.models import Message, User, Webhook
 from vox.permissions import MANAGE_WEBHOOKS
-from vox.models.bots import CreateWebhookRequest, ExecuteWebhookRequest, UpdateWebhookRequest, WebhookListResponse, WebhookResponse
+from vox.models.bots import CreateWebhookRequest, ExecuteWebhookRequest, UpdateWebhookRequest, WebhookListResponse, WebhookListWrapper, WebhookResponse
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 
@@ -40,9 +40,9 @@ async def list_webhooks(
     feed_id: int,
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(MANAGE_WEBHOOKS),
-):
+) -> WebhookListWrapper:
     result = await db.execute(select(Webhook).where(Webhook.feed_id == feed_id))
-    return {"webhooks": [WebhookListResponse(webhook_id=w.id, feed_id=w.feed_id, name=w.name, avatar=w.avatar) for w in result.scalars().all()]}
+    return WebhookListWrapper(webhooks=[WebhookListResponse(webhook_id=w.id, feed_id=w.feed_id, name=w.name, avatar=w.avatar) for w in result.scalars().all()])
 
 
 @router.get("/api/v1/webhooks/{webhook_id}")
@@ -111,10 +111,13 @@ async def execute_webhook(
     wh = result.scalar_one_or_none()
     if wh is None:
         raise HTTPException(status_code=422, detail={"error": {"code": "WEBHOOK_TOKEN_INVALID", "message": "Webhook token is invalid."}})
-    embed_json = json.dumps([e.model_dump() for e in body.embeds]) if body.embeds else None
+    embed_list = [e.model_dump() for e in body.embeds] if body.embeds else None
+    embed_json = json.dumps(embed_list) if embed_list else None
     msg_id = await _snowflake()
     ts = int(time.time() * 1000)
     msg = Message(id=msg_id, feed_id=wh.feed_id, author_id=None, body=body.body, timestamp=ts, webhook_id=wh.id, embed=embed_json)
     db.add(msg)
     await db.commit()
-    await dispatch(gw.message_create(msg_id=msg_id, feed_id=wh.feed_id, author_id=None, body=body.body, timestamp=ts, webhook_id=wh.id, embed=embed_json), db=db)
+    # For gateway, send first embed as dict (or None)
+    embed_dict = embed_list[0] if embed_list else None
+    await dispatch(gw.message_create(msg_id=msg_id, feed_id=wh.feed_id, author_id=None, body=body.body, timestamp=ts, webhook_id=wh.id, embed=embed_dict), db=db)

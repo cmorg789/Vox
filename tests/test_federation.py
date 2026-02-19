@@ -52,6 +52,10 @@ async def _setup_fed_keys_in_db(client):
         db.add(Config(key="federation_public_key", value=pub_b64))
         await db.commit()
 
+    from vox.config import load_config
+    async with factory() as db:
+        await load_config(db)
+
     return headers, user_id, private_key, pub_b64
 
 
@@ -214,13 +218,17 @@ async def test_policy_open_allows(client):
 async def test_policy_closed_denies(client):
     """Closed federation policy denies inbound."""
     await _register(client)
+    from vox.config import save_config_value
     from vox.db.engine import get_session_factory
-    from vox.db.models import Config
     factory = get_session_factory()
     async with factory() as db:
-        db.add(Config(key="federation_policy", value="closed"))
+        await save_config_value(db, "federation_policy", "closed")
         await db.commit()
         assert await fed_service.check_federation_allowed(db, "any.domain") is False
+    # Reset
+    async with factory() as db:
+        await save_config_value(db, "federation_policy", "open")
+        await db.commit()
 
 
 async def test_policy_blocklist_denies(client):
@@ -873,11 +881,12 @@ async def test_check_federation_allowed_allowlist(client):
     """Allowlist mode only allows listed domains."""
     await _register(client)
     from datetime import datetime, timezone
+    from vox.config import save_config_value
     from vox.db.engine import get_session_factory
-    from vox.db.models import Config, FederationEntry
+    from vox.db.models import FederationEntry
     factory = get_session_factory()
     async with factory() as db:
-        db.add(Config(key="federation_policy", value="allowlist"))
+        await save_config_value(db, "federation_policy", "allowlist")
         db.add(FederationEntry(entry="allow:allowed.example", created_at=datetime.now(timezone.utc)))
         await db.commit()
 
@@ -885,6 +894,10 @@ async def test_check_federation_allowed_allowlist(client):
         assert await fed_service.check_federation_allowed(db, "allowed.example") is True
         # Not-allowed domain
         assert await fed_service.check_federation_allowed(db, "other.example") is False
+    # Reset
+    async with factory() as db:
+        await save_config_value(db, "federation_policy", "open")
+        await db.commit()
 
 
 async def test_check_federation_allowed_outbound(client):
@@ -1170,6 +1183,7 @@ async def test_join_no_federation_domain(client):
     token, user_id = await _register(client)
     private_key, pub_b64 = _generate_test_keypair()
 
+    from vox.config import load_config
     from vox.db.engine import get_session_factory
     from vox.db.models import Config
     factory = get_session_factory()
@@ -1179,6 +1193,8 @@ async def test_join_no_federation_domain(client):
         db.add(Config(key="federation_private_key", value=priv_b64))
         db.add(Config(key="federation_public_key", value=pub_b64))
         await db.commit()
+    async with factory() as db:
+        await load_config(db)
 
     voucher = fed_service.create_voucher("user@remote.example", "test.local", private_key)
     body = {"user_address": "user@remote.example", "voucher": voucher}
@@ -1272,25 +1288,24 @@ def test_get_http_client_creates_new():
 
 
 async def test_config_helpers(client):
-    """_get_config and _set_config work correctly including update path."""
+    """save_config_value works correctly including update path."""
     await _register(client)
+    from vox.config import save_config_value
+    from vox.db.models import Config
     from vox.db.engine import get_session_factory
+    from sqlalchemy import select
     factory = get_session_factory()
     async with factory() as db:
-        # Get nonexistent key
-        val = await fed_service._get_config(db, "nonexistent_key")
-        assert val is None
-
         # Set a key
-        await fed_service._set_config(db, "test_key", "value1")
+        await save_config_value(db, "test_key", "value1")
         await db.commit()
 
-        val = await fed_service._get_config(db, "test_key")
-        assert val == "value1"
+        result = await db.execute(select(Config).where(Config.key == "test_key"))
+        assert result.scalar_one().value == "value1"
 
         # Update existing key
-        await fed_service._set_config(db, "test_key", "value2")
+        await save_config_value(db, "test_key", "value2")
         await db.commit()
 
-        val = await fed_service._get_config(db, "test_key")
-        assert val == "value2"
+        result = await db.execute(select(Config).where(Config.key == "test_key"))
+        assert result.scalar_one().value == "value2"

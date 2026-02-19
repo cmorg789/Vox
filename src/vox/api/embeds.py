@@ -8,7 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from vox.api.deps import get_current_user
 from vox.db.models import User
-from vox.models.messages import EmbedResponse, ResolveEmbedRequest
+from vox.models.bots import Embed
+from vox.models.messages import ResolveEmbedRequest
 
 router = APIRouter(tags=["embeds"])
 
@@ -54,6 +55,11 @@ def _extract_meta(html: str) -> dict[str, str | None]:
         "description": None,
         "image": None,
         "video": None,
+        "site_name": None,
+        "type": None,
+        "locale": None,
+        "audio": None,
+        "url": None,
     }
 
     # OpenGraph tags
@@ -100,7 +106,7 @@ def _extract_meta(html: str) -> dict[str, str | None]:
 async def resolve_embed(
     body: ResolveEmbedRequest,
     _: User = Depends(get_current_user),
-) -> EmbedResponse:
+) -> Embed:
     _validate_url(body.url)
     try:
         async with httpx.AsyncClient(follow_redirects=False) as client:
@@ -115,15 +121,20 @@ async def resolve_embed(
                 resp = await client.get(location, timeout=5.0, headers={"User-Agent": "VoxBot/1.0"})
                 redirects += 1
             if len(resp.content) > _MAX_RESPONSE_SIZE:
-                return EmbedResponse()
+                return Embed()
             html = resp.text
     except httpx.HTTPError:
-        return EmbedResponse()
+        return Embed()
 
     meta = _extract_meta(html)
-    return EmbedResponse(
+    return Embed(
         title=meta["title"],
         description=meta["description"],
         image=meta["image"],
         video=meta["video"],
+        site_name=meta["site_name"],
+        type=meta["type"],
+        locale=meta["locale"],
+        audio=meta["audio"],
+        url=meta["url"],
     )

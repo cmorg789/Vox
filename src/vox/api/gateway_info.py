@@ -1,19 +1,18 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter
 
-from vox.api.deps import get_db
-from vox.api.server import _get_config
-from vox.db.models import ConfigKey
+from vox.config import config
 from vox.models.server import GatewayInfoResponse
 
 router = APIRouter(tags=["gateway"])
 
 
 @router.get("/api/v1/gateway")
-async def get_gateway_info(
-    db: AsyncSession = Depends(get_db),
-) -> GatewayInfoResponse:
+async def get_gateway_info() -> GatewayInfoResponse:
     # No auth required
-    url = await _get_config(db, ConfigKey.GATEWAY_URL) or "wss://localhost/gateway"
-    media_url = await _get_config(db, ConfigKey.MEDIA_URL) or "quic://localhost:4443"
-    return GatewayInfoResponse(url=url, media_url=media_url, protocol_version=1, min_version=1, max_version=1)
+    return GatewayInfoResponse(
+        url=config.server.gateway_url,
+        media_url=config.media.url,
+        protocol_version=1,
+        min_version=1,
+        max_version=1,
+    )

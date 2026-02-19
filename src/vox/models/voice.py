@@ -58,3 +58,16 @@ class VoiceServerDeafenRequest(BaseModel):
 
 class StageTopicRequest(BaseModel):
     topic: str
+
+
+class VoiceMembersResponse(VoxModel):
+    room_id: int
+    members: list[VoiceMemberData]
+
+
+class MediaTokenResponse(VoxModel):
+    media_token: str
+
+
+class StageTopicResponse(VoxModel):
+    topic: str

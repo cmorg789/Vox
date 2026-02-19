@@ -13,10 +13,12 @@ from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.interactions import consume
 from vox.models.bots import (
+    CommandListResponse,
     CommandResponse,
     ComponentInteractionRequest,
     DeregisterCommandsRequest,
     InteractionResponse,
+    OkResponse,
     RegisterCommandsRequest,
 )
 from vox import interactions
@@ -52,14 +54,14 @@ async def register_commands(
     await db.commit()
     cmds = [{"name": c.name, "description": c.description, "params": json.loads(c.params) if c.params else []} for c in body.commands]
     await dispatch(gw.bot_commands_update(bot_id=bot.id, commands=cmds), db=db)
-    return {"ok": True}
+    return OkResponse()
 
 
 @router.get("/api/v1/bots/{user_id}/commands")
 async def list_bot_commands(
     db: AsyncSession = Depends(get_db),
     resolved: tuple[User, User, bool] = resolve_member(other_perm=ADMINISTRATOR),
-):
+) -> CommandListResponse:
     _, target, _ = resolved
     result = await db.execute(select(Bot).where(Bot.user_id == target.id))
     bot = result.scalar_one_or_none()
@@ -68,7 +70,7 @@ async def list_bot_commands(
     result = await db.execute(select(BotCommand).where(BotCommand.bot_id == bot.id))
     commands = result.scalars().all()
     items = [CommandResponse(name=c.name, description=c.description, params=json.loads(c.params) if c.params else []) for c in commands]
-    return {"commands": items}
+    return CommandListResponse(commands=items)
 
 
 @router.delete("/api/v1/bots/{user_id}/commands")
@@ -87,21 +89,21 @@ async def deregister_commands(
         await db.execute(delete(BotCommand).where(BotCommand.bot_id == bot.id, BotCommand.name == name))
     await db.commit()
     await dispatch(gw.bot_commands_delete(bot_id=bot.id, command_names=body.command_names), db=db)
-    return {"ok": True}
+    return OkResponse()
 
 
 @router.get("/api/v1/commands")
 async def list_commands(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
-):
+) -> CommandListResponse:
     result = await db.execute(select(BotCommand))
     commands = result.scalars().all()
     items = []
     for c in commands:
         params = json.loads(c.params) if c.params else []
         items.append(CommandResponse(name=c.name, description=c.description, params=params))
-    return {"commands": items}
+    return CommandListResponse(commands=items)
 
 
 @router.post("/api/v1/interactions/{interaction_id}/response", status_code=204)
@@ -122,7 +124,9 @@ async def respond_to_interaction(
         raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Not authorized to respond to this interaction."}})
 
     import json as _json
-    embed_json = _json.dumps([e.model_dump() for e in body.embeds]) if body.embeds else None
+    embed_list = [e.model_dump() for e in body.embeds] if body.embeds else None
+    embed_json = _json.dumps(embed_list) if embed_list else None
+    embed_dict = embed_list[0] if embed_list else None
 
     if body.ephemeral:
         # Dispatch message_create only to the invoking user (not stored)
@@ -136,7 +140,7 @@ async def respond_to_interaction(
                 author_id=user.id,
                 body=body.body,
                 timestamp=ts,
-                embed=embed_json,
+                embed=embed_dict,
             ),
             user_ids=[interaction.user_id],
             db=db,
@@ -164,7 +168,7 @@ async def respond_to_interaction(
                 author_id=user.id,
                 body=body.body,
                 timestamp=ts,
-                embed=embed_json,
+                embed=embed_dict,
             ),
             db=db,
         )

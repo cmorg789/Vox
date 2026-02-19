@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import AuditLog, RecoveryCode, Report, TOTPSecret, User, WebAuthnCredential
-from vox.limits import limits
+from vox.config import limits
 from vox.permissions import MANAGE_2FA, VIEW_AUDIT_LOG, VIEW_REPORTS
 from vox.models.moderation import (
     AuditLogEntry,

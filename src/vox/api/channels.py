@@ -336,7 +336,7 @@ async def list_feed_threads(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    from vox.limits import limits
+    from vox.config import limits
     limit = min(limit, limits.page_limit_messages)
     query = select(Thread).where(Thread.feed_id == feed_id).order_by(Thread.id).limit(limit)
     if after is not None:

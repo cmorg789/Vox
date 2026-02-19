@@ -1,5 +1,4 @@
 from datetime import datetime
-from enum import Enum
 from typing import Optional
 
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
@@ -101,78 +100,6 @@ class Session(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime)
 
     user: Mapped["User"] = relationship(back_populates="sessions")
-
-
-class ConfigKey(str, Enum):
-    SERVER_NAME = "server_name"
-    SERVER_ICON = "server_icon"
-    SERVER_DESCRIPTION = "server_description"
-    GATEWAY_URL = "gateway_url"
-    MEDIA_URL = "media_url"
-    WEBAUTHN_RP_ID = "webauthn_rp_id"
-    WEBAUTHN_ORIGIN = "webauthn_origin"
-    FEDERATION_PRIVATE_KEY = "federation_private_key"
-    FEDERATION_PUBLIC_KEY = "federation_public_key"
-    FEDERATION_POLICY = "federation_policy"
-    FEDERATION_DOMAIN = "federation_domain"
-
-    # --- Limits ---
-    LIMIT_USERNAME_MIN = "limit_username_min"
-    LIMIT_USERNAME_MAX = "limit_username_max"
-    LIMIT_PASSWORD_MIN = "limit_password_min"
-    LIMIT_PASSWORD_MAX = "limit_password_max"
-    LIMIT_DISPLAY_NAME_MAX = "limit_display_name_max"
-    LIMIT_MFA_CODE_MAX = "limit_mfa_code_max"
-    LIMIT_MFA_TICKET_MAX = "limit_mfa_ticket_max"
-    LIMIT_WEBAUTHN_FIELD_MAX = "limit_webauthn_field_max"
-    LIMIT_AVATAR_MAX = "limit_avatar_max"
-    LIMIT_BIO_MAX = "limit_bio_max"
-    LIMIT_NICKNAME_MAX = "limit_nickname_max"
-    LIMIT_MESSAGE_BODY_MAX = "limit_message_body_max"
-    LIMIT_BULK_DELETE_MAX = "limit_bulk_delete_max"
-    LIMIT_GROUP_DM_RECIPIENTS_MAX = "limit_group_dm_recipients_max"
-    LIMIT_DM_NAME_MAX = "limit_dm_name_max"
-    LIMIT_DM_ICON_MAX = "limit_dm_icon_max"
-    LIMIT_CHANNEL_NAME_MIN = "limit_channel_name_min"
-    LIMIT_CHANNEL_NAME_MAX = "limit_channel_name_max"
-    LIMIT_TOPIC_MAX = "limit_topic_max"
-    LIMIT_ROLE_NAME_MIN = "limit_role_name_min"
-    LIMIT_ROLE_NAME_MAX = "limit_role_name_max"
-    LIMIT_DEVICE_NAME_MAX = "limit_device_name_max"
-    LIMIT_DEVICE_ID_MAX = "limit_device_id_max"
-    LIMIT_KEY_BACKUP_MAX = "limit_key_backup_max"
-    LIMIT_MAX_DEVICES = "limit_max_devices"
-    LIMIT_REPORT_REASON_MAX = "limit_report_reason_max"
-    LIMIT_REPORT_DESCRIPTION_MAX = "limit_report_description_max"
-    LIMIT_ADMIN_REASON_MAX = "limit_admin_reason_max"
-    LIMIT_KICK_REASON_MAX = "limit_kick_reason_max"
-    LIMIT_BAN_REASON_MAX = "limit_ban_reason_max"
-    LIMIT_BAN_DELETE_DAYS_MAX = "limit_ban_delete_days_max"
-    LIMIT_INVITE_MAX_USES_MAX = "limit_invite_max_uses_max"
-    LIMIT_INVITE_MAX_AGE_MAX = "limit_invite_max_age_max"
-    LIMIT_SERVER_NAME_MAX = "limit_server_name_max"
-    LIMIT_SERVER_DESCRIPTION_MAX = "limit_server_description_max"
-    LIMIT_SERVER_ICON_MAX = "limit_server_icon_max"
-    LIMIT_WEBHOOK_NAME_MAX = "limit_webhook_name_max"
-    LIMIT_COMMAND_NAME_MAX = "limit_command_name_max"
-    LIMIT_COMMAND_DESCRIPTION_MAX = "limit_command_description_max"
-    LIMIT_FEDERATION_ADDRESS_MAX = "limit_federation_address_max"
-    LIMIT_PAGE_LIMIT_MESSAGES = "limit_page_limit_messages"
-    LIMIT_PAGE_LIMIT_MEMBERS = "limit_page_limit_members"
-    LIMIT_PAGE_LIMIT_DMS = "limit_page_limit_dms"
-    LIMIT_PAGE_LIMIT_REPORTS = "limit_page_limit_reports"
-    LIMIT_PAGE_LIMIT_AUDIT_LOG = "limit_page_limit_audit_log"
-    LIMIT_PAGE_LIMIT_EMOJI = "limit_page_limit_emoji"
-    LIMIT_PAGE_LIMIT_ROLES = "limit_page_limit_roles"
-    LIMIT_PAGE_LIMIT_SEARCH = "limit_page_limit_search"
-    LIMIT_PAGE_LIMIT_INVITES = "limit_page_limit_invites"
-    LIMIT_PAGE_LIMIT_BANS = "limit_page_limit_bans"
-    LIMIT_PAGE_LIMIT_FRIENDS = "limit_page_limit_friends"
-    LIMIT_PAGE_LIMIT_STICKERS = "limit_page_limit_stickers"
-
-    ALLOWED_FILE_MIMES = "allowed_file_mimes"
-    ALLOWED_EMOJI_MIMES = "allowed_emoji_mimes"
-    ALLOWED_STICKER_MIMES = "allowed_sticker_mimes"
 
 
 class Config(Base):

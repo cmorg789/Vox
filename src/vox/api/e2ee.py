@@ -8,7 +8,7 @@ from starlette.requests import Request
 
 from vox.api.deps import get_current_user, get_db
 from vox.db.models import Device, KeyBackup, OneTimePrekey, Prekey, User, dm_participants
-from vox.limits import limits
+from vox.config import limits
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.e2ee import (

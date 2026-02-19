@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy import select
@@ -7,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vox.auth.service import get_user_by_token
 from vox.db.engine import get_session_factory
 from vox.db.models import User
+from vox.config import config
 from vox.permissions import has_permission, resolve_permissions
 
 
@@ -31,12 +33,16 @@ async def get_current_user(
     if any(token.startswith(p) for p in RESTRICTED_PREFIXES):
         raise HTTPException(status_code=401, detail={"error": {"code": "AUTH_FAILED", "message": "Restricted token cannot be used for authentication."}})
 
-    user = await get_user_by_token(db, token)
+    user, session = await get_user_by_token(db, token)
     if user is None:
         raise HTTPException(status_code=401, detail={"error": {"code": "AUTH_EXPIRED", "message": "Session token expired or invalid."}})
 
     if not user.active:
         raise HTTPException(status_code=403, detail={"error": {"code": "BANNED", "message": "Account is deactivated."}})
+
+    # Slide session expiry on use
+    session.expires_at = datetime.now(timezone.utc) + timedelta(days=config.auth.session_ttl_days)
+    await db.commit()
 
     return user
 

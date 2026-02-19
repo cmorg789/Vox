@@ -6,8 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db
-from vox.db.models import EventLog, User
-from vox.models.sync import SyncEvent, SyncRequest, SyncResponse
+from vox.db.models import DMReadState, EventLog, FeedReadState, User
+from vox.models.sync import ReadState, SyncEvent, SyncRequest, SyncResponse
 
 router = APIRouter(tags=["sync"])
 
@@ -35,7 +35,7 @@ SYNC_RETENTION_MS = 7 * 24 * 60 * 60 * 1000  # 7 days
 async def sync(
     body: SyncRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> SyncResponse:
     now_ms = int(time.time() * 1000)
     cutoff = now_ms - SYNC_RETENTION_MS
@@ -46,9 +46,13 @@ async def sync(
             detail={"error": {"code": "FULL_SYNC_REQUIRED", "message": "Data older than 7 days requires a full refresh."}},
         )
 
+    # Handle read_states as a special side-load category
+    want_read_states = "read_states" in body.categories
+    remaining_categories = [c for c in body.categories if c != "read_states"]
+
     # Collect all event types for the requested categories
     event_types: set[str] = set()
-    for cat in body.categories:
+    for cat in remaining_categories:
         types = CATEGORY_EVENTS.get(cat)
         if types is None:
             raise HTTPException(
@@ -57,27 +61,42 @@ async def sync(
             )
         event_types |= types
 
-    if not event_types:
-        return SyncResponse(events=[], server_timestamp=now_ms)
+    events: list[SyncEvent] = []
+    cursor: int | None = None
 
-    from vox.limits import limits
-    limit = min(body.limit, limits.page_limit_messages)
+    if event_types:
+        from vox.config import limits
+        limit = min(body.limit, limits.page_limit_messages)
 
-    stmt = (
-        select(EventLog)
-        .where(EventLog.timestamp >= body.since_timestamp, EventLog.event_type.in_(event_types))
-        .order_by(EventLog.id)
-        .limit(limit)
-    )
-    if body.after is not None:
-        stmt = stmt.where(EventLog.id > body.after)
-    result = await db.execute(stmt)
-    rows = result.scalars().all()
+        stmt = (
+            select(EventLog)
+            .where(EventLog.timestamp >= body.since_timestamp, EventLog.event_type.in_(event_types))
+            .order_by(EventLog.id)
+            .limit(limit)
+        )
+        if body.after is not None:
+            stmt = stmt.where(EventLog.id > body.after)
+        result = await db.execute(stmt)
+        rows = result.scalars().all()
 
-    events = [
-        SyncEvent(type=row.event_type, payload=json.loads(row.payload), timestamp=row.timestamp)
-        for row in rows
-    ]
+        events = [
+            SyncEvent(type=row.event_type, payload=json.loads(row.payload), timestamp=row.timestamp)
+            for row in rows
+        ]
+        cursor = rows[-1].id if rows else None
 
-    cursor = rows[-1].id if rows else None
-    return SyncResponse(events=events, server_timestamp=now_ms, cursor=cursor)
+    # Side-load read states
+    read_states: list[ReadState] = []
+    if want_read_states:
+        feed_rs = await db.execute(
+            select(FeedReadState).where(FeedReadState.user_id == user.id)
+        )
+        for rs in feed_rs.scalars().all():
+            read_states.append(ReadState(feed_id=rs.feed_id, last_read_msg_id=rs.last_read_msg_id))
+        dm_rs = await db.execute(
+            select(DMReadState).where(DMReadState.user_id == user.id)
+        )
+        for rs in dm_rs.scalars().all():
+            read_states.append(ReadState(dm_id=rs.dm_id, last_read_msg_id=rs.last_read_msg_id))
+
+    return SyncResponse(events=events, server_timestamp=now_ms, cursor=cursor, read_states=read_states)

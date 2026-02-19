@@ -205,7 +205,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             try:
                 factory = get_session_factory()
                 async with factory() as db:
-                    user = await get_user_by_token(db, token)
+                    user, _sess = await get_user_by_token(db, token)
                     if user is not None:
                         return f"user:{user.id}"
             except Exception:

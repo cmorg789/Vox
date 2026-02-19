@@ -10,13 +10,16 @@ from vox.db.models import Room, StageSpeaker, User, VoiceState
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.voice import (
+    MediaTokenResponse,
     StageInviteRequest,
     StageInviteResponseRequest,
     StageRevokeRequest,
     StageTopicRequest,
+    StageTopicResponse,
     VoiceJoinRequest,
     VoiceJoinResponse,
     VoiceKickRequest,
+    VoiceMembersResponse,
     VoiceMoveRequest,
     VoiceServerDeafenRequest,
     VoiceServerMuteRequest,
@@ -42,9 +45,9 @@ async def get_voice_members(
     room_id: int,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
-):
+) -> VoiceMembersResponse:
     members = await voice_service.get_room_members(db, room_id)
-    return {"room_id": room_id, "members": [m.model_dump() for m in members]}
+    return VoiceMembersResponse(room_id=room_id, members=members)
 
 
 @router.post("/api/v1/rooms/{room_id}/voice/join")
@@ -89,7 +92,7 @@ async def refresh_media_token(
 ):
     token = await voice_service.refresh_media_token(db, room_id, user.id)
     await dispatch(gw.media_token_refresh(room_id=room_id, media_token=token), user_ids=[user.id], db=db)
-    return {"media_token": token}
+    return MediaTokenResponse(media_token=token)
 
 
 @router.post("/api/v1/rooms/{room_id}/voice/kick", status_code=204)
@@ -259,4 +262,4 @@ async def stage_set_topic(
     await db.commit()
     evt = gw.stage_topic_update(room_id=room_id, topic=body.topic)
     await dispatch(evt, db=db)
-    return {"topic": body.topic}
+    return StageTopicResponse(topic=body.topic)

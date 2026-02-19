@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
 from webauthn.helpers.structs import PublicKeyCredentialDescriptor
 
-from vox.db.models import Config, ConfigKey, RecoveryCode, Session, WebAuthnChallenge, WebAuthnCredential
+from vox.db.models import RecoveryCode, Session, WebAuthnChallenge, WebAuthnCredential
 
 _ph = PasswordHasher()
 
@@ -152,19 +152,10 @@ async def validate_mfa_ticket(db: AsyncSession, ticket: str) -> Session:
 # --- WebAuthn RP Config ---
 
 
-async def _get_webauthn_config(db: AsyncSession) -> tuple[str, str]:
-    """Get WebAuthn RP ID and origin from Config table."""
-    rp_id = "localhost"
-    origin = "http://localhost:8000"
-    result = await db.execute(select(Config).where(Config.key == ConfigKey.WEBAUTHN_RP_ID))
-    row = result.scalar_one_or_none()
-    if row:
-        rp_id = row.value
-    result = await db.execute(select(Config).where(Config.key == ConfigKey.WEBAUTHN_ORIGIN))
-    row = result.scalar_one_or_none()
-    if row:
-        origin = row.value
-    return rp_id, origin
+def _get_webauthn_config() -> tuple[str, str]:
+    """Get WebAuthn RP ID and origin from in-memory config."""
+    from vox.config import config
+    return config.webauthn.rp_id, config.webauthn.origin
 
 
 # --- WebAuthn Challenge DB helpers ---
@@ -221,7 +212,7 @@ async def generate_webauthn_registration(
     username: str,
 ) -> tuple[str, dict]:
     """Generate WebAuthn registration options and store challenge."""
-    rp_id, origin = await _get_webauthn_config(db)
+    rp_id, origin = _get_webauthn_config()
 
     # Exclude existing credentials
     existing = await db.execute(
@@ -292,7 +283,7 @@ async def generate_webauthn_authentication(
     user_id: int,
 ) -> tuple[str, dict]:
     """Generate WebAuthn authentication options for a user."""
-    rp_id, origin = await _get_webauthn_config(db)
+    rp_id, origin = _get_webauthn_config()
 
     existing = await db.execute(
         select(WebAuthnCredential).where(WebAuthnCredential.user_id == user_id)

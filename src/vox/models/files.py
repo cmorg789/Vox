@@ -9,3 +9,5 @@ class FileResponse(VoxModel):
     url: str
     uploader_id: int | None = None
     created_at: int | None = None
+    width: int | None = None
+    height: int | None = None

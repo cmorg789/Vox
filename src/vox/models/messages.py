@@ -2,8 +2,10 @@ from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel
 
-from vox.limits import list_limit, str_limit
+from vox.config import list_limit, str_limit
 from vox.models.base import VoxModel
+from vox.models.bots import Embed
+from vox.models.files import FileResponse
 
 
 class SendMessageRequest(BaseModel):
@@ -40,8 +42,8 @@ class MessageResponse(VoxModel):
     opaque_blob: str | None = None
     timestamp: int
     reply_to: int | None = None
-    attachments: list = []
-    embed: str | None = None
+    attachments: list[FileResponse] = []
+    embed: Embed | None = None
     edit_timestamp: int | None = None
     federated: bool = False
     author_address: str | None = None
@@ -69,10 +71,3 @@ class SearchResponse(VoxModel):
 
 class ResolveEmbedRequest(BaseModel):
     url: str
-
-
-class EmbedResponse(VoxModel):
-    title: str | None = None
-    description: str | None = None
-    image: str | None = None
-    video: str | None = None

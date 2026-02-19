@@ -62,9 +62,9 @@ def create_app(database_url: str | None = None) -> FastAPI:
         from vox.storage import init_storage
         init_storage()
         # Load runtime-configurable limits from DB
-        from vox.limits import load_limits
+        from vox.config import load_config
         async with get_session_factory()() as db:
-            await load_limits(db)
+            await load_config(db)
         # Initialize the gateway hub
         init_hub()
         # Start background cleanup task
@@ -84,7 +84,12 @@ def create_app(database_url: str | None = None) -> FastAPI:
         # Dispose engine on shutdown
         await engine.dispose()
 
-    app = FastAPI(title="Vox", lifespan=lifespan)
+    app = FastAPI(
+        title="Vox",
+        version="1.0.0",
+        description="Vox chat platform API",
+        lifespan=lifespan,
+    )
 
     # Rate limiting middleware
     app.add_middleware(RateLimitMiddleware)

@@ -50,9 +50,9 @@ async def test_upload_custom_name_and_mime(client):
 async def test_upload_too_large(client, monkeypatch):
     h = await setup(client)
 
-    # Patch MAX_FILE_SIZE to something small for testing
-    import vox.api.files as files_mod
-    monkeypatch.setattr(files_mod, "MAX_FILE_SIZE", 100)
+    # Patch file_upload_max_bytes to something small for testing
+    from vox.config import limits
+    monkeypatch.setattr(limits, "file_upload_max_bytes", 100)
 
     r = await client.post(
         "/api/v1/feeds/1/files",

@@ -14,7 +14,7 @@ from vox.api.deps import get_current_user, get_db, resolve_member
 from vox.permissions import ADMINISTRATOR
 from vox.api.messages import _handle_slash_command, _msg_response, _snowflake
 from vox.db.models import DM, DMReadState, DMSettings, File, Message, Reaction, User, dm_participants, message_attachments, role_members
-from vox.limits import limits
+from vox.config import limits
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.gateway.notify import notify_for_message, notify_for_reaction
@@ -343,15 +343,17 @@ async def send_dm_message(
     msg = Message(id=msg_id, dm_id=dm_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to)
     db.add(msg)
     await db.flush()
+    attachment_dicts = []
     if body.attachments:
         for file_id in body.attachments:
             f = (await db.execute(select(File).where(File.id == file_id))).scalar_one_or_none()
             if f is None:
                 raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_ATTACHMENT", "message": f"File {file_id} not found."}})
             await db.execute(message_attachments.insert().values(msg_id=msg_id, file_id=file_id))
+            attachment_dicts.append({"file_id": f.id, "name": f.name, "size": f.size, "mime": f.mime, "url": f.url})
     await db.commit()
     pids = await _dm_participant_ids(db, dm_id)
-    await dispatch(gw.message_create(msg_id=msg_id, dm_id=dm_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions), user_ids=pids, db=db)
+    await dispatch(gw.message_create(msg_id=msg_id, dm_id=dm_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions, attachments=attachment_dicts or None), user_ids=pids, db=db)
     await notify_for_message(db, msg_id=msg_id, feed_id=None, thread_id=None, dm_id=dm_id, author_id=user.id, body=body.body, reply_to=body.reply_to, mentions=body.mentions)
 
     # Outbound federation relay for federated participants

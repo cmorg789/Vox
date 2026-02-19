@@ -2,7 +2,7 @@ from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, Field
 
-from vox.limits import str_limit
+from vox.config import str_limit
 from vox.models.base import VoxModel
 
 
@@ -116,6 +116,20 @@ class WebAuthnCredentialResponse(VoxModel):
 
 
 # --- Federation Token Login ---
+
+
+class SessionInfo(VoxModel):
+    session_id: int
+    created_at: int
+    expires_at: int
+
+
+class SessionListResponse(VoxModel):
+    sessions: list[SessionInfo]
+
+
+class SuccessResponse(VoxModel):
+    success: bool = True
 
 
 class FederationTokenLoginRequest(BaseModel):

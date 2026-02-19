@@ -10,6 +10,13 @@ from vox.interactions import reset as reset_interactions
 from vox.ratelimit import reset as reset_ratelimit
 from vox.voice.service import reset as reset_voice
 
+
+def _reset_config():
+    """Reset the in-memory config singleton to defaults."""
+    import vox.config as _cfg
+    _cfg._db_values.clear()
+    _cfg._reload_all()
+
 # Use port 0 so each SFU picks a random free port (avoids conflicts)
 os.environ.setdefault("VOX_MEDIA_BIND", "127.0.0.1:0")
 
@@ -32,10 +39,12 @@ async def db(app):
 
 @pytest.fixture(autouse=True)
 def _clear_state():
+    _reset_config()
     reset_ratelimit()
     reset_interactions()
     reset_voice()
     yield
+    _reset_config()
     reset_ratelimit()
     reset_interactions()
     reset_voice()

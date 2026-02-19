@@ -8,12 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from vox.db.models import Session, User, role_members
+from vox.config import config
 
 _ph = PasswordHasher()
 _DUMMY_HASH = _ph.hash("__dummy__")
 
 TOKEN_PREFIX = "vox_sess_"
-SESSION_LIFETIME_DAYS = 30
 
 
 def hash_password(password: str) -> str:
@@ -53,7 +53,7 @@ async def create_user(
         token=token,
         user_id=user.id,
         created_at=datetime.now(timezone.utc),
-        expires_at=datetime.now(timezone.utc) + timedelta(days=SESSION_LIFETIME_DAYS),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=config.auth.session_ttl_days),
     )
     db.add(session)
     await db.flush()
@@ -83,14 +83,14 @@ async def create_session(db: AsyncSession, user_id: int) -> str:
         token=token,
         user_id=user_id,
         created_at=datetime.now(timezone.utc),
-        expires_at=datetime.now(timezone.utc) + timedelta(days=SESSION_LIFETIME_DAYS),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=config.auth.session_ttl_days),
     )
     db.add(session)
     await db.flush()
     return token
 
 
-async def get_user_by_token(db: AsyncSession, token: str) -> User | None:
+async def get_user_by_token(db: AsyncSession, token: str) -> tuple[User, Session] | tuple[None, None]:
     now = datetime.now(timezone.utc)
     result = await db.execute(
         select(Session)
@@ -99,8 +99,8 @@ async def get_user_by_token(db: AsyncSession, token: str) -> User | None:
     )
     session = result.scalar_one_or_none()
     if session is None:
-        return None
-    return session.user
+        return None, None
+    return session.user, session
 
 
 async def get_user_role_ids(db: AsyncSession, user_id: int) -> list[int]:

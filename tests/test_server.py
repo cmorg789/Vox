@@ -123,7 +123,7 @@ async def test_update_limits_invalid(client):
 
 async def test_load_limits(client):
     """load_limits loads overrides from DB."""
-    from vox.limits import load_limits, limits
+    from vox.config import load_config, limits
     from vox.db.engine import get_session_factory
     from vox.db.models import Config
 
@@ -133,7 +133,7 @@ async def test_load_limits(client):
         await db.commit()
 
     async with factory() as db:
-        await load_limits(db)
+        await load_config(db)
 
     assert limits.message_body_max == 9999
 
@@ -143,12 +143,12 @@ async def test_load_limits(client):
         await db.execute(delete(Config).where(Config.key == "limit_message_body_max"))
         await db.commit()
     async with factory() as db:
-        await load_limits(db)
+        await load_config(db)
 
 
 def test_str_limit_none():
     """str_limit validator passes None through."""
-    from vox.limits import str_limit
+    from vox.config import str_limit
 
     validator = str_limit(max_attr="message_body_max")
     assert validator(None) is None
@@ -156,7 +156,7 @@ def test_str_limit_none():
 
 def test_int_limit_none():
     """int_limit validator passes None through."""
-    from vox.limits import int_limit
+    from vox.config import int_limit
 
     validator = int_limit(ge=0, max_attr="message_body_max")
     assert validator(None) is None

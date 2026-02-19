@@ -16,7 +16,6 @@ from vox.api.messages import _snowflake
 from vox.db.models import (
     AuditLog,
     Ban,
-    Config,
     DM,
     Device,
     FederationEntry,
@@ -29,9 +28,8 @@ from vox.db.models import (
     dm_participants,
 )
 from vox.federation.deps import verify_federation_request
-from vox.db.models import ConfigKey
+from vox.config import config
 from vox.federation.service import (
-    _get_config,
     add_presence_sub,
     verify_voucher,
 )
@@ -374,7 +372,7 @@ async def federation_join(
     db: AsyncSession = Depends(get_db),
 ) -> FederationJoinResponse:
     # Verify voucher
-    our_domain = await _get_config(db, ConfigKey.FEDERATION_DOMAIN)
+    our_domain = config.federation.domain
     if our_domain is None:
         raise HTTPException(
             status_code=500,
@@ -436,8 +434,7 @@ async def federation_join(
     await db.commit()
 
     # Build server info
-    server_name = await _get_config(db, ConfigKey.SERVER_NAME) or "Vox Server"
-    server_info = {"name": server_name, "domain": our_domain}
+    server_info = {"name": config.server.name, "domain": our_domain}
 
     return FederationJoinResponse(
         accepted=True,

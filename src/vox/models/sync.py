@@ -16,7 +16,14 @@ class SyncEvent(VoxModel):
     timestamp: int
 
 
+class ReadState(VoxModel):
+    feed_id: int | None = None
+    dm_id: int | None = None
+    last_read_msg_id: int
+
+
 class SyncResponse(VoxModel):
     events: list[SyncEvent]
     server_timestamp: int
     cursor: int | None = None
+    read_states: list[ReadState] = []

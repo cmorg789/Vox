@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 
 import httpx
@@ -9,12 +10,13 @@ from sqlalchemy.orm import selectinload
 
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import Bot, BotCommand, Feed, File, Message, Pin, Reaction, Thread, User, message_attachments
-from vox.limits import limits
+from vox.config import limits
 from vox.permissions import MANAGE_MESSAGES, MANAGE_SPACES, MENTION_EVERYONE, READ_HISTORY, SEND_EMBEDS, SEND_IN_THREADS, SEND_MESSAGES, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.gateway.notify import notify_for_message, notify_for_reaction
 from vox import interactions
+from vox.models.errors import ErrorEnvelope
 from vox.models.messages import (
     BulkDeleteRequest,
     EditMessageRequest,
@@ -26,6 +28,12 @@ from vox.models.messages import (
 )
 
 router = APIRouter(tags=["messages"])
+
+_error_responses = {
+    401: {"model": ErrorEnvelope},
+    403: {"model": ErrorEnvelope},
+    404: {"model": ErrorEnvelope},
+}
 
 # Simple snowflake: 42-bit timestamp (ms) + 22-bit sequence
 _seq = 0
@@ -46,12 +54,21 @@ async def _snowflake() -> int:
 
 
 def _msg_response(m: Message) -> MessageResponse:
+    from vox.models.bots import Embed
+    from vox.models.files import FileResponse
+
     attachments = []
     if m.attachments:
         attachments = [
-            {"file_id": f.id, "name": f.name, "size": f.size, "mime": f.mime, "url": f.url}
+            FileResponse(file_id=f.id, name=f.name, size=f.size, mime=f.mime, url=f.url)
             for f in m.attachments
         ]
+    embed = None
+    if m.embed:
+        try:
+            embed = Embed.model_validate_json(m.embed)
+        except Exception:
+            pass
     return MessageResponse(
         msg_id=m.id,
         feed_id=m.feed_id,
@@ -66,7 +83,7 @@ def _msg_response(m: Message) -> MessageResponse:
         federated=m.federated,
         author_address=m.author_address,
         attachments=attachments,
-        embed=m.embed,
+        embed=embed,
         webhook_id=m.webhook_id,
     )
 
@@ -186,7 +203,7 @@ async def _handle_slash_command(
 
 # --- Feed Messages ---
 
-@router.get("/api/v1/feeds/{feed_id}/messages")
+@router.get("/api/v1/feeds/{feed_id}/messages", responses=_error_responses)
 async def get_feed_messages(
     feed_id: int,
     limit: int = Query(default=50, ge=1, le=1000),
@@ -237,7 +254,7 @@ async def list_message_reactions(
     return {"reactions": [{"emoji": emoji, "user_ids": uids} for emoji, uids in grouped.items()]}
 
 
-@router.post("/api/v1/feeds/{feed_id}/messages", status_code=201)
+@router.post("/api/v1/feeds/{feed_id}/messages", status_code=201, responses=_error_responses)
 async def send_feed_message(
     feed_id: int,
     body: SendMessageRequest,
@@ -290,12 +307,14 @@ async def send_feed_message(
     )
     db.add(msg)
     await db.flush()
+    attachment_dicts = []
     if body.attachments:
         for file_id in body.attachments:
             f = (await db.execute(select(File).where(File.id == file_id))).scalar_one_or_none()
             if f is None:
                 raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_ATTACHMENT", "message": f"File {file_id} not found."}})
             await db.execute(message_attachments.insert().values(msg_id=msg_id, file_id=file_id))
+            attachment_dicts.append({"file_id": f.id, "name": f.name, "size": f.size, "mime": f.mime, "url": f.url})
 
     # Forum feeds: auto-create a thread for each new message
     forum_thread = None
@@ -318,7 +337,8 @@ async def send_feed_message(
             parent_msg_id=msg_id,
             name=forum_thread.name,
         ), db=db)
-    await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions, embed=embed), db=db)
+    embed_dict = json.loads(embed) if embed else None
+    await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions, embed=embed_dict, attachments=attachment_dicts or None), db=db)
     await notify_for_message(db, msg_id=msg_id, feed_id=feed_id, thread_id=None, dm_id=None, author_id=user.id, body=body.body, reply_to=body.reply_to, mentions=body.mentions)
     return SendMessageResponse(msg_id=msg_id, timestamp=ts, mentions=body.mentions)
 
@@ -452,14 +472,17 @@ async def send_thread_message(
     )
     db.add(msg)
     await db.flush()
+    attachment_dicts = []
     if body.attachments:
         for file_id in body.attachments:
             f = (await db.execute(select(File).where(File.id == file_id))).scalar_one_or_none()
             if f is None:
                 raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_ATTACHMENT", "message": f"File {file_id} not found."}})
             await db.execute(message_attachments.insert().values(msg_id=msg_id, file_id=file_id))
+            attachment_dicts.append({"file_id": f.id, "name": f.name, "size": f.size, "mime": f.mime, "url": f.url})
     await db.commit()
-    await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions, embed=embed), db=db)
+    embed_dict = json.loads(embed) if embed else None
+    await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions, embed=embed_dict, attachments=attachment_dicts or None), db=db)
     await notify_for_message(db, msg_id=msg_id, feed_id=feed_id, thread_id=thread_id, dm_id=None, author_id=user.id, body=body.body, reply_to=body.reply_to, mentions=body.mentions)
     return SendMessageResponse(msg_id=msg_id, timestamp=ts, mentions=body.mentions)
 

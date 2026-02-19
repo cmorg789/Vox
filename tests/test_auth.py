@@ -863,6 +863,7 @@ async def test_validate_mfa_ticket_expired(client):
 async def test_webauthn_get_config(client):
     """_get_webauthn_config returns defaults or configured values."""
     from vox.auth.mfa import _get_webauthn_config
+    from vox.config import config, load_config
     from vox.db.models import Config
 
     token, user_id = await _register_and_get_token(client)
@@ -870,19 +871,27 @@ async def test_webauthn_get_config(client):
     factory = get_session_factory()
 
     # Default values
-    async with factory() as db:
-        rp_id, origin = await _get_webauthn_config(db)
-        assert rp_id == "localhost"
-        assert origin == "http://localhost:8000"
+    rp_id, origin = _get_webauthn_config()
+    assert rp_id == "localhost"
+    assert origin == "http://localhost:8000"
 
     # Custom values
     async with factory() as db:
         db.add(Config(key="webauthn_rp_id", value="vox.example.com"))
         db.add(Config(key="webauthn_origin", value="https://vox.example.com"))
         await db.commit()
-        rp_id, origin = await _get_webauthn_config(db)
-        assert rp_id == "vox.example.com"
-        assert origin == "https://vox.example.com"
+    async with factory() as db:
+        await load_config(db)
+    rp_id, origin = _get_webauthn_config()
+    assert rp_id == "vox.example.com"
+    assert origin == "https://vox.example.com"
+    # Clean up
+    from sqlalchemy import delete
+    async with factory() as db:
+        await db.execute(delete(Config).where(Config.key.in_(["webauthn_rp_id", "webauthn_origin"])))
+        await db.commit()
+    async with factory() as db:
+        await load_config(db)
 
 
 async def test_login_2fa_webauthn_no_assertion(client):

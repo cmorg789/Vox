@@ -205,16 +205,14 @@ class Connection:
             return
 
         async with db_factory() as db:
-            user = await get_user_by_token(db, token)
+            user, _sess = await get_user_by_token(db, token)
             if user is None:
                 await self.close(CLOSE_AUTH_FAILED, "AUTH_FAILED")
                 return
 
-            # Read server config from DB
-            from vox.api.server import _get_config
-            from vox.db.models import ConfigKey
-            server_name = await _get_config(db, ConfigKey.SERVER_NAME) or "Vox Server"
-            server_icon = await _get_config(db, ConfigKey.SERVER_ICON)
+        from vox.config import config
+        server_name = config.server.name
+        server_icon = config.server.icon
 
         self.user_id = user.id
         self.session_id = "sess_" + secrets.token_hex(12)
@@ -258,7 +256,7 @@ class Connection:
             return
 
         async with db_factory() as db:
-            user = await get_user_by_token(db, token)
+            user, _sess = await get_user_by_token(db, token)
 
         if user is None:
             await self.close(CLOSE_AUTH_FAILED, "AUTH_FAILED")
@@ -376,7 +374,7 @@ class Connection:
             elif msg_type == "mls_relay":
                 mls_type = data.get("mls_type", "")
                 mls_data = data.get("data", "")
-                from vox.limits import limits as _limits
+                from vox.config import limits as _limits
                 if len(mls_data) > _limits.relay_payload_max:
                     await self.send_json({"type": "error", "d": {"code": "PAYLOAD_TOO_LARGE", "message": "Relay payload exceeds size limit."}})
                     continue
@@ -390,7 +388,7 @@ class Connection:
                 cpace_type = data.get("cpace_type", "")
                 pair_id = data.get("pair_id", "")
                 cpace_data = data.get("data", "")
-                from vox.limits import limits as _limits
+                from vox.config import limits as _limits
                 if len(cpace_data) > _limits.relay_payload_max:
                     await self.send_json({"type": "error", "d": {"code": "PAYLOAD_TOO_LARGE", "message": "Relay payload exceeds size limit."}})
                     continue
