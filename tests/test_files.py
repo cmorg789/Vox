@@ -174,3 +174,184 @@ async def test_upload_disallowed_mime(client):
     body = r.json()
     err = body.get("error") or body.get("detail", {}).get("error", {})
     assert err["code"] == "UNSUPPORTED_MEDIA_TYPE"
+
+
+# --- DM file uploads ---
+
+
+async def _setup_dm(client):
+    """Register two users and open a DM between them."""
+    r1 = await client.post("/api/v1/auth/register", json={"username": "alice", "password": "test1234"})
+    t1 = r1.json()["token"]
+    h1 = {"Authorization": f"Bearer {t1}"}
+
+    r2 = await client.post("/api/v1/auth/register", json={"username": "bob", "password": "test1234"})
+    t2 = r2.json()["token"]
+    h2 = {"Authorization": f"Bearer {t2}"}
+
+    r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": r2.json()["user_id"]})
+    dm_id = r.json()["dm_id"]
+    return h1, h2, dm_id
+
+
+async def test_upload_dm_file(client):
+    h1, h2, dm_id = await _setup_dm(client)
+    r = await client.post(
+        f"/api/v1/dms/{dm_id}/files",
+        headers=h1,
+        files={"file": ("doc.txt", io.BytesIO(b"hello"), "text/plain")},
+    )
+    assert r.status_code == 201
+    assert r.json()["name"] == "doc.txt"
+
+
+async def test_upload_dm_file_not_participant(client):
+    h1, h2, dm_id = await _setup_dm(client)
+    # Register a third user who is NOT in the DM
+    r3 = await client.post("/api/v1/auth/register", json={"username": "charlie", "password": "test1234"})
+    h3 = {"Authorization": f"Bearer {r3.json()['token']}"}
+
+    r = await client.post(
+        f"/api/v1/dms/{dm_id}/files",
+        headers=h3,
+        files={"file": ("doc.txt", io.BytesIO(b"hello"), "text/plain")},
+    )
+    assert r.status_code == 403
+    body = r.json()
+    err = body.get("error") or body.get("detail", {}).get("error", {})
+    assert err["code"] == "NOT_DM_PARTICIPANT"
+
+
+async def test_upload_dm_file_too_large(client, monkeypatch):
+    from vox.config import config
+    monkeypatch.setattr(config.limits, "file_upload_max_bytes", 100)
+
+    h1, h2, dm_id = await _setup_dm(client)
+    r = await client.post(
+        f"/api/v1/dms/{dm_id}/files",
+        headers=h1,
+        files={"file": ("big.bin", io.BytesIO(b"x" * 101), "application/octet-stream")},
+    )
+    assert r.status_code == 413
+
+
+async def test_upload_dm_file_disallowed_mime(client):
+    h1, h2, dm_id = await _setup_dm(client)
+    r = await client.post(
+        f"/api/v1/dms/{dm_id}/files",
+        headers=h1,
+        files={"file": ("evil.bin", io.BytesIO(b"bad"), "application/x-evil")},
+    )
+    assert r.status_code == 415
+
+
+async def test_download_file_dm_not_participant(client):
+    h1, h2, dm_id = await _setup_dm(client)
+
+    # Upload file and attach to DM message
+    r = await client.post(
+        f"/api/v1/dms/{dm_id}/files",
+        headers=h1,
+        files={"file": ("doc.txt", io.BytesIO(b"secret"), "text/plain")},
+    )
+    file_id = r.json()["file_id"]
+
+    r = await client.post(
+        f"/api/v1/dms/{dm_id}/messages",
+        headers=h1,
+        json={"body": "here", "attachments": [file_id]},
+    )
+    assert r.status_code == 201
+
+    # Third user who is NOT in the DM tries to download
+    r3 = await client.post("/api/v1/auth/register", json={"username": "charlie", "password": "test1234"})
+    h3 = {"Authorization": f"Bearer {r3.json()['token']}"}
+
+    r = await client.get(f"/api/v1/files/{file_id}", headers=h3)
+    assert r.status_code == 403
+
+
+async def test_download_orphan_file_not_uploader(client):
+    h = await setup(client)
+
+    # Upload a file (orphan — not attached to any message)
+    r = await client.post(
+        "/api/v1/feeds/1/files",
+        headers=h,
+        files={"file": ("orphan.txt", io.BytesIO(b"data"), "text/plain")},
+    )
+    file_id = r.json()["file_id"]
+
+    # Register second user
+    r2 = await client.post("/api/v1/auth/register", json={"username": "bob", "password": "test1234"})
+    h2 = {"Authorization": f"Bearer {r2.json()['token']}"}
+
+    r = await client.get(f"/api/v1/files/{file_id}", headers=h2)
+    assert r.status_code == 403
+
+
+async def test_download_file_data_missing(client):
+    h = await setup(client)
+
+    # Upload a file
+    r = await client.post(
+        "/api/v1/feeds/1/files",
+        headers=h,
+        files={"file": ("test.txt", io.BytesIO(b"hello"), "text/plain")},
+    )
+    file_id = r.json()["file_id"]
+
+    # Attach to a message so the user has access
+    r = await client.post(
+        "/api/v1/feeds/1/messages",
+        headers=h,
+        json={"body": "here", "attachments": [file_id]},
+    )
+    assert r.status_code == 201
+
+    # Delete the file data from storage directly
+    from vox.storage import get_storage
+    storage = get_storage()
+    await storage.delete(file_id)
+
+    r = await client.get(f"/api/v1/files/{file_id}", headers=h)
+    assert r.status_code == 404
+
+
+async def test_delete_file(client):
+    h = await setup(client)
+
+    r = await client.post(
+        "/api/v1/feeds/1/files",
+        headers=h,
+        files={"file": ("del.txt", io.BytesIO(b"bye"), "text/plain")},
+    )
+    file_id = r.json()["file_id"]
+
+    r = await client.delete(f"/api/v1/files/{file_id}", headers=h)
+    assert r.status_code == 204
+
+
+async def test_delete_file_not_found(client):
+    h = await setup(client)
+    r = await client.delete("/api/v1/files/nonexistent", headers=h)
+    assert r.status_code == 404
+
+
+async def test_delete_file_not_owner_no_permission(client):
+    h = await setup(client)
+
+    # Upload a file as alice
+    r = await client.post(
+        "/api/v1/feeds/1/files",
+        headers=h,
+        files={"file": ("test.txt", io.BytesIO(b"data"), "text/plain")},
+    )
+    file_id = r.json()["file_id"]
+
+    # Register second user
+    r2 = await client.post("/api/v1/auth/register", json={"username": "bob", "password": "test1234"})
+    h2 = {"Authorization": f"Bearer {r2.json()['token']}"}
+
+    r = await client.delete(f"/api/v1/files/{file_id}", headers=h2)
+    assert r.status_code == 403

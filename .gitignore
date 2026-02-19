@@ -26,3 +26,6 @@ target/
 # Database
 *.db
 *.sqlite3
+uploads/
+/.coverage
+tests/uploads/

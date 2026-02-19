@@ -135,3 +135,57 @@ async def test_create_sticker_too_large(client):
     big_content = b"x" * (25 * 1024 * 1024 + 1)
     r = await client.post("/api/v1/stickers", headers=h, data={"name": "big"}, files={"image": ("big.png", io.BytesIO(big_content), "image/png")})
     assert r.status_code == 413
+
+
+# --- Disallowed MIME ---
+
+
+async def test_create_emoji_disallowed_mime(client):
+    h = await auth(client)
+    r = await client.post("/api/v1/emoji", headers=h, data={"name": "bad"}, files={"image": ("bad.bin", _fake_image(), "application/x-evil")})
+    assert r.status_code == 415
+    body = r.json()
+    err = body.get("error") or body.get("detail", {}).get("error", {})
+    assert err["code"] == "UNSUPPORTED_MEDIA_TYPE"
+
+
+async def test_create_sticker_disallowed_mime(client):
+    h = await auth(client)
+    r = await client.post("/api/v1/stickers", headers=h, data={"name": "bad"}, files={"image": ("bad.bin", _fake_image(), "application/x-evil")})
+    assert r.status_code == 415
+    body = r.json()
+    err = body.get("error") or body.get("detail", {}).get("error", {})
+    assert err["code"] == "UNSUPPORTED_MEDIA_TYPE"
+
+
+# --- Update ---
+
+
+async def test_update_emoji(client):
+    h = await auth(client)
+    r = await client.post("/api/v1/emoji", headers=h, data={"name": "original"}, files={"image": ("test.png", _fake_image(), "image/png")})
+    eid = r.json()["emoji_id"]
+    r = await client.patch(f"/api/v1/emoji/{eid}", headers=h, json={"name": "renamed"})
+    assert r.status_code == 200
+    assert r.json()["name"] == "renamed"
+
+
+async def test_update_emoji_not_found(client):
+    h = await auth(client)
+    r = await client.patch("/api/v1/emoji/99999", headers=h, json={"name": "ghost"})
+    assert r.status_code == 404
+
+
+async def test_update_sticker(client):
+    h = await auth(client)
+    r = await client.post("/api/v1/stickers", headers=h, data={"name": "original"}, files={"image": ("test.png", _fake_image(), "image/png")})
+    sid = r.json()["sticker_id"]
+    r = await client.patch(f"/api/v1/stickers/{sid}", headers=h, json={"name": "renamed"})
+    assert r.status_code == 200
+    assert r.json()["name"] == "renamed"
+
+
+async def test_update_sticker_not_found(client):
+    h = await auth(client)
+    r = await client.patch("/api/v1/stickers/99999", headers=h, json={"name": "ghost"})
+    assert r.status_code == 404

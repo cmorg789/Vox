@@ -387,3 +387,96 @@ async def test_move_user_sfu_exceptions(client):
         assert r.status_code == 204
     finally:
         voice_service._sfu = old_sfu
+
+
+# --- GET voice members ---
+
+
+async def test_get_voice_members(client):
+    h = await _register(client)
+    room_id = await _create_room(client, h)
+    await client.post(f"/api/v1/rooms/{room_id}/voice/join", headers=h, json={})
+    r = await client.get(f"/api/v1/rooms/{room_id}/voice", headers=h)
+    assert r.status_code == 200
+    assert r.json()["room_id"] == room_id
+    assert len(r.json()["members"]) == 1
+
+
+# --- Token refresh ---
+
+
+async def test_refresh_media_token(client):
+    h = await _register(client)
+    room_id = await _create_room(client, h)
+    await client.post(f"/api/v1/rooms/{room_id}/voice/join", headers=h, json={})
+    r = await client.post(f"/api/v1/rooms/{room_id}/voice/token-refresh", headers=h)
+    assert r.status_code == 200
+    assert "media_token" in r.json()
+
+
+# --- Server mute / deafen ---
+
+
+async def test_server_mute(client):
+    h1 = await _register(client, "alice")
+    h2 = await _register(client, "bob")
+    room_id = await _create_room(client, h1)
+    await client.post(f"/api/v1/rooms/{room_id}/voice/join", headers=h2, json={})
+    r = await client.post(f"/api/v1/rooms/{room_id}/voice/mute", headers=h1, json={"user_id": 2, "muted": True})
+    assert r.status_code == 204
+
+
+async def test_server_mute_not_in_voice(client):
+    h1 = await _register(client, "alice")
+    await _register(client, "bob")
+    room_id = await _create_room(client, h1)
+    r = await client.post(f"/api/v1/rooms/{room_id}/voice/mute", headers=h1, json={"user_id": 2, "muted": True})
+    assert r.status_code == 400
+    assert r.json()["detail"]["error"]["code"] == "NOT_IN_VOICE"
+
+
+async def test_server_deafen(client):
+    h1 = await _register(client, "alice")
+    h2 = await _register(client, "bob")
+    room_id = await _create_room(client, h1)
+    await client.post(f"/api/v1/rooms/{room_id}/voice/join", headers=h2, json={})
+    r = await client.post(f"/api/v1/rooms/{room_id}/voice/deafen", headers=h1, json={"user_id": 2, "deafened": True})
+    assert r.status_code == 204
+
+
+async def test_server_deafen_not_in_voice(client):
+    h1 = await _register(client, "alice")
+    await _register(client, "bob")
+    room_id = await _create_room(client, h1)
+    r = await client.post(f"/api/v1/rooms/{room_id}/voice/deafen", headers=h1, json={"user_id": 2, "deafened": True})
+    assert r.status_code == 400
+    assert r.json()["detail"]["error"]["code"] == "NOT_IN_VOICE"
+
+
+# --- Stage edge cases ---
+
+
+async def test_stage_invite_not_in_voice(client):
+    h1 = await _register(client, "alice")
+    h2 = await _register(client, "bob")
+    room_id = await _create_room(client, h1, "Stage", "stage")
+    await client.post(f"/api/v1/rooms/{room_id}/voice/join", headers=h1, json={})
+    # Bob is NOT in voice, so invite should fail
+    r = await client.post(f"/api/v1/rooms/{room_id}/stage/invite", headers=h1, json={"user_id": 2})
+    assert r.status_code == 400
+    assert r.json()["detail"]["error"]["code"] == "NOT_IN_VOICE"
+
+
+async def test_stage_respond_no_pending_invite(client):
+    h1 = await _register(client, "alice")
+    room_id = await _create_room(client, h1, "Stage", "stage")
+    await client.post(f"/api/v1/rooms/{room_id}/voice/join", headers=h1, json={})
+    r = await client.post(f"/api/v1/rooms/{room_id}/stage/invite/respond", headers=h1, json={"accepted": True})
+    assert r.status_code == 400
+    assert r.json()["detail"]["error"]["code"] == "NO_PENDING_INVITE"
+
+
+async def test_stage_set_topic_room_not_found(client):
+    h = await _register(client)
+    r = await client.patch("/api/v1/rooms/99999/stage/topic", headers=h, json={"topic": "Test"})
+    assert r.status_code == 404

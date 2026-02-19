@@ -1136,3 +1136,148 @@ class TestVoiceCleanupOnDisconnect:
         assert dispatched[0]["type"] == "voice_state_update"
         assert dispatched[0]["d"]["room_id"] == 7
         assert dispatched[0]["d"]["members"] == []
+
+
+class TestDispatchPersist:
+    """Test dispatch event persistence paths."""
+
+    @pytest.mark.asyncio
+    async def test_persist_event_no_db_session(self, app, db):
+        """Dispatch with db=None for a syncable event uses session factory."""
+        from vox.gateway.dispatch import dispatch
+
+        # feed_create is in SYNCABLE_EVENTS so _persist_event will be called
+        # Passing db=None forces it to use get_session_factory()
+        await dispatch({"type": "feed_create", "d": {"feed_id": 1, "name": "test", "type": "text"}}, db=None)
+        # If no exception, the fallback factory path executed successfully
+
+
+class TestHeartbeatTimeout:
+    """Test heartbeat timeout closes connection."""
+
+    def test_heartbeat_timeout(self, app, db):
+        """Connection with short heartbeat interval times out without heartbeats."""
+        from unittest.mock import patch as _patch
+        import vox.gateway.connection as conn_mod
+
+        # Patch heartbeat interval to something very short so the test doesn't wait
+        with _patch.object(conn_mod, "HEARTBEAT_INTERVAL_MS", 100), \
+             _patch.object(conn_mod, "HEARTBEAT_TIMEOUT_FACTOR", 1.0):
+            with TestClient(app) as tc:
+                resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+                token = resp.json()["token"]
+
+                with tc.websocket_connect("/gateway") as ws:
+                    ws.receive_json()  # hello
+                    ws.send_json({"type": "identify", "d": {"token": token}})
+                    ws.receive_json()  # ready
+
+                    # Don't send heartbeats -- wait for timeout close
+                    with pytest.raises(Exception):
+                        for _ in range(50):
+                            ws.receive_json()
+
+
+class TestTypingRateLimit:
+    """Test typing rate-limit (5s cooldown)."""
+
+    def test_typing_rate_limit(self, app, db):
+        """Send 2 typing events <5s apart -> only first dispatched."""
+        with TestClient(app) as tc:
+            resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            token = resp.json()["token"]
+            headers = {"Authorization": f"Bearer {token}"}
+
+            # Create feed BEFORE WS connect so no event to drain
+            tc.post("/api/v1/feeds", json={"name": "general", "type": "text"}, headers=headers)
+
+            with tc.websocket_connect("/gateway") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({"type": "identify", "d": {"token": token}})
+                ws.receive_json()  # ready
+
+                # First typing -> should dispatch
+                ws.send_json({"type": "typing", "d": {"feed_id": 1}})
+                evt = ws.receive_json()
+                assert evt["type"] == "typing_start"
+
+                # Second typing within 5s -> should be silently dropped
+                ws.send_json({"type": "typing", "d": {"feed_id": 1}})
+
+                # Verify connection is still alive
+                ws.send_json({"type": "heartbeat"})
+                ack = ws.receive_json()
+                assert ack["type"] == "heartbeat_ack"
+
+
+class TestInvalidPresenceStatus:
+    """Test presence_update with invalid status."""
+
+    def test_invalid_presence_status(self, app, db):
+        """Send presence_update with bad status -> error response."""
+        with TestClient(app) as tc:
+            resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            token = resp.json()["token"]
+
+            with tc.websocket_connect("/gateway") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({"type": "identify", "d": {"token": token}})
+                ws.receive_json()  # ready
+
+                ws.send_json({"type": "presence_update", "d": {"status": "banana"}})
+                err = ws.receive_json()
+                assert err["type"] == "error"
+                assert err["d"]["code"] == "INVALID_STATUS"
+
+                # Connection should still be alive
+                ws.send_json({"type": "heartbeat"})
+                ack = ws.receive_json()
+                assert ack["type"] == "heartbeat_ack"
+
+
+class TestMlsRelayPayloadTooLarge:
+    """Test MLS relay payload size limit."""
+
+    def test_mls_relay_payload_too_large(self, app, db):
+        """Oversized MLS relay payload -> PAYLOAD_TOO_LARGE error."""
+        with TestClient(app) as tc:
+            resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            token = resp.json()["token"]
+
+            with tc.websocket_connect("/gateway") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({"type": "identify", "d": {"token": token}})
+                ws.receive_json()  # ready
+
+                # Send a huge payload
+                ws.send_json({
+                    "type": "mls_relay",
+                    "d": {"mls_type": "welcome", "data": "x" * (10 * 1024 * 1024)}
+                })
+                err = ws.receive_json()
+                assert err["type"] == "error"
+                assert err["d"]["code"] == "PAYLOAD_TOO_LARGE"
+
+
+class TestVoiceStateEdgeCases:
+    """Test voice_state_update edge cases in gateway."""
+
+    def test_voice_state_update_not_in_voice(self, app, db):
+        """Send voice_state_update when not in any room -> silent return."""
+        with TestClient(app) as tc:
+            resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            token = resp.json()["token"]
+
+            with tc.websocket_connect("/gateway") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({"type": "identify", "d": {"token": token}})
+                ws.receive_json()  # ready
+
+                # Not in any voice room
+                ws.send_json({"type": "voice_state_update", "d": {"self_mute": True}})
+
+                # Connection should still be alive
+                ws.send_json({"type": "heartbeat"})
+                ack = ws.receive_json()
+                assert ack["type"] == "heartbeat_ack"
+
