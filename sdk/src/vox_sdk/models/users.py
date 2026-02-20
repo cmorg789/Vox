@@ -10,7 +10,7 @@ class UserResponse(VoxModel):
     avatar: str | None = None
     bio: str | None = None
     roles: list[int] = []
-    created_at: int = 0
+    created_at: int | None = None
     federated: bool = False
     home_domain: str | None = None
 
@@ -19,7 +19,7 @@ class FriendResponse(VoxModel):
     user_id: int
     display_name: str | None = None
     avatar: str | None = None
-    status: str = ""
+    status: str = "offline"
 
 
 class FriendListResponse(VoxModel):

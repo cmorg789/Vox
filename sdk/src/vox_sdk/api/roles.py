@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from vox_sdk.models.members import MemberListResponse
 from vox_sdk.models.roles import RoleListResponse, RoleResponse
+from vox_sdk.pagination import PaginatedIterator
 
 if TYPE_CHECKING:
     from vox_sdk.http import HTTPClient
@@ -18,6 +19,9 @@ class RolesAPI:
     async def list(self) -> RoleListResponse:
         r = await self._http.get("/api/v1/roles")
         return RoleListResponse.model_validate(r.json())
+
+    def iter_roles(self, *, limit: int = 50) -> PaginatedIterator[RoleResponse]:
+        return PaginatedIterator(self._http, "/api/v1/roles", RoleResponse, limit=limit)
 
     async def list_members(self, role_id: int) -> MemberListResponse:
         r = await self._http.get(f"/api/v1/roles/{role_id}/members")

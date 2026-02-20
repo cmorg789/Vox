@@ -203,7 +203,7 @@ class ThreadUnsubscribe(GatewayEvent):
 class RoleCreate(GatewayEvent):
     role_id: int = 0
     name: str = ""
-    color: str | None = None
+    color: int | None = None
     permissions: int = 0
     position: int = 0
 

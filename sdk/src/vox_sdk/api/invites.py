@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from vox_sdk.models.invites import InviteListResponse, InvitePreviewResponse, InviteResponse
+from vox_sdk.pagination import PaginatedIterator
 
 if TYPE_CHECKING:
     from vox_sdk.http import HTTPClient
@@ -41,3 +42,6 @@ class InvitesAPI:
     async def list(self) -> InviteListResponse:
         r = await self._http.get("/api/v1/invites")
         return InviteListResponse.model_validate(r.json())
+
+    def iter_invites(self, *, limit: int = 50) -> PaginatedIterator[InviteResponse]:
+        return PaginatedIterator(self._http, "/api/v1/invites", InviteResponse, limit=limit)

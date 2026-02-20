@@ -10,6 +10,7 @@ from vox_sdk.models.moderation import (
     ReportListResponse,
     ReportResponse,
 )
+from vox_sdk.pagination import PaginatedIterator
 
 if TYPE_CHECKING:
     from vox_sdk.http import HTTPClient
@@ -50,6 +51,9 @@ class ModerationAPI:
     async def list_reports(self, **params: Any) -> ReportListResponse:
         r = await self._http.get("/api/v1/reports", params=params)
         return ReportListResponse.model_validate(r.json())
+
+    def iter_reports(self, *, limit: int = 50) -> PaginatedIterator[ReportResponse]:
+        return PaginatedIterator(self._http, "/api/v1/reports", ReportResponse, limit=limit)
 
     async def get_report(self, report_id: int) -> ReportDetailResponse:
         r = await self._http.get(f"/api/v1/reports/{report_id}")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from vox_sdk.models.federation import (
     FederatedPrekeyResponse,
@@ -19,11 +20,13 @@ class FederationAPI:
         self._http = http
 
     async def get_prekeys(self, user_address: str) -> FederatedPrekeyResponse:
-        r = await self._http.get(f"/api/v1/federation/users/{user_address}/prekeys")
+        encoded = quote(user_address, safe="@")
+        r = await self._http.get(f"/api/v1/federation/users/{encoded}/prekeys")
         return FederatedPrekeyResponse.model_validate(r.json())
 
     async def get_profile(self, user_address: str) -> FederatedUserProfile:
-        r = await self._http.get(f"/api/v1/federation/users/{user_address}")
+        encoded = quote(user_address, safe="@")
+        r = await self._http.get(f"/api/v1/federation/users/{encoded}")
         return FederatedUserProfile.model_validate(r.json())
 
     async def join_request(

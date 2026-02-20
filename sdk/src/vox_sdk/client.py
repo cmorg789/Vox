@@ -42,6 +42,7 @@ class Client:
         self._search: Any = None
         self._emoji: Any = None
         self._sync: Any = None
+        self._embeds: Any = None
 
         self._gateway: Any = None
 
@@ -182,15 +183,27 @@ class Client:
             self._sync = SyncAPI(self.http)
         return self._sync
 
+    @property
+    def embeds(self) -> Any:
+        if self._embeds is None:
+            from vox_sdk.api.embeds import EmbedsAPI
+            self._embeds = EmbedsAPI(self.http)
+        return self._embeds
+
     # --- Gateway ---
 
     async def connect_gateway(self, **kwargs: Any) -> Any:
-        """Connect to the WebSocket gateway."""
+        """Connect to the WebSocket gateway.
+
+        Fetches the gateway URL from the server's discovery endpoint
+        before establishing the WebSocket connection.
+        """
         from vox_sdk.gateway import GatewayClient
         if self.http.token is None:
             raise RuntimeError("Must be logged in before connecting to gateway")
-        self._gateway = GatewayClient(self.http.base_url, self.http.token, **kwargs)
-        await self._gateway.connect()
+        info = await self.server.gateway_info()
+        self._gateway = GatewayClient(info.url, self.http.token, **kwargs)
+        await self._gateway.run()
         return self._gateway
 
     # --- Context manager ---

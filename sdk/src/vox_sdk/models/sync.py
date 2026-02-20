@@ -1,9 +1,11 @@
+from typing import Any
+
 from vox_sdk.models.base import VoxModel
 
 
 class SyncEvent(VoxModel):
     type: str
-    payload: dict = {}
+    payload: dict[str, Any] = {}
     timestamp: int = 0
 
 
