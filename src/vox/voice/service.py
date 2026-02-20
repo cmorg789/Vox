@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.db.models import Room, StageSpeaker, VoiceState
@@ -112,7 +113,14 @@ async def join_room(
         joined_at=datetime.now(timezone.utc),
     )
     db.add(vs)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={"error": {"code": "ALREADY_IN_VOICE", "message": "Already connected to a voice room."}},
+        )
 
     # SFU integration
     sfu = get_sfu()

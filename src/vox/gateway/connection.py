@@ -83,6 +83,7 @@ class Connection:
         self._last_typing: dict[int, float] = {}  # feed_id/dm_id -> timestamp
         self._ip: str = ""
         self._msg_timestamps: deque[float] = deque(maxlen=120)
+        self._send_lock = asyncio.Lock()
 
     async def send_json(self, data: dict[str, Any]) -> None:
         if not self._closed:
@@ -97,15 +98,16 @@ class Connection:
 
     async def send_event(self, event: dict[str, Any]) -> None:
         """Send a sequenced event to this client."""
-        self.seq += 1
-        msg = {**event, "seq": self.seq}
-        self._replay_buffer.append(msg)
-        # Also write to hub session buffer so resume works after disconnect
-        session = self.hub.get_session(self.session_id)
-        if session is not None:
-            session.replay_buffer.append(msg)
-            session.seq = self.seq
-        await self.send_json(msg)
+        async with self._send_lock:
+            self.seq += 1
+            msg = {**event, "seq": self.seq}
+            self._replay_buffer.append(msg)
+            # Also write to hub session buffer so resume works after disconnect
+            session = self.hub.get_session(self.session_id)
+            if session is not None:
+                session.replay_buffer.append(msg)
+                session.seq = self.seq
+            await self.send_json(msg)
 
     async def close(self, code: int, reason: str = "") -> None:
         self._closed = True
@@ -176,11 +178,14 @@ class Connection:
                     await self._cleanup_voice_state(db_factory)
                 except Exception:
                     log.debug("Voice cleanup skipped for user %d", self.user_id)
-                # Preserve session state in hub for resume
+                # Preserve session state in hub for resume (keep original TTL)
+                existing = self.hub.get_session(self.session_id)
+                original_created_at = existing.created_at if existing else time.monotonic()
                 state = SessionState(
                     user_id=self.user_id,
                     replay_buffer=deque(self._replay_buffer, maxlen=REPLAY_BUFFER_SIZE),
                     seq=self.seq,
+                    created_at=original_created_at,
                 )
                 self.hub.save_session(self.session_id, state)
                 await self.hub.disconnect(self, ip=self._ip)
@@ -248,7 +253,9 @@ class Connection:
             await self.hub.broadcast(events.presence_update(user_id=self.user_id, status="online"), user_ids=other_ids)
 
         # Send current presence snapshot to newly connected client
-        for uid, pdata in self.hub.presence.items():
+        async with self.hub._lock:
+            presence_snapshot = dict(self.hub.presence)
+        for uid, pdata in presence_snapshot.items():
             if uid != self.user_id:
                 # Hide invisible users — show them as offline
                 if pdata.get("status") == "invisible":
