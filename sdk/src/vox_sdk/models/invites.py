@@ -20,4 +20,3 @@ class InvitePreviewResponse(VoxModel):
     code: str
     server_name: str
     server_icon: str | None = None
-    member_count: int = 0

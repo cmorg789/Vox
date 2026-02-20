@@ -31,12 +31,15 @@ def _configure_logging() -> None:
 
         class JsonFormatter(logging.Formatter):
             def format(self, record: logging.LogRecord) -> str:
-                return _json.dumps({
+                d = {
                     "timestamp": self.formatTime(record),
                     "level": record.levelname,
                     "logger": record.name,
                     "message": record.getMessage(),
-                })
+                }
+                if record.exc_info:
+                    d["exception"] = self.formatException(record.exc_info)
+                return _json.dumps(d)
 
         handler.setFormatter(JsonFormatter())
     else:
@@ -48,24 +51,30 @@ async def _periodic_cleanup(db_factory):
     """Background task: clean expired sessions, federation nonces, event log, rate limiter, and presence hourly."""
     while True:
         await asyncio.sleep(3600)
-        try:
-            from vox.auth.service import cleanup_expired_sessions
-            from vox.db.models import EventLog, FederationNonce
-            from sqlalchemy import delete
-            from datetime import datetime, timezone
-            import time
+        from vox.auth.service import cleanup_expired_sessions
+        from vox.db.models import EventLog, FederationNonce
+        from sqlalchemy import delete
+        from datetime import datetime, timezone
+        import time
 
+        # Each step runs independently so one failure doesn't block the rest
+        try:
             async with db_factory() as db:
                 await cleanup_expired_sessions(db)
+        except Exception:
+            logger.error("Periodic cleanup: session cleanup failed", exc_info=True)
 
+        try:
             async with db_factory() as db:
                 now = datetime.now(timezone.utc)
                 await db.execute(
                     delete(FederationNonce).where(FederationNonce.expires_at <= now)
                 )
                 await db.commit()
+        except Exception:
+            logger.error("Periodic cleanup: nonce cleanup failed", exc_info=True)
 
-            # EventLog cleanup: delete rows older than 7 days (matching SYNC_RETENTION_MS)
+        try:
             async with db_factory() as db:
                 retention_ms = 7 * 24 * 60 * 60 * 1000  # 7 days
                 cutoff_ts = int(time.time() * 1000) - retention_ms
@@ -74,19 +83,22 @@ async def _periodic_cleanup(db_factory):
                     delete(EventLog).where(EventLog.id < cutoff_snowflake)
                 )
                 await db.commit()
+        except Exception:
+            logger.error("Periodic cleanup: event log cleanup failed", exc_info=True)
 
-            # Rate limiter eviction
+        try:
             from vox.ratelimit import evict_stale, evict_token_cache
             evict_stale()
             evict_token_cache()
+        except Exception:
+            logger.error("Periodic cleanup: rate limiter eviction failed", exc_info=True)
 
-            # Presence orphan cleanup + auth failure cleanup
+        try:
             hub = get_hub()
             hub.cleanup_orphaned_presence()
             hub.cleanup_auth_failures()
-
         except Exception:
-            logger.warning("Periodic cleanup failed", exc_info=True)
+            logger.error("Periodic cleanup: presence/auth cleanup failed", exc_info=True)
 
 
 # --- Health and readiness endpoints ---

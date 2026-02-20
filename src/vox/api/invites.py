@@ -77,13 +77,10 @@ async def resolve_invite(
     if invite is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "INVITE_INVALID", "message": "Invite not found."}})
 
-    count = (await db.execute(select(func.count()).select_from(User).where(User.active == True, User.federated == False))).scalar() or 0
-
     return InvitePreviewResponse(
         code=code,
         server_name=config.server.name,
         server_icon=config.server.icon,
-        member_count=count,
     )
 
 
