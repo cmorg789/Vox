@@ -1204,10 +1204,11 @@ async def test_cleanup_expired_sessions(client):
     r = await client.post("/api/v1/auth/register", json={"username": "alice", "password": "test1234"})
     token = r.json()["token"]
 
+    from vox.auth.service import hash_token
     factory = get_session_factory()
     async with factory() as db:
         # Expire the session
-        result = await db.execute(select(Session).where(Session.token == token))
+        result = await db.execute(select(Session).where(Session.token == hash_token(token)))
         session = result.scalar_one()
         session.expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
         await db.commit()

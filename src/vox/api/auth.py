@@ -99,13 +99,13 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> Login
 
     if has_totp or has_webauthn:
         # Issue an MFA ticket (short-lived token for the 2FA step)
-        from vox.auth.service import generate_token
+        from vox.auth.service import generate_token, hash_token
         mfa_ticket = "mfa_" + generate_token()
         # Store the ticket as a temporary session that requires 2FA completion
         from datetime import datetime, timedelta, timezone
         from vox.db.models import Session
         temp_session = Session(
-            token=mfa_ticket,
+            token=hash_token(mfa_ticket),
             user_id=user.id,
             created_at=datetime.now(timezone.utc),
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
@@ -263,7 +263,9 @@ async def login_2fa(
     role_ids = await get_user_role_ids(db, user_id)
 
     result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one()
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=401, detail={"error": {"code": "AUTH_FAILED", "message": "User not found."}})
 
     await db.commit()
 
@@ -494,6 +496,7 @@ async def remove_2fa(
 
     # Invalidate all other sessions for this user (keep current session)
     from vox.db.models import Session as DBSession
+    from vox.auth.service import hash_token
     current_token = None
     if authorization.startswith("Bearer "):
         current_token = authorization[7:]
@@ -503,7 +506,7 @@ async def remove_2fa(
         await db.execute(
             delete(DBSession).where(
                 DBSession.user_id == user.id,
-                DBSession.token != current_token,
+                DBSession.token != hash_token(current_token),
             )
         )
 
@@ -653,8 +656,9 @@ async def login_federation(
 
     # Delete the federation session
     from vox.db.models import Session as DBSession
+    from vox.auth.service import hash_token
     result = await db.execute(
-        select(DBSession).where(DBSession.token == body.federation_token)
+        select(DBSession).where(DBSession.token == hash_token(body.federation_token))
     )
     fed_session = result.scalar_one_or_none()
     if fed_session:
@@ -691,7 +695,8 @@ async def logout(
         return Response(status_code=204)
 
     from vox.db.models import Session as DBSession
-    await db.execute(delete(DBSession).where(DBSession.token == token, DBSession.user_id == user.id))
+    from vox.auth.service import hash_token
+    await db.execute(delete(DBSession).where(DBSession.token == hash_token(token), DBSession.user_id == user.id))
     await db.commit()
     return Response(status_code=204)
 

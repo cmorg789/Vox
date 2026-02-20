@@ -1,3 +1,4 @@
+import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -14,6 +15,14 @@ _ph = PasswordHasher()
 _DUMMY_HASH = _ph.hash("__dummy__")
 
 TOKEN_PREFIX = "vox_sess_"
+
+
+def hash_token(token: str) -> str:
+    """One-way SHA-256 hash for session token storage.
+
+    Plaintext is returned to the client; only the hash is persisted in DB.
+    """
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def hash_password(password: str) -> str:
@@ -50,7 +59,7 @@ async def create_user(
 
     token = generate_token()
     session = Session(
-        token=token,
+        token=hash_token(token),
         user_id=user.id,
         created_at=datetime.now(timezone.utc),
         expires_at=datetime.now(timezone.utc) + timedelta(days=config.auth.session_ttl_days),
@@ -80,7 +89,7 @@ async def authenticate(
 async def create_session(db: AsyncSession, user_id: int) -> str:
     token = generate_token()
     session = Session(
-        token=token,
+        token=hash_token(token),
         user_id=user_id,
         created_at=datetime.now(timezone.utc),
         expires_at=datetime.now(timezone.utc) + timedelta(days=config.auth.session_ttl_days),
@@ -95,7 +104,7 @@ async def get_user_by_token(db: AsyncSession, token: str) -> tuple[User, Session
     result = await db.execute(
         select(Session)
         .options(selectinload(Session.user))
-        .where(Session.token == token, Session.expires_at > now)
+        .where(Session.token == hash_token(token), Session.expires_at > now)
     )
     session = result.scalar_one_or_none()
     if session is None:

@@ -118,11 +118,11 @@ async def create_setup_session(
     db: AsyncSession, user_id: int, prefix: str
 ) -> str:
     """Create a short-lived session token for 2FA setup."""
-    from vox.auth.service import generate_token
+    from vox.auth.service import generate_token, hash_token
 
     token = prefix + generate_token()
     session = Session(
-        token=token,
+        token=hash_token(token),
         user_id=user_id,
         created_at=datetime.now(timezone.utc),
         expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
@@ -136,6 +136,8 @@ async def validate_setup_session(
     db: AsyncSession, token: str, prefix: str
 ) -> Session:
     """Validate a setup session token. Raises 401 if expired/invalid."""
+    from vox.auth.service import hash_token
+
     if not token.startswith(prefix):
         raise HTTPException(
             status_code=401,
@@ -143,7 +145,7 @@ async def validate_setup_session(
         )
     now = datetime.now(timezone.utc)
     result = await db.execute(
-        select(Session).where(Session.token == token, Session.expires_at > now)
+        select(Session).where(Session.token == hash_token(token), Session.expires_at > now)
     )
     session = result.scalar_one_or_none()
     if session is None:
@@ -156,6 +158,8 @@ async def validate_setup_session(
 
 async def validate_mfa_ticket(db: AsyncSession, ticket: str) -> Session:
     """Validate an MFA ticket session. Raises 401 if invalid."""
+    from vox.auth.service import hash_token
+
     if not ticket.startswith("mfa_"):
         raise HTTPException(
             status_code=401,
@@ -163,7 +167,7 @@ async def validate_mfa_ticket(db: AsyncSession, ticket: str) -> Session:
         )
     now = datetime.now(timezone.utc)
     result = await db.execute(
-        select(Session).where(Session.token == ticket, Session.expires_at > now)
+        select(Session).where(Session.token == hash_token(ticket), Session.expires_at > now)
     )
     session = result.scalar_one_or_none()
     if session is None:
