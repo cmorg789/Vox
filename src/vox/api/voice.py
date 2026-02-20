@@ -40,6 +40,28 @@ async def _dispatch_voice_state(db: AsyncSession, room_id: int) -> None:
     await dispatch(evt, db=db)
 
 
+@router.get("/api/v1/voice/media-cert")
+async def get_media_cert(_: User = Depends(get_current_user)):
+    """Return the SFU TLS certificate DER bytes for client pinning.
+
+    Only returns data when the SFU is using a self-signed certificate.
+    When using a CA-signed domain certificate, returns 404 — clients
+    should verify via the standard CA chain instead.
+    """
+    import hashlib
+
+    from vox.voice.service import get_sfu
+
+    cert_der = bytes(get_sfu().get_cert_der())
+    if not cert_der:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": "NO_CERT_PINNING", "message": "SFU is using a CA-signed certificate; no pinning required."}},
+        )
+    fingerprint = hashlib.sha256(cert_der).hexdigest()
+    return {"fingerprint": f"sha256:{fingerprint}", "cert_der": list(cert_der)}
+
+
 @router.get("/api/v1/rooms/{room_id}/voice")
 async def get_voice_members(
     room_id: int,

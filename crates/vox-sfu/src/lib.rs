@@ -13,12 +13,22 @@ use state::SharedState;
 /// Manages QUIC listener, room state, and media packet forwarding.
 /// Runs its own tokio runtime on a background thread so it doesn't
 /// block the Python event loop.
+///
+/// If `tls_cert` and `tls_key` are provided, the SFU uses the domain
+/// certificate (PEM files) and hot-reloads it hourly — clients can verify
+/// against the standard CA chain with no pinning required.
+///
+/// Without cert/key paths, a self-signed certificate is generated on each
+/// `start()` call; use `get_cert_der()` to retrieve it for client pinning.
 #[pyclass]
 struct SFU {
     bind_addr: String,
     state: SharedState,
     cancel: Option<CancellationToken>,
     rt_handle: Option<std::thread::JoinHandle<()>>,
+    cert_der: Vec<u8>,
+    tls_cert_path: Option<String>,
+    tls_key_path: Option<String>,
 }
 
 #[pymethods]
@@ -26,14 +36,20 @@ impl SFU {
     /// Create a new SFU instance.
     ///
     /// Args:
-    ///     bind: Address to bind the QUIC listener (e.g. "0.0.0.0:4443")
+    ///     bind:     Address to bind the QUIC listener (e.g. "0.0.0.0:4443")
+    ///     tls_cert: Path to PEM certificate file (optional; uses self-signed if omitted)
+    ///     tls_key:  Path to PEM private key file (optional; uses self-signed if omitted)
     #[new]
-    fn new(bind: &str) -> Self {
+    #[pyo3(signature = (bind, tls_cert=None, tls_key=None))]
+    fn new(bind: &str, tls_cert: Option<&str>, tls_key: Option<&str>) -> Self {
         SFU {
             bind_addr: bind.to_string(),
             state: state::new_shared(),
             cancel: None,
             rt_handle: None,
+            cert_der: Vec::new(),
+            tls_cert_path: tls_cert.map(str::to_string),
+            tls_key_path: tls_key.map(str::to_string),
         }
     }
 
@@ -45,6 +61,30 @@ impl SFU {
             ));
         }
 
+        let (server_config, maybe_resolver) =
+            match (&self.tls_cert_path, &self.tls_key_path) {
+                (Some(cert), Some(key)) => {
+                    let resolver = tls::ReloadingCertResolver::new(cert, key).map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                            "failed to load TLS cert: {}",
+                            e
+                        ))
+                    })?;
+                    self.cert_der = Vec::new(); // CA-signed: no pinning needed
+                    (tls::build_server_config(resolver.clone()), Some(resolver))
+                }
+                (None, None) => {
+                    let (cfg, der) = tls::generate_self_signed();
+                    self.cert_der = der;
+                    (cfg, None)
+                }
+                _ => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "tls_cert and tls_key must both be provided, or both omitted",
+                    ));
+                }
+            };
+
         let cancel = CancellationToken::new();
         self.cancel = Some(cancel.clone());
 
@@ -54,7 +94,10 @@ impl SFU {
         let handle = std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async move {
-                endpoint::run(bind_addr, state, cancel).await;
+                if let Some(resolver) = maybe_resolver {
+                    tls::spawn_cert_watcher(resolver, cancel.clone());
+                }
+                endpoint::run(bind_addr, server_config, state, cancel).await;
             });
         });
 
@@ -70,6 +113,7 @@ impl SFU {
         if let Some(handle) = self.rt_handle.take() {
             let _ = handle.join();
         }
+        self.cert_der = Vec::new();
         tracing::info!("SFU stopped");
         Ok(())
     }
@@ -117,6 +161,14 @@ impl SFU {
                 room_id
             ))
         })
+    }
+
+    /// Return the DER-encoded TLS certificate bytes for the current session.
+    ///
+    /// Only populated when using self-signed certs (no tls_cert/tls_key configured).
+    /// When using a domain certificate, clients verify via the CA chain instead.
+    fn get_cert_der(&self) -> PyResult<Vec<u8>> {
+        Ok(self.cert_der.clone())
     }
 }
 

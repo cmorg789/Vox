@@ -3,11 +3,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::header::MediaHeader;
 use crate::state::SharedState;
-use crate::tls;
 
 /// Run the QUIC media endpoint: accept connections, authenticate, forward datagrams.
-pub async fn run(bind_addr: String, state: SharedState, cancel: CancellationToken) {
-    let (server_config, _cert_der) = tls::generate_self_signed();
+pub async fn run(bind_addr: String, server_config: quinn::ServerConfig, state: SharedState, cancel: CancellationToken) {
 
     let addr: std::net::SocketAddr = bind_addr
         .parse()

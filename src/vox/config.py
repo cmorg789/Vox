@@ -207,12 +207,16 @@ class MediaConfig(_DbSettings):
 
     _DB_KEY_MAP: ClassVar[dict[str, str]] = {
         "media_url": "url",
+        "media_tls_cert": "tls_cert",
+        "media_tls_key": "tls_key",
         "allowed_file_mimes": "allowed_file_mimes",
         "allowed_emoji_mimes": "allowed_emoji_mimes",
         "allowed_sticker_mimes": "allowed_sticker_mimes",
     }
 
     url: str = "quic://localhost:4443"
+    tls_cert: str | None = None  # Path to PEM cert file; omit to use self-signed
+    tls_key: str | None = None   # Path to PEM key file; omit to use self-signed
     allowed_file_mimes: str = "image/*,video/*,audio/*,application/pdf,text/plain"
     allowed_emoji_mimes: str = "image/png,image/gif,image/webp"
     allowed_sticker_mimes: str = "image/png,image/gif,image/webp,image/apng"

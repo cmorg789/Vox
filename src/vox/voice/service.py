@@ -29,7 +29,8 @@ def init_sfu(bind: str) -> None:
             _sfu.stop()
         except Exception:
             pass
-    _sfu = SFU(bind)
+    from vox.config import config
+    _sfu = SFU(bind, tls_cert=config.media.tls_cert, tls_key=config.media.tls_key)
 
 
 def get_sfu() -> SFU:
@@ -38,8 +39,9 @@ def get_sfu() -> SFU:
         if SFU is None:
             raise RuntimeError("vox_sfu is not installed")
         import os
+        from vox.config import config
         bind = os.environ.get("VOX_MEDIA_BIND", "0.0.0.0:4443")
-        _sfu = SFU(bind)
+        _sfu = SFU(bind, tls_cert=config.media.tls_cert, tls_key=config.media.tls_key)
         _sfu.start()
     return _sfu
 
