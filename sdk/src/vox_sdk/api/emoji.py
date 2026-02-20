@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from vox_sdk.models.emoji import (
@@ -26,12 +28,12 @@ class EmojiAPI:
         return EmojiListResponse.model_validate(r.json())
 
     async def create_emoji(self, name: str, image_path: str) -> EmojiResponse:
-        with open(image_path, "rb") as f:
-            r = await self._http.post(
-                "/api/v1/emoji",
-                data={"name": name},
-                files={"image": f},
-            )
+        data = await asyncio.to_thread(Path(image_path).read_bytes)
+        r = await self._http.post(
+            "/api/v1/emoji",
+            data={"name": name},
+            files={"image": data},
+        )
         return EmojiResponse.model_validate(r.json())
 
     async def update_emoji(self, emoji_id: int, name: str) -> EmojiResponse:
@@ -48,12 +50,12 @@ class EmojiAPI:
         return StickerListResponse.model_validate(r.json())
 
     async def create_sticker(self, name: str, image_path: str) -> StickerResponse:
-        with open(image_path, "rb") as f:
-            r = await self._http.post(
-                "/api/v1/stickers",
-                data={"name": name},
-                files={"image": f},
-            )
+        data = await asyncio.to_thread(Path(image_path).read_bytes)
+        r = await self._http.post(
+            "/api/v1/stickers",
+            data={"name": name},
+            files={"image": data},
+        )
         return StickerResponse.model_validate(r.json())
 
     async def update_sticker(self, sticker_id: int, name: str) -> StickerResponse:

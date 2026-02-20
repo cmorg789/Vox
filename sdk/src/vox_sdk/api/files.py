@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from vox_sdk.models.files import FileResponse
@@ -15,19 +17,19 @@ class FilesAPI:
         self._http = http
 
     async def upload(self, feed_id: int, file_path: str, filename: str, mime: str) -> FileResponse:
-        with open(file_path, "rb") as f:
-            r = await self._http.post(
-                f"/api/v1/feeds/{feed_id}/files",
-                files={"file": (filename, f, mime)},
-            )
+        data = await asyncio.to_thread(Path(file_path).read_bytes)
+        r = await self._http.post(
+            f"/api/v1/feeds/{feed_id}/files",
+            files={"file": (filename, data, mime)},
+        )
         return FileResponse.model_validate(r.json())
 
     async def upload_dm(self, dm_id: int, file_path: str, filename: str, mime: str) -> FileResponse:
-        with open(file_path, "rb") as f:
-            r = await self._http.post(
-                f"/api/v1/dms/{dm_id}/files",
-                files={"file": (filename, f, mime)},
-            )
+        data = await asyncio.to_thread(Path(file_path).read_bytes)
+        r = await self._http.post(
+            f"/api/v1/dms/{dm_id}/files",
+            files={"file": (filename, data, mime)},
+        )
         return FileResponse.model_validate(r.json())
 
     async def upload_bytes(

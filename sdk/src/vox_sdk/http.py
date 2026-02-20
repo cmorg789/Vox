@@ -7,11 +7,12 @@ from typing import Any
 
 import httpx
 
-from vox_sdk.errors import VoxHTTPError
+from vox_sdk.errors import VoxHTTPError, VoxNetworkError
 from vox_sdk.rate_limit import RateLimiter
 
 _MAX_RETRIES = 3
 _BASE_RETRY_DELAY = 1.0
+_RETRYABLE_STATUSES = {500, 502, 503, 504}
 
 
 class HTTPClient:
@@ -65,15 +66,18 @@ class HTTPClient:
         for attempt in range(_MAX_RETRIES):
             await self._rate_limiter.wait_if_needed(path)
 
-            response = await self._client.request(
-                method,
-                path,
-                json=json,
-                params=params,
-                data=data,
-                files=files,
-                headers=merged_headers,
-            )
+            try:
+                response = await self._client.request(
+                    method,
+                    path,
+                    json=json,
+                    params=params,
+                    data=data,
+                    files=files,
+                    headers=merged_headers,
+                )
+            except httpx.TransportError as exc:
+                raise VoxNetworkError(str(exc)) from exc
 
             self._rate_limiter.update_from_response(path, response)
 
@@ -90,6 +94,12 @@ class HTTPClient:
                         retry_after = float(ra_header)
                 if attempt < _MAX_RETRIES - 1:
                     await asyncio.sleep(retry_after)
+                    continue
+                raise VoxHTTPError.from_response(response)
+
+            if response.status_code in _RETRYABLE_STATUSES:
+                if attempt < _MAX_RETRIES - 1:
+                    await asyncio.sleep(_BASE_RETRY_DELAY * (2 ** attempt))
                     continue
                 raise VoxHTTPError.from_response(response)
 
