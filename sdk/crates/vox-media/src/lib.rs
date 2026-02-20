@@ -14,6 +14,7 @@ enum MediaCommand {
     Connect {
         url: String,
         token: String,
+        cert_der: Option<Vec<u8>>,
     },
     Disconnect,
     SetMute(bool),
@@ -75,10 +76,12 @@ impl VoxMediaClient {
     }
 
     /// Connect to a voice room via the SFU.
-    fn connect(&self, url: &str, token: &str) -> PyResult<()> {
+    #[pyo3(signature = (url, token, cert_der=None))]
+    fn connect(&self, url: &str, token: &str, cert_der: Option<Vec<u8>>) -> PyResult<()> {
         self.send_cmd(MediaCommand::Connect {
             url: url.to_string(),
             token: token.to_string(),
+            cert_der,
         })
     }
 

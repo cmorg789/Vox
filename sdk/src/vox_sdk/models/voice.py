@@ -27,5 +27,10 @@ class MediaTokenResponse(VoxModel):
     media_token: str
 
 
+class MediaCertResponse(VoxModel):
+    fingerprint: str
+    cert_der: list[int]
+
+
 class StageTopicResponse(VoxModel):
     topic: str

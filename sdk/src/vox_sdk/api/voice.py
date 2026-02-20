@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from vox_sdk.errors import VoxHTTPError
+from vox_sdk.models.errors import ErrorCode
 from vox_sdk.models.voice import (
+    MediaCertResponse,
     MediaTokenResponse,
     StageTopicResponse,
     VoiceJoinResponse,
@@ -18,6 +21,20 @@ if TYPE_CHECKING:
 class VoiceAPI:
     def __init__(self, http: HTTPClient) -> None:
         self._http = http
+
+    async def get_media_cert(self) -> MediaCertResponse | None:
+        """Fetch the SFU's TLS certificate for pinning.
+
+        Returns ``None`` when the server uses a CA-signed certificate
+        (404 / ``NO_CERT_PINNING``).
+        """
+        try:
+            r = await self._http.get("/api/v1/voice/media-cert")
+            return MediaCertResponse.model_validate(r.json())
+        except VoxHTTPError as exc:
+            if exc.status == 404 and exc.code == ErrorCode.NO_CERT_PINNING:
+                return None
+            raise
 
     async def get_members(self, room_id: int) -> VoiceMembersResponse:
         r = await self._http.get(f"/api/v1/rooms/{room_id}/voice")

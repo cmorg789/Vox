@@ -106,6 +106,7 @@ from vox_sdk.models.users import (
     UserResponse,
 )
 from vox_sdk.models.voice import (
+    MediaCertResponse,
     MediaTokenResponse,
     StageTopicResponse,
     VoiceJoinResponse,
@@ -216,6 +217,7 @@ __all__ = [
     "PresenceResponse",
     "UserResponse",
     # voice
+    "MediaCertResponse",
     "MediaTokenResponse",
     "StageTopicResponse",
     "VoiceJoinResponse",

@@ -800,6 +800,50 @@ class TestVoiceAPI:
         assert calls[0]["body"] == {"user_id": 5, "muted": True}
 
     @pytest.mark.asyncio
+    async def test_get_media_cert_success(self, http_client):
+        client, transport, calls = http_client
+        transport.response = httpx.Response(200, json={
+            "fingerprint": "sha256:abcd1234",
+            "cert_der": [48, 130, 1, 0],
+        })
+        from vox_sdk.api.voice import VoiceAPI
+        from vox_sdk.models.voice import MediaCertResponse
+        api = VoiceAPI(client)
+        result = await api.get_media_cert()
+        assert calls[0]["path"] == "/api/v1/voice/media-cert"
+        assert calls[0]["method"] == "GET"
+        assert isinstance(result, MediaCertResponse)
+        assert result.fingerprint == "sha256:abcd1234"
+        assert result.cert_der == [48, 130, 1, 0]
+
+    @pytest.mark.asyncio
+    async def test_get_media_cert_no_pinning(self, http_client):
+        """404 with NO_CERT_PINNING returns None (CA-signed mode)."""
+        client, transport, calls = http_client
+        transport.response = httpx.Response(
+            404,
+            json={"error": {"code": "NO_CERT_PINNING", "message": "CA-signed certificate in use"}},
+        )
+        from vox_sdk.api.voice import VoiceAPI
+        api = VoiceAPI(client)
+        result = await api.get_media_cert()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_media_cert_unexpected_error(self, http_client):
+        """Other errors are re-raised."""
+        client, transport, calls = http_client
+        transport.response = httpx.Response(
+            500, json={"error": {"code": "VALIDATION_ERROR", "message": "boom"}},
+        )
+        from vox_sdk.api.voice import VoiceAPI
+        from vox_sdk.errors import VoxHTTPError
+        api = VoiceAPI(client)
+        with pytest.raises(VoxHTTPError) as exc_info:
+            await api.get_media_cert()
+        assert exc_info.value.status == 500
+
+    @pytest.mark.asyncio
     async def test_stage_set_topic(self, http_client):
         client, transport, calls = http_client
         transport.response = httpx.Response(200, json={"topic": "AMA"})

@@ -10,7 +10,7 @@ from vox_sdk.models.messages import MessageResponse
 from vox_sdk.models.roles import RoleResponse
 from vox_sdk.models.server import ServerInfoResponse, ServerLayoutResponse
 from vox_sdk.models.users import UserResponse
-from vox_sdk.models.voice import VoiceJoinResponse, VoiceMemberData
+from vox_sdk.models.voice import MediaCertResponse, VoiceJoinResponse, VoiceMemberData
 from vox_sdk.models.dms import DMResponse
 from vox_sdk.models.e2ee import PrekeyBundleResponse
 from vox_sdk.models.invites import InviteResponse
@@ -47,6 +47,13 @@ class TestErrorModels:
         })
         assert r.code == ErrorCode.AUTH_FAILED
         assert r.retry_after_ms is None
+
+    def test_no_cert_pinning_code(self):
+        r = ErrorResponse.model_validate({
+            "code": "NO_CERT_PINNING",
+            "message": "CA-signed certificate in use",
+        })
+        assert r.code == ErrorCode.NO_CERT_PINNING
 
     def test_error_with_retry(self):
         r = ErrorResponse.model_validate({
@@ -120,6 +127,14 @@ class TestCoreModels:
             "some_new_field": "value",
         })
         assert r.user_id == 1
+
+    def test_media_cert_response(self):
+        r = MediaCertResponse.model_validate({
+            "fingerprint": "sha256:abcdef1234567890",
+            "cert_der": [48, 130, 1, 0],
+        })
+        assert r.fingerprint == "sha256:abcdef1234567890"
+        assert r.cert_der == [48, 130, 1, 0]
 
     def test_voice_join_response(self):
         r = VoiceJoinResponse.model_validate({

@@ -79,6 +79,14 @@ class TestVoice:
         finally:
             await bob.close()
 
+    async def test_get_media_cert_self_signed(self, sdk):
+        """In test env the SFU uses a self-signed cert, so get_media_cert returns it."""
+        await register(sdk, "alice", "password123")
+        result = await sdk.voice.get_media_cert()
+        assert result is not None
+        assert result.fingerprint.startswith("sha256:")
+        assert len(result.cert_der) > 0
+
     async def test_stage_topic(self, sdk):
         """Create a stage room, set topic, verify response."""
         await register(sdk, "alice", "password123")

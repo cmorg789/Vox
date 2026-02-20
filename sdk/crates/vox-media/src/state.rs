@@ -1,6 +1,8 @@
 //! Media state machine — processes commands from Python.
 
+use crate::quic;
 use crate::MediaCommand;
+use quinn::ClientConfig;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -11,6 +13,7 @@ struct RoomState {
     muted: bool,
     deafened: bool,
     video: bool,
+    _client_config: ClientConfig,
 }
 
 /// Main media event loop. Receives commands from the Python layer
@@ -30,14 +33,16 @@ pub async fn run_media_loop(
             cmd = cmd_rx.recv() => {
                 match cmd {
                     None => break,
-                    Some(MediaCommand::Connect { url, token }) => {
+                    Some(MediaCommand::Connect { url, token, cert_der }) => {
                         tracing::info!("Connecting to SFU at {}", url);
+                        let client_config = quic::make_client_config(cert_der);
                         room = Some(RoomState {
                             url,
                             token,
                             muted: false,
                             deafened: false,
                             video: false,
+                            _client_config: client_config,
                         });
                         // TODO: establish QUIC connection, start audio pipeline
                     }
