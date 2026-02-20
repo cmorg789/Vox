@@ -5,7 +5,9 @@
 
 use bytes::{BufMut, Bytes, BytesMut};
 use quinn::ClientConfig;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 /// ALPN protocol identifier — must match the SFU server.
 const ALPN_PROTOCOL: &[u8] = b"vox-media/1";
@@ -163,6 +165,171 @@ impl InFrame {
         let header = MediaHeader::parse(&data)?;
         let payload = data.slice(HEADER_SIZE..);
         Some(InFrame { header, payload })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Video helpers: fragmentation + reassembly
+// ---------------------------------------------------------------------------
+
+/// Maximum payload per fragment (1200 MTU - 22 header).
+pub const MAX_FRAGMENT_PAYLOAD: usize = 1178;
+
+impl OutFrame {
+    /// Build a video frame datagram.
+    pub fn video(
+        room_id: u32,
+        user_id: u32,
+        seq: u32,
+        timestamp: u32,
+        is_keyframe: bool,
+        is_end_of_frame: bool,
+        payload: Bytes,
+    ) -> Self {
+        let mut flags: u8 = 0;
+        if is_keyframe {
+            flags |= FLAG_KEYFRAME;
+        }
+        if is_end_of_frame {
+            flags |= FLAG_END_OF_FRAME;
+        }
+        OutFrame {
+            header: MediaHeader {
+                version: PROTOCOL_VERSION,
+                media_type: MEDIA_TYPE_VIDEO,
+                codec_id: CODEC_AV1,
+                flags,
+                room_id,
+                user_id,
+                sequence: seq,
+                timestamp,
+                spatial_id: 0,
+                temporal_id: 0,
+                dtx: false,
+            },
+            payload,
+        }
+    }
+}
+
+/// Split a large AV1 frame into multiple datagrams sharing the same timestamp.
+/// The last fragment gets FLAG_END_OF_FRAME set.
+pub fn send_video_fragmented(
+    connection: &quinn::Connection,
+    room_id: u32,
+    user_id: u32,
+    start_seq: &mut u32,
+    timestamp: u32,
+    is_keyframe: bool,
+    data: &[u8],
+) -> Result<(), String> {
+    let chunks: Vec<&[u8]> = if data.is_empty() {
+        vec![&[]]
+    } else {
+        data.chunks(MAX_FRAGMENT_PAYLOAD).collect()
+    };
+    let last_idx = chunks.len() - 1;
+
+    for (i, chunk) in chunks.iter().enumerate() {
+        let is_last = i == last_idx;
+        let frame = OutFrame::video(
+            room_id,
+            user_id,
+            *start_seq,
+            timestamp,
+            is_keyframe && i == 0,
+            is_last,
+            Bytes::copy_from_slice(chunk),
+        );
+        connection
+            .send_datagram(frame.encode())
+            .map_err(|e| format!("send video fragment: {e}"))?;
+        *start_seq = start_seq.wrapping_add(1);
+    }
+
+    Ok(())
+}
+
+/// Key for video fragment reassembly: (user_id, timestamp).
+#[derive(Hash, Eq, PartialEq, Clone)]
+struct ReassemblyKey {
+    user_id: u32,
+    timestamp: u32,
+}
+
+/// Partial frame being assembled from fragments.
+struct PartialFrame {
+    fragments: Vec<(u32, Vec<u8>)>, // (sequence, payload)
+    is_keyframe: bool,
+    received_end: bool,
+    last_activity: Instant,
+}
+
+/// Reassembles fragmented video datagrams into complete AV1 frames.
+pub struct VideoReassembler {
+    pending: HashMap<ReassemblyKey, PartialFrame>,
+}
+
+/// A fully reassembled video frame ready for decoding.
+pub struct ReassembledFrame {
+    pub user_id: u32,
+    pub timestamp: u32,
+    pub is_keyframe: bool,
+    pub data: Vec<u8>,
+}
+
+impl VideoReassembler {
+    pub fn new() -> Self {
+        VideoReassembler {
+            pending: HashMap::new(),
+        }
+    }
+
+    /// Add a video datagram fragment. Returns a complete frame when all
+    /// fragments have arrived (END_OF_FRAME seen and contiguous sequence).
+    pub fn add_fragment(&mut self, header: &MediaHeader, payload: &[u8]) -> Option<ReassembledFrame> {
+        let key = ReassemblyKey {
+            user_id: header.user_id,
+            timestamp: header.timestamp,
+        };
+
+        let partial = self.pending.entry(key.clone()).or_insert_with(|| PartialFrame {
+            fragments: Vec::new(),
+            is_keyframe: false,
+            received_end: false,
+            last_activity: Instant::now(),
+        });
+
+        if header.is_keyframe() {
+            partial.is_keyframe = true;
+        }
+        if header.is_end_of_frame() {
+            partial.received_end = true;
+        }
+
+        partial.fragments.push((header.sequence, payload.to_vec()));
+        partial.last_activity = Instant::now();
+
+        if partial.received_end {
+            let mut partial = self.pending.remove(&key).unwrap();
+            // Sort by sequence number and concatenate
+            partial.fragments.sort_by_key(|(seq, _)| *seq);
+            let data: Vec<u8> = partial.fragments.into_iter().flat_map(|(_, d)| d).collect();
+            Some(ReassembledFrame {
+                user_id: key.user_id,
+                timestamp: key.timestamp,
+                is_keyframe: partial.is_keyframe,
+                data,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Evict stale partial frames older than the given duration.
+    pub fn evict_stale(&mut self, max_age: std::time::Duration) {
+        let now = Instant::now();
+        self.pending.retain(|_, v| now.duration_since(v.last_activity) < max_age);
     }
 }
 

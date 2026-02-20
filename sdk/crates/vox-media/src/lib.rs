@@ -5,6 +5,7 @@ mod state;
 mod video;
 
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
@@ -25,6 +26,12 @@ enum MediaCommand {
     SetMute(bool),
     SetDeaf(bool),
     SetVideo(bool),
+    SetVideoConfig {
+        width: u32,
+        height: u32,
+        fps: u32,
+        bitrate_kbps: u32,
+    },
 }
 
 /// Events emitted by the media runtime for Python consumption.
@@ -34,6 +41,7 @@ enum MediaEvent {
     ConnectFailed(String),
     Reconnecting { attempt: u32, delay_secs: u64 },
     AudioError(String),
+    VideoError(String),
 }
 
 impl MediaEvent {
@@ -46,6 +54,7 @@ impl MediaEvent {
                 ("reconnecting".into(), format!("attempt={attempt},delay={delay_secs}"))
             }
             MediaEvent::AudioError(msg) => ("audio_error".into(), msg.clone()),
+            MediaEvent::VideoError(msg) => ("video_error".into(), msg.clone()),
         }
     }
 }
@@ -60,6 +69,27 @@ pub(crate) fn push_event(queue: &EventQueue, event: MediaEvent) {
     }
 }
 
+/// A decoded video frame ready for Python consumption.
+pub(crate) struct VideoFrameOutput {
+    pub user_id: u32,   // 0 = local preview
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// Thread-safe queue of decoded video frames.
+pub(crate) type VideoFrameQueue = Arc<Mutex<VecDeque<VideoFrameOutput>>>;
+
+/// Push a video frame onto the queue (bounded to 8 frames, drops oldest).
+pub(crate) fn push_video_frame(queue: &VideoFrameQueue, frame: VideoFrameOutput) {
+    if let Ok(mut q) = queue.lock() {
+        if q.len() >= 8 {
+            q.pop_front();
+        }
+        q.push_back(frame);
+    }
+}
+
 /// Client-side media transport for Vox voice/video rooms.
 ///
 /// Runs a background tokio runtime that manages QUIC transport to the SFU,
@@ -70,6 +100,7 @@ struct VoxMediaClient {
     cancel: Option<CancellationToken>,
     rt_handle: Option<std::thread::JoinHandle<()>>,
     events: EventQueue,
+    video_frames: VideoFrameQueue,
     muted: bool,
     deafened: bool,
     video: bool,
@@ -85,6 +116,7 @@ impl VoxMediaClient {
             cancel: None,
             rt_handle: None,
             events: Arc::new(Mutex::new(VecDeque::new())),
+            video_frames: Arc::new(Mutex::new(VecDeque::new())),
             muted: false,
             deafened: false,
             video: false,
@@ -107,6 +139,7 @@ impl VoxMediaClient {
 
         let events = self.events.clone();
         let events_thread = self.events.clone();
+        let video_frames = self.video_frames.clone();
         let handle = std::thread::spawn(move || {
             let rt = match tokio::runtime::Runtime::new() {
                 Ok(rt) => rt,
@@ -116,7 +149,7 @@ impl VoxMediaClient {
                 }
             };
             rt.block_on(async move {
-                state::run_media_loop(cmd_rx, cancel, events).await;
+                state::run_media_loop(cmd_rx, cancel, events, video_frames).await;
             });
         });
 
@@ -157,13 +190,28 @@ impl VoxMediaClient {
 
     /// Enable or disable video.
     fn set_video(&mut self, enabled: bool) -> PyResult<()> {
-        if enabled {
-            return Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
-                "Video is not yet supported",
-            ));
-        }
-        self.video = false;
-        Ok(())
+        self.video = enabled;
+        self.send_cmd(MediaCommand::SetVideo(enabled))
+    }
+
+    /// Configure video capture parameters. Must be called before set_video(true).
+    #[pyo3(signature = (width=640, height=480, fps=30, bitrate_kbps=500))]
+    fn set_video_config(&self, width: u32, height: u32, fps: u32, bitrate_kbps: u32) -> PyResult<()> {
+        self.send_cmd(MediaCommand::SetVideoConfig {
+            width,
+            height,
+            fps,
+            bitrate_kbps,
+        })
+    }
+
+    /// Poll for the next decoded video frame.
+    /// Returns (user_id, width, height, rgba_bytes) or None.
+    /// user_id=0 means local camera preview.
+    fn poll_video_frame<'py>(&self, py: Python<'py>) -> Option<(u32, u32, u32, Bound<'py, PyBytes>)> {
+        let frame = self.video_frames.lock().ok()?.pop_front()?;
+        let bytes = PyBytes::new(py, &frame.rgba);
+        Some((frame.user_id, frame.width, frame.height, bytes))
     }
 
     /// Poll for the next event from the media runtime.
@@ -218,7 +266,7 @@ impl VoxMediaClient {
 
 /// Python module definition.
 #[pymodule]
-fn vox_media(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _media(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<VoxMediaClient>()?;
     Ok(())
 }
