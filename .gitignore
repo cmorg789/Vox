@@ -29,3 +29,9 @@ target/
 uploads/
 /.coverage
 tests/uploads/
+
+# Docs build output
+site/
+
+# Compiled extensions
+*.so

@@ -1,0 +1,151 @@
+site_name: Vox Protocol
+site_description: Documentation for Vox Protocol v1 — a federated, end-to-end encrypted chat platform with voice and video.
+site_url: https://docs.vox.example.com
+
+repo_url: https://github.com/vox-protocol/vox
+repo_name: vox-protocol/vox
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.indexes
+    - navigation.top
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/chat
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/vox-protocol/vox
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - getting-started/index.md
+    - Installation: getting-started/installation.md
+    - Configuration: getting-started/configuration.md
+    - Quick Start: getting-started/quick-start.md
+  - Architecture:
+    - architecture/index.md
+    - Server Hierarchy: architecture/server-hierarchy.md
+    - Transport Layers: architecture/transport-layers.md
+    - Permissions: architecture/permissions.md
+    - IDs & Snowflakes: architecture/ids.md
+    - Message Format: architecture/message-format.md
+    - Database Schema: architecture/database.md
+  - REST API:
+    - api/index.md
+    - Conventions: api/conventions.md
+    - Authentication: api/authentication.md
+    - Users: api/users.md
+    - Server: api/server.md
+    - Members: api/members.md
+    - Channels: api/channels.md
+    - Messages: api/messages.md
+    - Threads: api/threads.md
+    - Direct Messages: api/dms.md
+    - Voice: api/voice.md
+    - Files: api/files.md
+    - Emoji & Stickers: api/emoji.md
+    - Webhooks: api/webhooks.md
+    - Bots & Commands: api/bots.md
+    - Moderation: api/moderation.md
+    - Search & Sync: api/search-sync.md
+  - Gateway:
+    - gateway/index.md
+    - Connection Flow: gateway/connection.md
+    - Events Reference: gateway/events.md
+  - Federation:
+    - federation/index.md
+    - Server-to-Server API: federation/endpoints.md
+  - Security:
+    - security/index.md
+    - End-to-End Encryption: security/e2ee.md
+    - Device Pairing: security/device-pairing.md
+    - Two-Factor Auth: security/two-factor.md
+  - Media Transport:
+    - media/index.md
+    - SVC & Congestion Control: media/svc.md
+  - SDK:
+    - sdk/index.md
+    - Quick Start: sdk/quickstart.md
+    - HTTP Client: sdk/client.md
+    - Gateway Client: sdk/gateway-client.md
+  - Development:
+    - development/index.md
+    - Environment Setup: development/setup.md
+    - Testing: development/testing.md
+  - Reference:
+    - reference/index.md
+    - Error Codes: reference/errors.md
+    - Rate Limits: reference/rate-limits.md
