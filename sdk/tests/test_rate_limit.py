@@ -88,3 +88,56 @@ class TestRateLimiter:
         rl._buckets["auth"] = BucketInfo(limit=5, remaining=0, reset=time.time() - 1)
         # Reset is in the past, should not block
         await rl.wait_if_needed("/api/v1/auth/login")
+
+    @pytest.mark.asyncio
+    async def test_wait_if_needed_exhausted_future_reset(self, monkeypatch):
+        """Exhausted bucket with future reset should sleep until reset."""
+        import asyncio
+
+        rl = RateLimiter()
+        reset_time = time.time() + 5
+        rl._buckets["auth"] = BucketInfo(limit=5, remaining=0, reset=reset_time)
+
+        sleep_delays: list[float] = []
+        original_sleep = asyncio.sleep
+
+        async def fake_sleep(delay):
+            sleep_delays.append(delay)
+            # Don't actually sleep
+
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+        await rl.wait_if_needed("/api/v1/auth/login")
+
+        assert len(sleep_delays) == 1
+        # Should be approximately 5 seconds (allow for time drift)
+        assert 4.0 < sleep_delays[0] <= 6.0
+
+    @pytest.mark.asyncio
+    async def test_wait_if_needed_recheck_after_lock(self, monkeypatch):
+        """If bucket is replenished while waiting for the lock, skip sleeping."""
+        import asyncio
+
+        rl = RateLimiter()
+        reset_time = time.time() + 5
+        rl._buckets["auth"] = BucketInfo(limit=5, remaining=0, reset=reset_time)
+
+        sleep_called = False
+
+        async def fake_sleep(delay):
+            nonlocal sleep_called
+            sleep_called = True
+
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+        # Simulate: after the lock is acquired, the bucket has been refreshed
+        original_lock_acquire = asyncio.Lock.acquire
+
+        async def patched_acquire(self):
+            await original_lock_acquire(self)
+            # Simulate another task updating the bucket
+            rl._buckets["auth"] = BucketInfo(limit=5, remaining=3, reset=time.time() + 60)
+
+        monkeypatch.setattr(asyncio.Lock, "acquire", patched_acquire)
+        await rl.wait_if_needed("/api/v1/auth/login")
+
+        assert not sleep_called, "Should not sleep when bucket was replenished"
