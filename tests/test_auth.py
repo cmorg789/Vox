@@ -121,6 +121,38 @@ async def _register_and_get_token(client, username="alice", password="test1234")
     return data["token"], data["user_id"]
 
 
+async def _set_webauthn_config(rp_id="localhost", origin="http://localhost"):
+    """Helper: configure WebAuthn in the DB and reload config."""
+    from vox.db.engine import get_session_factory
+    from vox.db.models import Config
+    from vox.config import load_config
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    factory = get_session_factory()
+    async with factory() as db:
+        for key, val in [("webauthn_rp_id", rp_id), ("webauthn_origin", origin)]:
+            stmt = sqlite_insert(Config).values(key=key, value=val).on_conflict_do_nothing()
+            await db.execute(stmt)
+        await db.commit()
+    async with factory() as db:
+        await load_config(db)
+
+
+async def _clear_webauthn_config():
+    """Helper: remove WebAuthn config and reload."""
+    from vox.db.engine import get_session_factory
+    from vox.db.models import Config
+    from vox.config import load_config
+    from sqlalchemy import delete
+
+    factory = get_session_factory()
+    async with factory() as db:
+        await db.execute(delete(Config).where(Config.key.in_(["webauthn_rp_id", "webauthn_origin"])))
+        await db.commit()
+    async with factory() as db:
+        await load_config(db)
+
+
 async def _setup_totp(client, token):
     """Helper: start TOTP setup and confirm it. Returns recovery codes."""
     import pyotp
@@ -238,11 +270,11 @@ async def test_login_with_totp(client):
         "username": "alice",
         "password": "test1234",
     })
-    assert r.status_code == 200
+    assert r.status_code == 401
     data = r.json()
-    assert data["mfa_required"] is True
-    assert "totp" in data["available_methods"]
-    mfa_ticket = data["mfa_ticket"]
+    assert data["error"]["code"] == "2FA_REQUIRED"
+    assert "totp" in data["error"]["available_methods"]
+    mfa_ticket = data["error"]["mfa_ticket"]
 
     # Verify with TOTP code
     totp = pyotp.TOTP(secret)
@@ -268,7 +300,7 @@ async def test_login_with_wrong_totp(client):
         "username": "alice",
         "password": "test1234",
     })
-    mfa_ticket = r.json()["mfa_ticket"]
+    mfa_ticket = r.json()["error"]["mfa_ticket"]
 
     r = await client.post("/api/v1/auth/login/2fa", json={
         "mfa_ticket": mfa_ticket,
@@ -287,7 +319,7 @@ async def test_login_with_recovery_code(client):
         "username": "alice",
         "password": "test1234",
     })
-    mfa_ticket = r.json()["mfa_ticket"]
+    mfa_ticket = r.json()["error"]["mfa_ticket"]
 
     r = await client.post("/api/v1/auth/login/2fa", json={
         "mfa_ticket": mfa_ticket,
@@ -308,7 +340,7 @@ async def test_recovery_code_single_use(client):
     r = await client.post("/api/v1/auth/login", json={
         "username": "alice", "password": "test1234",
     })
-    mfa_ticket = r.json()["mfa_ticket"]
+    mfa_ticket = r.json()["error"]["mfa_ticket"]
     r = await client.post("/api/v1/auth/login/2fa", json={
         "mfa_ticket": mfa_ticket,
         "method": "recovery",
@@ -320,7 +352,7 @@ async def test_recovery_code_single_use(client):
     r = await client.post("/api/v1/auth/login", json={
         "username": "alice", "password": "test1234",
     })
-    mfa_ticket = r.json()["mfa_ticket"]
+    mfa_ticket = r.json()["error"]["mfa_ticket"]
     r = await client.post("/api/v1/auth/login/2fa", json={
         "mfa_ticket": mfa_ticket,
         "method": "recovery",
@@ -338,7 +370,7 @@ async def test_recovery_codes_counted(client):
     r = await client.post("/api/v1/auth/login", json={
         "username": "alice", "password": "test1234",
     })
-    mfa_ticket = r.json()["mfa_ticket"]
+    mfa_ticket = r.json()["error"]["mfa_ticket"]
     r = await client.post("/api/v1/auth/login/2fa", json={
         "mfa_ticket": mfa_ticket,
         "method": "recovery",
@@ -385,7 +417,7 @@ async def test_remove_totp(client):
         "password": "test1234",
     })
     assert r.status_code == 200
-    assert "mfa_required" not in r.json()
+    assert "error" not in r.json()
     assert r.json()["token"].startswith("vox_sess_")
 
 
@@ -473,8 +505,12 @@ async def test_generate_totp_secret_round_trip(client):
 
     totp = pyotp.TOTP(secret)
     code = totp.now()
-    assert verify_totp(secret, code) is True
-    assert verify_totp(secret, "000000") is False
+    valid, counter = verify_totp(secret, code)
+    assert valid is True
+    assert counter is not None
+    valid2, counter2 = verify_totp(secret, "000000")
+    assert valid2 is False
+    assert counter2 is None
 
 
 async def test_generate_recovery_codes(client):
@@ -552,7 +588,7 @@ async def test_login_2fa_unsupported_method(client):
     r = await client.post("/api/v1/auth/login", json={
         "username": "alice", "password": "test1234",
     })
-    mfa_ticket = r.json()["mfa_ticket"]
+    mfa_ticket = r.json()["error"]["mfa_ticket"]
 
     r = await client.post("/api/v1/auth/login/2fa", json={
         "mfa_ticket": mfa_ticket,
@@ -599,11 +635,11 @@ async def test_login_webauthn_only_2fa(client):
     r = await client.post("/api/v1/auth/login", json={
         "username": "alice", "password": "test1234",
     })
-    assert r.status_code == 200
+    assert r.status_code == 401
     data = r.json()
-    assert data["mfa_required"] is True
-    assert "webauthn" in data["available_methods"]
-    assert "totp" not in data["available_methods"]
+    assert data["error"]["code"] == "2FA_REQUIRED"
+    assert "webauthn" in data["error"]["available_methods"]
+    assert "totp" not in data["error"]["available_methods"]
 
 
 async def test_remove_2fa_webauthn(client):
@@ -693,7 +729,7 @@ async def test_login_2fa_totp_no_code(client):
     r = await client.post("/api/v1/auth/login", json={
         "username": "alice", "password": "test1234",
     })
-    mfa_ticket = r.json()["mfa_ticket"]
+    mfa_ticket = r.json()["error"]["mfa_ticket"]
 
     r = await client.post("/api/v1/auth/login/2fa", json={
         "mfa_ticket": mfa_ticket,
@@ -710,7 +746,7 @@ async def test_login_2fa_recovery_no_code(client):
     r = await client.post("/api/v1/auth/login", json={
         "username": "alice", "password": "test1234",
     })
-    mfa_ticket = r.json()["mfa_ticket"]
+    mfa_ticket = r.json()["error"]["mfa_ticket"]
 
     r = await client.post("/api/v1/auth/login/2fa", json={
         "mfa_ticket": mfa_ticket,
@@ -725,13 +761,23 @@ async def test_login_2fa_recovery_no_code(client):
 async def test_webauthn_registration_options(client):
     """generate_webauthn_registration returns challenge_id and options."""
     from vox.auth.mfa import generate_webauthn_registration
-    from vox.db.models import WebAuthnChallenge
-    from sqlalchemy import select
+    from vox.db.models import WebAuthnChallenge, Config
+    from vox.config import load_config
+    from sqlalchemy import select, delete
 
     token, user_id = await _register_and_get_token(client)
 
     from vox.db.engine import get_session_factory
     factory = get_session_factory()
+
+    # Configure WebAuthn first
+    async with factory() as db:
+        db.add(Config(key="webauthn_rp_id", value="localhost"))
+        db.add(Config(key="webauthn_origin", value="http://localhost"))
+        await db.commit()
+    async with factory() as db:
+        await load_config(db)
+
     async with factory() as db:
         challenge_id, options = await generate_webauthn_registration(db, user_id, "alice")
         assert challenge_id
@@ -744,6 +790,13 @@ async def test_webauthn_registration_options(client):
         # Clean up
         await db.delete(challenge_row)
         await db.commit()
+
+    # Clean up config
+    async with factory() as db:
+        await db.execute(delete(Config).where(Config.key.in_(["webauthn_rp_id", "webauthn_origin"])))
+        await db.commit()
+    async with factory() as db:
+        await load_config(db)
 
 
 async def test_webauthn_verify_registration_invalid_challenge(client):
@@ -768,6 +821,7 @@ async def test_webauthn_authentication_no_credentials(client):
     import pytest as _pytest
 
     token, user_id = await _register_and_get_token(client)
+    await _set_webauthn_config()
 
     from vox.db.engine import get_session_factory
     factory = get_session_factory()
@@ -776,6 +830,8 @@ async def test_webauthn_authentication_no_credentials(client):
             await generate_webauthn_authentication(db, user_id)
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail["error"]["code"] == "WEBAUTHN_CREDENTIAL_NOT_FOUND"
+
+    await _clear_webauthn_config()
 
 
 async def test_webauthn_verify_authentication_invalid_challenge(client):
@@ -801,6 +857,7 @@ async def test_webauthn_authentication_options(client):
     from sqlalchemy import select
 
     token, user_id = await _register_and_get_token(client)
+    await _set_webauthn_config()
 
     from vox.db.engine import get_session_factory
     factory = get_session_factory()
@@ -827,6 +884,8 @@ async def test_webauthn_authentication_options(client):
         # Clean up
         await db.delete(challenge_row)
         await db.commit()
+
+    await _clear_webauthn_config()
 
 
 async def test_validate_mfa_ticket_invalid_prefix(client):
@@ -861,19 +920,22 @@ async def test_validate_mfa_ticket_expired(client):
 
 
 async def test_webauthn_get_config(client):
-    """_get_webauthn_config returns defaults or configured values."""
+    """_get_webauthn_config raises when unconfigured, returns configured values."""
     from vox.auth.mfa import _get_webauthn_config
     from vox.config import config, load_config
     from vox.db.models import Config
+    from fastapi import HTTPException
+    import pytest as _pytest
 
     token, user_id = await _register_and_get_token(client)
     from vox.db.engine import get_session_factory
     factory = get_session_factory()
 
-    # Default values
-    rp_id, origin = _get_webauthn_config()
-    assert rp_id == "localhost"
-    assert origin == "http://localhost:8000"
+    # Unconfigured — should raise
+    with _pytest.raises(HTTPException) as exc_info:
+        _get_webauthn_config()
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail["error"]["code"] == "WEBAUTHN_NOT_CONFIGURED"
 
     # Custom values
     async with factory() as db:
@@ -918,7 +980,7 @@ async def test_login_2fa_webauthn_no_assertion(client):
     r = await client.post("/api/v1/auth/login", json={
         "username": "alice", "password": "test1234",
     })
-    mfa_ticket = r.json()["mfa_ticket"]
+    mfa_ticket = r.json()["error"]["mfa_ticket"]
 
     r = await client.post("/api/v1/auth/login/2fa", json={
         "mfa_ticket": mfa_ticket,
@@ -930,6 +992,7 @@ async def test_login_2fa_webauthn_no_assertion(client):
 async def test_webauthn_setup_flow(client):
     """WebAuthn setup returns creation_options with challenge_id."""
     token, user_id = await _register_and_get_token(client)
+    await _set_webauthn_config()
 
     r = await client.post(
         "/api/v1/auth/2fa/setup",
@@ -942,6 +1005,8 @@ async def test_webauthn_setup_flow(client):
     assert "creation_options" in data
     assert "challenge_id" in data["creation_options"]
     assert data["setup_id"].startswith("setup_webauthn_")
+
+    await _clear_webauthn_config()
 
 
 async def test_logout(client):
@@ -1016,6 +1081,7 @@ async def test_confirm_2fa_setup_totp_no_pending(client):
 async def test_confirm_webauthn_setup_no_attestation(client):
     """Confirming WebAuthn setup without attestation returns 400."""
     token, _ = await _register_and_get_token(client)
+    await _set_webauthn_config()
     r = await client.post(
         "/api/v1/auth/2fa/setup",
         json={"method": "webauthn"},
@@ -1030,6 +1096,7 @@ async def test_confirm_webauthn_setup_no_attestation(client):
     )
     assert r.status_code == 400
     assert r.json()["detail"]["error"]["code"] == "WEBAUTHN_FAILED"
+    await _clear_webauthn_config()
 
 
 async def test_webauthn_login_challenge_with_credential(client):
@@ -1039,6 +1106,7 @@ async def test_webauthn_login_challenge_with_credential(client):
     from vox.db.engine import get_session_factory
 
     token, user_id = await _register_and_get_token(client)
+    await _set_webauthn_config()
     factory = get_session_factory()
     async with factory() as db:
         cred = WebAuthnCredential(
@@ -1056,6 +1124,8 @@ async def test_webauthn_login_challenge_with_credential(client):
     data = r.json()
     assert "challenge_id" in data
     assert "options" in data
+
+    await _clear_webauthn_config()
 
 
 async def test_webauthn_login_no_challenge(client):

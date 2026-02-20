@@ -35,7 +35,7 @@ async def test_ratelimit_429_enforced(client):
     r = await client.post("/api/v1/auth/login", json={"username": "nobody", "password": "nope"})
     assert r.status_code == 429
     body = r.json()
-    assert body["error"]["code"] == "RATE_LIMITED"
+    assert body["error"]["code"] == "AUTH_RATE_LIMITED"
     assert "retry_after_ms" in body["error"]
     assert "retry-after" in r.headers
 

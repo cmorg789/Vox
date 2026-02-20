@@ -44,7 +44,7 @@ async def test_execute_webhook_bad_token(client):
     wh_id = r.json()["webhook_id"]
 
     r = await client.post(f"/api/v1/webhooks/{wh_id}/bad_token", json={"body": "test"})
-    assert r.status_code == 422
+    assert r.status_code == 401
 
 
 async def test_delete_webhook(client):

@@ -60,7 +60,8 @@ async def test_message_body_too_long(client):
     h, _, _ = await auth(client)
     fid = await setup_feed(client, h)
     r = await client.post(f"/api/v1/feeds/{fid}/messages", headers=h, json={"body": "x" * 4001})
-    assert r.status_code == 422
+    assert r.status_code == 400
+    assert r.json()["detail"]["error"]["code"] == "MESSAGE_TOO_LARGE"
 
 
 async def test_edit_message_body_too_long(client):

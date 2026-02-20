@@ -320,7 +320,7 @@ async def test_deregister_commands_not_bot(client):
 
 
 async def test_register_duplicate_command(client):
-    """Registering a command with the same name twice upserts (updates description)."""
+    """Registering a command with the same name twice returns 409."""
     human_h, bot_h, bot_uid, _ = await _setup_bot(client)
     await client.put(f"/api/v1/bots/{bot_uid}/commands", headers=bot_h, json={
         "commands": [{"name": "help", "description": "Show help"}]
@@ -328,7 +328,8 @@ async def test_register_duplicate_command(client):
     r = await client.put(f"/api/v1/bots/{bot_uid}/commands", headers=bot_h, json={
         "commands": [{"name": "help", "description": "Updated help"}]
     })
-    assert r.status_code == 200
+    assert r.status_code == 409
+    assert r.json()["detail"]["error"]["code"] == "CMD_ALREADY_REGISTERED"
 
 
 async def test_respond_interaction_message_not_found(client):

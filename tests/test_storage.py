@@ -124,6 +124,7 @@ async def test_s3_storage_put_with_public_url():
     s3.secret_key = None
     s3.region = "us-east-1"
     s3.public_url = "https://cdn.example.com"
+    s3._session = mock_session
 
     with patch.dict("sys.modules", {"aioboto3": mock_aioboto3}):
         url = await s3.put("file123", b"content", "image/png")
@@ -156,6 +157,7 @@ async def test_s3_storage_put_without_public_url():
     s3.secret_key = None
     s3.region = "us-east-1"
     s3.public_url = None
+    s3._session = mock_session
 
     with patch.dict("sys.modules", {"aioboto3": mock_aioboto3}):
         url = await s3.put("file456", b"content", "image/png")
@@ -190,6 +192,7 @@ async def test_s3_storage_get():
     s3.secret_key = None
     s3.region = "us-east-1"
     s3.public_url = None
+    s3._session = mock_session
 
     with patch.dict("sys.modules", {"aioboto3": mock_aioboto3}):
         data = await s3.get("key1")
@@ -221,6 +224,7 @@ async def test_s3_storage_delete():
     s3.secret_key = None
     s3.region = "us-east-1"
     s3.public_url = None
+    s3._session = mock_session
 
     with patch.dict("sys.modules", {"aioboto3": mock_aioboto3}):
         await s3.delete("key1")
@@ -261,6 +265,7 @@ async def test_s3_storage_exists_true_and_false():
     s3.secret_key = None
     s3.region = "us-east-1"
     s3.public_url = None
+    s3._session = mock_session_true
 
     with patch.dict("sys.modules", {"aioboto3": mock_aioboto3, "botocore.exceptions": mock_botocore_exc, "botocore": MagicMock()}):
         result = await s3.exists("key1")
@@ -276,7 +281,7 @@ async def test_s3_storage_exists_true_and_false():
 
     mock_session_false = MagicMock()
     mock_session_false.client.return_value = mock_ctx_false
-    mock_aioboto3.Session.return_value = mock_session_false
+    s3._session = mock_session_false
 
     with patch.dict("sys.modules", {"aioboto3": mock_aioboto3, "botocore.exceptions": mock_botocore_exc, "botocore": MagicMock()}):
         result = await s3.exists("key1")
