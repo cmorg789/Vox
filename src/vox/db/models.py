@@ -95,9 +95,10 @@ class Session(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     token: Mapped[str] = mapped_column(String(255), unique=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime)
     expires_at: Mapped[datetime] = mapped_column(DateTime)
+    mfa_fail_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     user: Mapped["User"] = relationship(back_populates="sessions")
 
@@ -304,6 +305,8 @@ class File(Base):
     mime: Mapped[str] = mapped_column(String(255))
     url: Mapped[str] = mapped_column(Text)
     uploader_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    feed_id: Mapped[Optional[int]] = mapped_column(ForeignKey("feeds.id"), nullable=True)
+    dm_id: Mapped[Optional[int]] = mapped_column(ForeignKey("dms.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
 
@@ -344,7 +347,7 @@ class Device(Base):
     __tablename__ = "devices"
 
     id: Mapped[str] = mapped_column(String(255), primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     device_name: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
@@ -451,12 +454,12 @@ class FederationNonce(Base):
 class FederationPresenceSub(Base):
     __tablename__ = "federation_presence_subs"
     __table_args__ = (
-        UniqueConstraint("domain", "user_address"),
+        UniqueConstraint("user_address", "domain"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     domain: Mapped[str] = mapped_column(String(255))
-    user_address: Mapped[str] = mapped_column(String(255))
+    user_address: Mapped[str] = mapped_column(String(255), index=True)
 
 
 # --- Moderation ---
@@ -527,7 +530,7 @@ class RecoveryCode(Base):
     __tablename__ = "recovery_codes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     code_hash: Mapped[str] = mapped_column(String(255))
     used: Mapped[bool] = mapped_column(Boolean, server_default="0")
 

@@ -349,6 +349,8 @@ async def send_dm_message(
             f = (await db.execute(select(File).where(File.id == file_id))).scalar_one_or_none()
             if f is None:
                 raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_ATTACHMENT", "message": f"File {file_id} not found."}})
+            if f.uploader_id != user.id and f.dm_id != dm_id:
+                raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "You do not have access to this file."}})
             await db.execute(message_attachments.insert().values(msg_id=msg_id, file_id=file_id))
             attachment_dicts.append({"file_id": f.id, "name": f.name, "size": f.size, "mime": f.mime, "url": f.url})
     await db.commit()

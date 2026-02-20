@@ -18,8 +18,12 @@ _MAX_RESPONSE_SIZE = 1 * 1024 * 1024  # 1MB
 _ALLOWED_SCHEMES = {"http", "https"}
 
 
-async def _validate_url(url: str) -> str:
-    """Validate URL to prevent SSRF: reject private/loopback/link-local IPs."""
+async def _validate_url(url: str) -> tuple[str, str, str]:
+    """Validate URL to prevent SSRF. Returns (original_url, resolved_ip, hostname).
+
+    The caller must connect to ``resolved_ip`` directly (with a ``Host`` header
+    set to ``hostname``) to avoid DNS-rebinding TOCTOU attacks.
+    """
     parsed = urlparse(url)
     if parsed.scheme not in _ALLOWED_SCHEMES:
         raise HTTPException(
@@ -40,6 +44,7 @@ async def _validate_url(url: str) -> str:
             status_code=400,
             detail={"error": {"code": "INVALID_URL", "message": "Could not resolve hostname."}},
         )
+    resolved_ip: str | None = None
     for family, _type, _proto, _canonname, sockaddr in addrinfos:
         ip = ipaddress.ip_address(sockaddr[0])
         if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
@@ -47,7 +52,19 @@ async def _validate_url(url: str) -> str:
                 status_code=400,
                 detail={"error": {"code": "INVALID_URL", "message": "URLs pointing to private/internal addresses are not allowed."}},
             )
-    return url
+        if resolved_ip is None:
+            resolved_ip = str(ip)
+    if resolved_ip is None:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "INVALID_URL", "message": "Could not resolve hostname."}},
+        )
+    return url, resolved_ip, hostname
+
+
+def _pin_url(url: str, hostname: str, resolved_ip: str) -> str:
+    """Replace hostname in URL with the pre-resolved IP to prevent DNS rebinding."""
+    return url.replace(f"://{hostname}", f"://{resolved_ip}", 1)
 
 
 def _extract_meta(html: str) -> dict[str, str | None]:
@@ -109,18 +126,20 @@ async def resolve_embed(
     body: ResolveEmbedRequest,
     _: User = Depends(get_current_user),
 ) -> Embed:
-    await _validate_url(body.url)
+    _url, resolved_ip, hostname = await _validate_url(body.url)
+    pinned = _pin_url(body.url, hostname, resolved_ip)
     try:
-        async with httpx.AsyncClient(follow_redirects=False) as client:
-            resp = await client.get(body.url, timeout=5.0, headers={"User-Agent": "VoxBot/1.0"})
+        async with httpx.AsyncClient(follow_redirects=False, verify=False) as client:
+            resp = await client.get(pinned, timeout=5.0, headers={"User-Agent": "VoxBot/1.0", "Host": hostname})
             # Follow redirects manually, validating each target
             redirects = 0
             while resp.is_redirect and redirects < 5:
                 location = resp.headers.get("location")
                 if not location:
                     break
-                await _validate_url(location)
-                resp = await client.get(location, timeout=5.0, headers={"User-Agent": "VoxBot/1.0"})
+                _redir_url, redir_ip, redir_host = await _validate_url(location)
+                pinned_redir = _pin_url(location, redir_host, redir_ip)
+                resp = await client.get(pinned_redir, timeout=5.0, headers={"User-Agent": "VoxBot/1.0", "Host": redir_host})
                 redirects += 1
             if len(resp.content) > _MAX_RESPONSE_SIZE:
                 return Embed()

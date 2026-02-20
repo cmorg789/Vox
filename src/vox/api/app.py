@@ -58,6 +58,16 @@ def create_app(database_url: str | None = None) -> FastAPI:
                         connection.execute(text("ALTER TABLE voice_states ADD COLUMN server_mute BOOLEAN DEFAULT 0 NOT NULL"))
                     if "server_deaf" not in cols:
                         connection.execute(text("ALTER TABLE voice_states ADD COLUMN server_deaf BOOLEAN DEFAULT 0 NOT NULL"))
+                if "sessions" in inspector.get_table_names():
+                    cols = {c["name"] for c in inspector.get_columns("sessions")}
+                    if "mfa_fail_count" not in cols:
+                        connection.execute(text("ALTER TABLE sessions ADD COLUMN mfa_fail_count INTEGER DEFAULT 0 NOT NULL"))
+                if "files" in inspector.get_table_names():
+                    cols = {c["name"] for c in inspector.get_columns("files")}
+                    if "feed_id" not in cols:
+                        connection.execute(text("ALTER TABLE files ADD COLUMN feed_id INTEGER REFERENCES feeds(id)"))
+                    if "dm_id" not in cols:
+                        connection.execute(text("ALTER TABLE files ADD COLUMN dm_id INTEGER REFERENCES dms(id)"))
             await conn.run_sync(_migrate)
         # Initialize storage backend
         from vox.storage import init_storage

@@ -39,7 +39,7 @@ class LocalStorage:
     def _safe_path(self, key: str) -> Path:
         """Resolve path and ensure it stays within base_dir (prevent path traversal)."""
         resolved = (self.base_dir / key).resolve()
-        if not str(resolved).startswith(str(self.base_dir)):
+        if not resolved.is_relative_to(self.base_dir):
             raise ValueError("Invalid file key")
         return resolved
 

@@ -1,8 +1,15 @@
 """File upload and download endpoints."""
 
 import secrets
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+def _content_disposition(filename: str) -> str:
+    """Build a safe Content-Disposition header value."""
+    encoded = urllib.parse.quote(filename, safe=" ()-._~")
+    return f"attachment; filename*=UTF-8''{encoded}"
 
 import filetype
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
@@ -60,6 +67,7 @@ async def upload_file(
         mime=file_mime,
         url=url,
         uploader_id=user.id,
+        feed_id=feed_id,
         created_at=datetime.now(timezone.utc),
     )
     db.add(row)
@@ -115,6 +123,7 @@ async def upload_dm_file(
         mime=file_mime,
         url=url,
         uploader_id=user.id,
+        dm_id=dm_id,
         created_at=datetime.now(timezone.utc),
     )
     db.add(row)
@@ -169,16 +178,17 @@ async def download_file(
         )
 
     # Always set Content-Disposition: attachment to prevent content-sniffing attacks
+    disposition = _content_disposition(row.name)
     if isinstance(storage, LocalStorage):
         return FastAPIFileResponse(
             path=str(storage.local_path / file_id),
             media_type=row.mime,
             filename=row.name,
-            headers={"Content-Disposition": f'attachment; filename="{row.name}"'},
+            headers={"Content-Disposition": disposition},
         )
 
     data = await storage.get(file_id)
-    return Response(content=data, media_type=row.mime, headers={"Content-Disposition": f'attachment; filename="{row.name}"'})
+    return Response(content=data, media_type=row.mime, headers={"Content-Disposition": disposition})
 
 
 @router.delete("/api/v1/files/{file_id}", status_code=204)

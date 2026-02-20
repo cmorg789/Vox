@@ -34,25 +34,32 @@ from vox.models.messages import (
 router = APIRouter(tags=["messages"])
 
 
-async def _is_safe_url(url: str) -> bool:
-    """Validate a URL is safe to call (SSRF prevention)."""
+async def _is_safe_url(url: str) -> tuple[bool, str, str]:
+    """Validate a URL is safe to call (SSRF prevention).
+
+    Returns (is_safe, resolved_ip, hostname).  The caller should connect to
+    ``resolved_ip`` directly with a ``Host`` header to prevent DNS rebinding.
+    """
     parsed = urlparse(url)
     if parsed.scheme not in ("https", "http"):
-        return False
+        return False, "", ""
     hostname = parsed.hostname or ""
     loop = asyncio.get_running_loop()
     try:
         addrinfos = await loop.getaddrinfo(hostname, None, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM)
     except socket.gaierror:
-        return False
+        return False, "", ""
+    resolved_ip: str = ""
     for _family, _type, _proto, _canonname, sockaddr in addrinfos:
         try:
             addr = ipaddress.ip_address(sockaddr[0])
         except ValueError:
-            return False
+            return False, "", ""
         if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-            return False
-    return True
+            return False, "", ""
+        if not resolved_ip:
+            resolved_ip = str(addr)
+    return True, resolved_ip, hostname
 
 # Simple snowflake: 42-bit timestamp (ms) + 22-bit sequence
 _seq = 0
@@ -170,11 +177,13 @@ async def _handle_slash_command(
 
     if bot.interaction_url:
         # HTTP callback bot — validate URL to prevent SSRF
-        if not await _is_safe_url(bot.interaction_url):
+        safe, resolved_ip, host = await _is_safe_url(bot.interaction_url)
+        if not safe:
             return None
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(bot.interaction_url, json=payload, timeout=5.0)
+            pinned_url = bot.interaction_url.replace(f"://{host}", f"://{resolved_ip}", 1)
+            async with httpx.AsyncClient(verify=False) as client:
+                resp = await client.post(pinned_url, json=payload, timeout=5.0, headers={"Host": host})
                 if resp.status_code == 200 and resp.content:
                     data = resp.json()
                     if data.get("body"):
@@ -334,6 +343,8 @@ async def send_feed_message(
             f = (await db.execute(select(File).where(File.id == file_id))).scalar_one_or_none()
             if f is None:
                 raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_ATTACHMENT", "message": f"File {file_id} not found."}})
+            if f.uploader_id != user.id and f.feed_id != feed_id:
+                raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "You do not have access to this file."}})
             await db.execute(message_attachments.insert().values(msg_id=msg_id, file_id=file_id))
             attachment_dicts.append({"file_id": f.id, "name": f.name, "size": f.size, "mime": f.mime, "url": f.url})
 
@@ -370,7 +381,7 @@ async def edit_feed_message(
     msg_id: int,
     body: EditMessageRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = require_permission(SEND_MESSAGES, space_type="feed", space_id_param="feed_id"),
 ) -> EditMessageResponse:
     result = await db.execute(select(Message).where(Message.id == msg_id, Message.feed_id == feed_id))
     msg = result.scalar_one_or_none()
@@ -499,6 +510,8 @@ async def send_thread_message(
             f = (await db.execute(select(File).where(File.id == file_id))).scalar_one_or_none()
             if f is None:
                 raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_ATTACHMENT", "message": f"File {file_id} not found."}})
+            if f.uploader_id != user.id and f.feed_id != feed_id:
+                raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "You do not have access to this file."}})
             await db.execute(message_attachments.insert().values(msg_id=msg_id, file_id=file_id))
             attachment_dicts.append({"file_id": f.id, "name": f.name, "size": f.size, "mime": f.mime, "url": f.url})
     await db.commit()
