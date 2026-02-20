@@ -137,43 +137,6 @@ def create_app(database_url: str | None = None) -> FastAPI:
         engine = get_engine()
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-            # SQLite ALTER TABLE migration for new columns on existing tables
-            from sqlalchemy import text, inspect as sa_inspect
-            def _migrate(connection):
-                inspector = sa_inspect(connection)
-                if "voice_states" in inspector.get_table_names():
-                    cols = {c["name"] for c in inspector.get_columns("voice_states")}
-                    if "server_mute" not in cols:
-                        connection.execute(text("ALTER TABLE voice_states ADD COLUMN server_mute BOOLEAN DEFAULT 0 NOT NULL"))
-                    if "server_deaf" not in cols:
-                        connection.execute(text("ALTER TABLE voice_states ADD COLUMN server_deaf BOOLEAN DEFAULT 0 NOT NULL"))
-                if "sessions" in inspector.get_table_names():
-                    cols = {c["name"] for c in inspector.get_columns("sessions")}
-                    if "mfa_fail_count" not in cols:
-                        connection.execute(text("ALTER TABLE sessions ADD COLUMN mfa_fail_count INTEGER DEFAULT 0 NOT NULL"))
-                if "files" in inspector.get_table_names():
-                    cols = {c["name"] for c in inspector.get_columns("files")}
-                    if "feed_id" not in cols:
-                        connection.execute(text("ALTER TABLE files ADD COLUMN feed_id INTEGER REFERENCES feeds(id)"))
-                    if "dm_id" not in cols:
-                        connection.execute(text("ALTER TABLE files ADD COLUMN dm_id INTEGER REFERENCES dms(id)"))
-                if "totp_secrets" in inspector.get_table_names():
-                    cols = {c["name"] for c in inspector.get_columns("totp_secrets")}
-                    if "last_used_counter" not in cols:
-                        connection.execute(text("ALTER TABLE totp_secrets ADD COLUMN last_used_counter INTEGER"))
-                if "rooms" in inspector.get_table_names():
-                    cols = {c["name"] for c in inspector.get_columns("rooms")}
-                    if "max_members" not in cols:
-                        connection.execute(text("ALTER TABLE rooms ADD COLUMN max_members INTEGER"))
-                if "stage_invites" not in inspector.get_table_names():
-                    connection.execute(text(
-                        "CREATE TABLE IF NOT EXISTS stage_invites ("
-                        "room_id INTEGER NOT NULL REFERENCES rooms(id), "
-                        "user_id INTEGER NOT NULL REFERENCES users(id), "
-                        "created_at DATETIME NOT NULL, "
-                        "PRIMARY KEY (room_id, user_id))"
-                    ))
-            await conn.run_sync(_migrate)
         # Initialize storage backend
         from vox.storage import init_storage
         init_storage()
@@ -233,8 +196,29 @@ def create_app(database_url: str | None = None) -> FastAPI:
     # Rate limiting middleware
     app.add_middleware(RateLimitMiddleware)
 
-    from fastapi.exceptions import RequestValidationError
+    # Body size limit middleware
+    from starlette.middleware.base import BaseHTTPMiddleware
     from fastapi.responses import JSONResponse
+
+    _UPLOAD_PATHS = frozenset({"/api/v1/files", "/api/v1/emoji", "/api/v1/server/icon"})
+
+    class BodySizeLimitMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            if request.method in ("POST", "PUT", "PATCH"):
+                # Skip upload routes — they enforce their own limits
+                if not any(request.url.path.startswith(p) for p in _UPLOAD_PATHS):
+                    from vox.config import config as _cfg
+                    cl = int(request.headers.get("content-length", 0))
+                    if cl > _cfg.limits.max_request_body:
+                        return JSONResponse(
+                            status_code=413,
+                            content={"error": {"code": "PAYLOAD_TOO_LARGE", "message": f"Request body exceeds maximum of {_cfg.limits.max_request_body} bytes."}},
+                        )
+            return await call_next(request)
+
+    app.add_middleware(BodySizeLimitMiddleware)
+
+    from fastapi.exceptions import RequestValidationError
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request, exc):
