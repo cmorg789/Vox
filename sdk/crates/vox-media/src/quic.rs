@@ -16,6 +16,15 @@ pub const HEADER_SIZE: usize = 22;
 // Media type values
 pub const MEDIA_TYPE_AUDIO: u8 = 0;
 pub const MEDIA_TYPE_VIDEO: u8 = 1;
+pub const MEDIA_TYPE_SCREEN: u8 = 2;
+pub const MEDIA_TYPE_FEC: u8 = 3;
+pub const MEDIA_TYPE_RTCP_FB: u8 = 4;
+
+// Codec ID values
+pub const CODEC_NONE: u8 = 0;
+pub const CODEC_OPUS: u8 = 1;
+pub const CODEC_AV1: u8 = 2;
+pub const CODEC_AV1_SCREEN: u8 = 3;
 
 // Flag bits (byte 3) — mirrors vox-sfu header.rs
 pub const FLAG_KEYFRAME: u8 = 0b1000_0000;
@@ -161,7 +170,7 @@ impl InFrame {
 ///
 /// - `None` → CA-signed mode: uses Mozilla root certificates.
 /// - `Some(der)` → Self-signed mode: pins to the exact certificate DER bytes.
-pub fn make_client_config(cert_der: Option<Vec<u8>>) -> ClientConfig {
+pub fn make_client_config(cert_der: Option<Vec<u8>>) -> Result<ClientConfig, Box<dyn std::error::Error>> {
     let mut crypto = match cert_der {
         None => {
             let mut roots = rustls::RootCertStore::empty();
@@ -178,9 +187,9 @@ pub fn make_client_config(cert_der: Option<Vec<u8>>) -> ClientConfig {
         }
     };
     crypto.alpn_protocols = vec![ALPN_PROTOCOL.to_vec()];
-    ClientConfig::new(Arc::new(
-        quinn::crypto::rustls::QuicClientConfig::try_from(crypto).unwrap(),
-    ))
+    let quic_config = quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
+        .map_err(|e| format!("QUIC TLS config error: {e}"))?;
+    Ok(ClientConfig::new(Arc::new(quic_config)))
 }
 
 /// Verifies the server certificate by comparing its raw DER bytes against a
