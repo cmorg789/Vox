@@ -269,9 +269,9 @@ async def verify_voucher(voucher: str, expected_target: str, db: AsyncSession | 
 
 
 async def add_presence_sub(db: AsyncSession, domain: str, address: str) -> None:
-    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+    from vox.db.engine import dialect_insert
     from vox.db.models import FederationPresenceSub
-    stmt = sqlite_insert(FederationPresenceSub).values(domain=domain, user_address=address).on_conflict_do_nothing()
+    stmt = dialect_insert(FederationPresenceSub).values(domain=domain, user_address=address).on_conflict_do_nothing()
     await db.execute(stmt)
     await db.flush()
 

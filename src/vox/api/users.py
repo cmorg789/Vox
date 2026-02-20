@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, resolve_member
+from vox.db.engine import dialect_insert
 from vox.auth.service import get_user_role_ids
 from vox.db.models import User, blocks, friends
 from vox.config import config
@@ -54,7 +54,7 @@ async def block_user(
     _, owner, _ = resolved
     if target_id == owner.id:
         raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_TARGET", "message": "You cannot block yourself."}})
-    await db.execute(sqlite_insert(blocks).values(user_id=owner.id, blocked_id=target_id).on_conflict_do_nothing())
+    await db.execute(dialect_insert(blocks).values(user_id=owner.id, blocked_id=target_id).on_conflict_do_nothing())
     await db.commit()
     await dispatch(events.block_add(user_id=owner.id, target_id=target_id), user_ids=[owner.id, target_id], db=db)
 
@@ -112,7 +112,7 @@ async def add_friend(
     if target_id == owner.id:
         raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_TARGET", "message": "You cannot add yourself as a friend."}})
     from datetime import datetime, timezone
-    await db.execute(sqlite_insert(friends).values(user_id=owner.id, friend_id=target_id, status="pending", created_at=datetime.now(timezone.utc)).on_conflict_do_nothing())
+    await db.execute(dialect_insert(friends).values(user_id=owner.id, friend_id=target_id, status="pending", created_at=datetime.now(timezone.utc)).on_conflict_do_nothing())
     await db.commit()
     await dispatch(events.friend_request(user_id=owner.id, target_id=target_id), user_ids=[owner.id, target_id], db=db)
 
@@ -134,7 +134,7 @@ async def accept_friend(
     await db.execute(
         update(friends).where(friends.c.user_id == target_id, friends.c.friend_id == owner.id).values(status="accepted")
     )
-    await db.execute(sqlite_insert(friends).values(user_id=owner.id, friend_id=target_id, status="accepted", created_at=datetime.now(timezone.utc)).on_conflict_do_nothing())
+    await db.execute(dialect_insert(friends).values(user_id=owner.id, friend_id=target_id, status="accepted", created_at=datetime.now(timezone.utc)).on_conflict_do_nothing())
     await db.commit()
     await dispatch(events.friend_add(user_id=owner.id, target_id=target_id), user_ids=[owner.id, target_id], db=db)
 

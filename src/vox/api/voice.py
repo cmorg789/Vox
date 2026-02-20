@@ -224,8 +224,8 @@ async def stage_invite_to_speak(
     )
 
     # Upsert invite
-    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-    stmt = sqlite_insert(StageInvite).values(
+    from vox.db.engine import dialect_insert
+    stmt = dialect_insert(StageInvite).values(
         room_id=room_id, user_id=body.user_id, created_at=now
     ).on_conflict_do_nothing()
     await db.execute(stmt)

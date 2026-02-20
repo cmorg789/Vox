@@ -126,12 +126,12 @@ async def _set_webauthn_config(rp_id="localhost", origin="http://localhost"):
     from vox.db.engine import get_session_factory
     from vox.db.models import Config
     from vox.config import load_config
-    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+    from vox.db.engine import dialect_insert
 
     factory = get_session_factory()
     async with factory() as db:
         for key, val in [("webauthn_rp_id", rp_id), ("webauthn_origin", origin)]:
-            stmt = sqlite_insert(Config).values(key=key, value=val).on_conflict_do_nothing()
+            stmt = dialect_insert(Config).values(key=key, value=val).on_conflict_do_nothing()
             await db.execute(stmt)
         await db.commit()
     async with factory() as db:

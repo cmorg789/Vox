@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy import delete
 
 from vox.api.deps import get_current_user, get_db, require_permission
+from vox.db.engine import dialect_insert
 from vox.db.models import Category, Feed, PermissionOverride, Room, Thread, User, feed_subscribers, thread_subscribers
 from vox.permissions import CREATE_THREADS, MANAGE_SPACES, MANAGE_THREADS
 from vox.gateway import events as gw
@@ -136,7 +136,7 @@ async def subscribe_feed(
     result = await db.execute(select(Feed).where(Feed.id == feed_id))
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Feed does not exist."}})
-    await db.execute(sqlite_insert(feed_subscribers).values(feed_id=feed_id, user_id=user.id).on_conflict_do_nothing())
+    await db.execute(dialect_insert(feed_subscribers).values(feed_id=feed_id, user_id=user.id).on_conflict_do_nothing())
     await db.commit()
     await dispatch(gw.feed_subscribe(feed_id=feed_id, user_id=user.id), db=db)
 
@@ -419,7 +419,7 @@ async def subscribe_thread(
     thread = (await db.execute(select(Thread).where(Thread.id == thread_id))).scalar_one_or_none()
     if thread is None or thread.feed_id != feed_id:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Thread does not exist in this feed."}})
-    await db.execute(sqlite_insert(thread_subscribers).values(thread_id=thread_id, user_id=user.id).on_conflict_do_nothing())
+    await db.execute(dialect_insert(thread_subscribers).values(thread_id=thread_id, user_id=user.id).on_conflict_do_nothing())
     await db.commit()
     await dispatch(gw.thread_subscribe(thread_id=thread_id, user_id=user.id), db=db)
 

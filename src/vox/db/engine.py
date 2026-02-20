@@ -47,3 +47,16 @@ def get_session_factory():
     if _session_factory is None:
         raise RuntimeError("Database engine not initialized. Call init_engine() first.")
     return _session_factory
+
+
+def dialect_insert(table):
+    """Return a dialect-specific insert() for upsert support (on_conflict_do_nothing).
+
+    Works with both SQLite and PostgreSQL backends.
+    """
+    dialect = _engine.dialect.name if _engine is not None else "sqlite"
+    if dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    else:
+        from sqlalchemy.dialects.sqlite import insert
+    return insert(table)

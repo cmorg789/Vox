@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
+from vox.db.engine import dialect_insert
 from vox.api.members import get_highest_role_position
 from vox.db.models import PermissionOverride, Role, User, role_members
 from vox.config import config
@@ -187,7 +187,7 @@ async def assign_role(
                 status_code=403,
                 detail={"error": {"code": "ROLE_HIERARCHY", "message": "You cannot assign a role at or above your own rank."}},
             )
-    await db.execute(sqlite_insert(role_members).values(role_id=role_id, user_id=user_id).on_conflict_do_nothing())
+    await db.execute(dialect_insert(role_members).values(role_id=role_id, user_id=user_id).on_conflict_do_nothing())
     from vox.audit import write_audit
     await write_audit(db, "role.assign", actor_id=actor.id, target_id=user_id)
     await db.commit()

@@ -8,9 +8,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-
 from vox.api.deps import get_current_user, get_db, resolve_member
+from vox.db.engine import dialect_insert
 from vox.permissions import ADMINISTRATOR
 from vox.api.messages import _handle_slash_command, _msg_response, _snowflake
 from vox.db.models import DM, DMReadState, DMSettings, File, Message, Reaction, User, dm_participants, message_attachments, role_members
@@ -255,7 +254,7 @@ async def add_dm_recipient(
         raise HTTPException(status_code=403, detail={"error": {"code": "NOT_DM_PARTICIPANT", "message": "You are not a participant in this DM."}})
     if len(pids) >= config.limits.group_dm_recipients_max:
         raise HTTPException(status_code=400, detail={"error": {"code": "TOO_MANY_RECIPIENTS", "message": f"Group DMs are limited to {config.limits.group_dm_recipients_max} participants."}})
-    await db.execute(sqlite_insert(dm_participants).values(dm_id=dm_id, user_id=user_id).on_conflict_do_nothing())
+    await db.execute(dialect_insert(dm_participants).values(dm_id=dm_id, user_id=user_id).on_conflict_do_nothing())
     await db.commit()
     pids = await _dm_participant_ids(db, dm_id)
     await dispatch(gw.dm_recipient_add(dm_id=dm_id, user_id=user_id), user_ids=pids, db=db)
@@ -466,14 +465,13 @@ async def add_dm_reaction(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
     pids = await _dm_participant_ids(db, dm_id)
     if user.id not in pids:
         raise HTTPException(status_code=403, detail={"error": {"code": "NOT_DM_PARTICIPANT", "message": "You are not a participant in this DM."}})
     msg = (await db.execute(select(Message).where(Message.id == msg_id, Message.dm_id == dm_id))).scalar_one_or_none()
     if msg is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "MESSAGE_NOT_FOUND", "message": "Message does not exist."}})
-    stmt = sqlite_insert(Reaction).values(msg_id=msg_id, user_id=user.id, emoji=emoji).on_conflict_do_nothing()
+    stmt = dialect_insert(Reaction).values(msg_id=msg_id, user_id=user.id, emoji=emoji).on_conflict_do_nothing()
     await db.execute(stmt)
     await db.commit()
     await dispatch(gw.message_reaction_add(msg_id=msg_id, user_id=user.id, emoji=emoji), user_ids=pids, db=db)
