@@ -484,7 +484,7 @@ class AuditLog(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     event_type: Mapped[str] = mapped_column(String(255), index=True)
-    actor_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    actor_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     target_id: Mapped[Optional[int]] = mapped_column(Integer)
     extra: Mapped[Optional[str]] = mapped_column("metadata", Text)  # JSON, column named 'metadata'
     timestamp: Mapped[int] = mapped_column(BigInteger)  # unix ms

@@ -325,7 +325,7 @@ async def send_federation_request(
         body_bytes = json.dumps(body or {}, separators=(",", ":")).encode()
         sig = sign_body(body_bytes, private_key)
 
-        scheme = "https" if port == 443 else "http"
+        scheme = "https"
         url = f"{scheme}://{host}:{port}{path}"
         headers = {
             "X-Vox-Origin": our_domain,

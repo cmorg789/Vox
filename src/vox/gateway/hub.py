@@ -18,6 +18,8 @@ _hub: Hub | None = None
 
 SESSION_MAX_AGE_S = 300
 SESSION_REPLAY_BUFFER_SIZE = 1000
+MAX_CONNECTIONS_PER_IP = 10
+MAX_SESSIONS_PER_USER = 5
 
 
 @dataclass
@@ -38,18 +40,38 @@ class Hub:
         self.presence: dict[int, dict[str, Any]] = {}
         # Lock for connection/presence state mutations
         self._lock = asyncio.Lock()
+        # IP-based connection tracking
+        self._ip_connections: dict[str, int] = {}
 
-    def connect(self, conn: Connection) -> None:
-        self.connections.setdefault(conn.user_id, set()).add(conn)
+    async def connect(self, conn: Connection, *, ip: str = "") -> bool:
+        """Register a connection. Returns False if limits exceeded."""
+        async with self._lock:
+            # Enforce per-IP limit
+            if ip:
+                current_ip = self._ip_connections.get(ip, 0)
+                if current_ip >= MAX_CONNECTIONS_PER_IP:
+                    return False
+            # Enforce per-user session limit
+            existing = self.connections.get(conn.user_id, set())
+            if len(existing) >= MAX_SESSIONS_PER_USER:
+                return False
+            self.connections.setdefault(conn.user_id, set()).add(conn)
+            if ip:
+                self._ip_connections[ip] = self._ip_connections.get(ip, 0) + 1
         log.info("Hub: user %d connected (session %s)", conn.user_id, conn.session_id)
+        return True
 
-    async def disconnect(self, conn: Connection) -> None:
+    async def disconnect(self, conn: Connection, *, ip: str = "") -> None:
         async with self._lock:
             conns = self.connections.get(conn.user_id)
             if conns:
                 conns.discard(conn)
                 if not conns:
                     del self.connections[conn.user_id]
+            if ip and ip in self._ip_connections:
+                self._ip_connections[ip] -= 1
+                if self._ip_connections[ip] <= 0:
+                    del self._ip_connections[ip]
         log.info("Hub: user %d disconnected (session %s)", conn.user_id, conn.session_id)
 
     def save_session(self, session_id: str, state: SessionState) -> None:

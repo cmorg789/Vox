@@ -8,7 +8,7 @@ from vox.api.messages import _msg_response
 from vox.db.models import Feed, Message, Pin, User, dm_participants, message_attachments
 from vox.config import config
 from vox.models.messages import SearchResponse
-from vox.permissions import VIEW_SPACE, has_permission, resolve_permissions
+from vox.permissions import VIEW_SPACE, has_permission, resolve_permissions, resolve_user_permissions_multi_space
 
 router = APIRouter(tags=["search"])
 
@@ -48,13 +48,13 @@ async def search_messages(
             )
         stmt = stmt.where(Message.dm_id == dm_id)
     else:
-        # Feed search: build set of accessible feeds
-        all_feeds = (await db.execute(select(Feed.id))).scalars().all()
-        accessible_feeds = []
-        for fid in all_feeds:
-            resolved = await resolve_permissions(db, user.id, space_type="feed", space_id=fid)
-            if has_permission(resolved, VIEW_SPACE):
-                accessible_feeds.append(fid)
+        # Feed search: build set of accessible feeds (batch query)
+        all_feeds = list((await db.execute(select(Feed.id))).scalars().all())
+        if all_feeds:
+            perms_map = await resolve_user_permissions_multi_space(db, user.id, "feed", all_feeds)
+            accessible_feeds = [fid for fid in all_feeds if has_permission(perms_map.get(fid, 0), VIEW_SPACE)]
+        else:
+            accessible_feeds = []
         stmt = stmt.where(Message.feed_id.in_(accessible_feeds))
 
     if feed_id is not None:

@@ -8,6 +8,7 @@ from urllib.parse import quote
 from vox_sdk.models.federation import (
     FederatedPrekeyResponse,
     FederatedUserProfile,
+    FederationEntryListResponse,
     FederationJoinResponse,
 )
 
@@ -49,3 +50,25 @@ class FederationAPI:
         if reason is not None:
             payload["reason"] = reason
         await self._http.post("/api/v1/federation/admin/block", json=payload)
+
+    async def admin_unblock(self, domain: str) -> None:
+        encoded = quote(domain, safe="")
+        await self._http.delete(f"/api/v1/federation/admin/block/{encoded}")
+
+    async def admin_block_list(self) -> FederationEntryListResponse:
+        r = await self._http.get("/api/v1/federation/admin/block")
+        return FederationEntryListResponse.model_validate(r.json())
+
+    async def admin_allow(self, domain: str, reason: str | None = None) -> None:
+        payload: dict[str, Any] = {"domain": domain}
+        if reason is not None:
+            payload["reason"] = reason
+        await self._http.post("/api/v1/federation/admin/allow", json=payload)
+
+    async def admin_unallow(self, domain: str) -> None:
+        encoded = quote(domain, safe="")
+        await self._http.delete(f"/api/v1/federation/admin/allow/{encoded}")
+
+    async def admin_allow_list(self) -> FederationEntryListResponse:
+        r = await self._http.get("/api/v1/federation/admin/allow")
+        return FederationEntryListResponse.model_validate(r.json())

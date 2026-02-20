@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import Bot, BotCommand, Feed, File, Message, Pin, Reaction, Thread, User, message_attachments
 from vox.config import config
-from vox.permissions import MANAGE_MESSAGES, MANAGE_SPACES, MENTION_EVERYONE, READ_HISTORY, SEND_EMBEDS, SEND_IN_THREADS, SEND_MESSAGES, has_permission, resolve_permissions
+from vox.permissions import ADD_REACTIONS, MANAGE_MESSAGES, MANAGE_SPACES, MENTION_EVERYONE, READ_HISTORY, SEND_EMBEDS, SEND_IN_THREADS, SEND_MESSAGES, has_permission, resolve_permissions
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.gateway.notify import notify_for_message, notify_for_reaction
@@ -34,17 +34,25 @@ from vox.models.messages import (
 router = APIRouter(tags=["messages"])
 
 
-def _is_safe_url(url: str) -> bool:
+async def _is_safe_url(url: str) -> bool:
     """Validate a URL is safe to call (SSRF prevention)."""
     parsed = urlparse(url)
     if parsed.scheme not in ("https", "http"):
         return False
     hostname = parsed.hostname or ""
+    loop = asyncio.get_running_loop()
     try:
-        addr = ipaddress.ip_address(socket.gethostbyname(hostname))
-        return not (addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved)
-    except (socket.gaierror, ValueError):
+        addrinfos = await loop.getaddrinfo(hostname, None, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM)
+    except socket.gaierror:
         return False
+    for _family, _type, _proto, _canonname, sockaddr in addrinfos:
+        try:
+            addr = ipaddress.ip_address(sockaddr[0])
+        except ValueError:
+            return False
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            return False
+    return True
 
 # Simple snowflake: 42-bit timestamp (ms) + 22-bit sequence
 _seq = 0
@@ -162,7 +170,7 @@ async def _handle_slash_command(
 
     if bot.interaction_url:
         # HTTP callback bot — validate URL to prevent SSRF
-        if not _is_safe_url(bot.interaction_url):
+        if not await _is_safe_url(bot.interaction_url):
             return None
         try:
             async with httpx.AsyncClient() as client:
@@ -254,7 +262,7 @@ async def list_message_reactions(
     feed_id: int,
     msg_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(READ_HISTORY, space_type="feed", space_id_param="feed_id"),
 ) -> ReactionListResponse:
     msg = (await db.execute(select(Message).where(Message.id == msg_id, Message.feed_id == feed_id))).scalar_one_or_none()
     if msg is None:
@@ -420,7 +428,7 @@ async def get_thread_messages(
     before: int | None = None,
     after: int | None = None,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(READ_HISTORY, space_type="feed", space_id_param="feed_id"),
 ) -> MessageListResponse:
     # Validate thread exists and belongs to feed
     thread = (await db.execute(select(Thread).where(Thread.id == thread_id))).scalar_one_or_none()
@@ -508,7 +516,7 @@ async def add_reaction(
     msg_id: int,
     emoji: str,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = require_permission(ADD_REACTIONS, space_type="feed", space_id_param="feed_id"),
 ):
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
     msg = (await db.execute(select(Message).where(Message.id == msg_id, Message.feed_id == feed_id))).scalar_one_or_none()
@@ -527,7 +535,7 @@ async def remove_reaction(
     msg_id: int,
     emoji: str,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = require_permission(READ_HISTORY, space_type="feed", space_id_param="feed_id"),
 ):
     msg = (await db.execute(select(Message).where(Message.id == msg_id, Message.feed_id == feed_id))).scalar_one_or_none()
     if msg is None:
@@ -572,7 +580,7 @@ async def unpin_message(
 async def list_pins(
     feed_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = require_permission(READ_HISTORY, space_type="feed", space_id_param="feed_id"),
 ) -> MessageListResponse:
     result = await db.execute(
         select(Message, Pin.pinned_at).options(selectinload(Message.attachments)).join(Pin, Pin.msg_id == Message.id).where(Pin.feed_id == feed_id)

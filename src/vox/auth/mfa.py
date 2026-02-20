@@ -16,6 +16,7 @@ from webauthn.helpers.structs import PublicKeyCredentialDescriptor
 from vox.db.models import RecoveryCode, Session, WebAuthnChallenge, WebAuthnCredential
 
 _ph = PasswordHasher()
+_DUMMY_HASH = _ph.hash("__recovery_dummy__")
 
 _CHALLENGE_TTL_MINUTES = 5
 
@@ -69,20 +70,35 @@ async def store_recovery_codes(
 async def verify_recovery_code(
     db: AsyncSession, user_id: int, code: str
 ) -> bool:
-    """Try each unused recovery code hash; mark used on match."""
+    """Try each unused recovery code hash; constant-time iteration to prevent timing oracle."""
     result = await db.execute(
         select(RecoveryCode).where(
             RecoveryCode.user_id == user_id, RecoveryCode.used == False
         )
     )
-    for rc in result.scalars().all():
+    codes = result.scalars().all()
+
+    if not codes:
+        # Normalize timing: do a dummy verify even when no codes exist
+        try:
+            _ph.verify(_DUMMY_HASH, code)
+        except VerifyMismatchError:
+            pass
+        return False
+
+    matched_rc = None
+    for rc in codes:
         try:
             _ph.verify(rc.code_hash, code)
-            rc.used = True
-            await db.flush()
-            return True
+            matched_rc = rc
+            # Don't return early — keep iterating to normalize timing
         except VerifyMismatchError:
             continue
+
+    if matched_rc is not None:
+        matched_rc.used = True
+        await db.flush()
+        return True
     return False
 
 

@@ -81,6 +81,8 @@ class Connection:
         self._closed: bool = False
         self._compress = compress == "zstd" and _zstd_compressor is not None
         self._last_typing: dict[int, float] = {}  # feed_id/dm_id -> timestamp
+        self._ip: str = ""
+        self._msg_timestamps: deque[float] = deque(maxlen=120)
 
     async def send_json(self, data: dict[str, Any]) -> None:
         if not self._closed:
@@ -181,7 +183,7 @@ class Connection:
                     seq=self.seq,
                 )
                 self.hub.save_session(self.session_id, state)
-                await self.hub.disconnect(self)
+                await self.hub.disconnect(self, ip=self._ip)
                 # If no remaining sessions, clear presence and broadcast offline
                 # clear_presence must be inside the lock to prevent a race where
                 # a new connection registers between the check and the clear
@@ -218,8 +220,12 @@ class Connection:
         self.session_id = "sess_" + secrets.token_hex(12)
         self.protocol_version = protocol_version
         self.capabilities = data.get("capabilities", [])
+        self._ip = self.ws.client.host if self.ws.client else ""
         self.authenticated = True
-        self.hub.connect(self)
+        if not await self.hub.connect(self, ip=self._ip):
+            await self.close(CLOSE_RATE_LIMITED, "RATE_LIMITED")
+            self.authenticated = False
+            return
 
         # Register session in hub so send_event can write to it
         self.hub.save_session(self.session_id, SessionState(user_id=self.user_id))
@@ -244,7 +250,12 @@ class Connection:
         # Send current presence snapshot to newly connected client
         for uid, pdata in self.hub.presence.items():
             if uid != self.user_id:
-                await self.send_event(events.presence_update(**pdata))
+                # Hide invisible users — show them as offline
+                if pdata.get("status") == "invisible":
+                    filtered = {**pdata, "status": "offline"}
+                    await self.send_event(events.presence_update(**filtered))
+                else:
+                    await self.send_event(events.presence_update(**pdata))
 
     async def _handle_resume(self, data: dict[str, Any], db_factory: Any) -> None:
         token = data.get("token", "")
@@ -284,8 +295,12 @@ class Connection:
         self.session_id = session_id
         self.seq = session.seq
         self._replay_buffer = deque(session.replay_buffer, maxlen=REPLAY_BUFFER_SIZE)
+        self._ip = self.ws.client.host if self.ws.client else ""
         self.authenticated = True
-        self.hub.connect(self)
+        if not await self.hub.connect(self, ip=self._ip):
+            await self.close(CLOSE_RATE_LIMITED, "RATE_LIMITED")
+            self.authenticated = False
+            return
 
         # Replay buffered events since last_seq
         for buffered in session.replay_buffer:
@@ -317,6 +332,16 @@ class Connection:
                 msg = json.loads(raw)
             except (json.JSONDecodeError, TypeError):
                 await self.close(CLOSE_DECODE_ERROR, "DECODE_ERROR")
+                return
+
+            # Rate limiting: max 120 messages per 60 seconds
+            now = time.monotonic()
+            self._msg_timestamps.append(now)
+            # Prune entries older than 60 seconds
+            while self._msg_timestamps and self._msg_timestamps[0] < now - 60:
+                self._msg_timestamps.popleft()
+            if len(self._msg_timestamps) > 120:
+                await self.close(CLOSE_RATE_LIMITED, "RATE_LIMITED")
                 return
 
             msg_type = msg.get("type")
@@ -406,23 +431,23 @@ class Connection:
                 media_type = data.get("media_type", "")
                 codec = data.get("codec", "")
                 room_id = data.get("room_id")
+                if room_id is None:
+                    await self.send_json({"type": "error", "d": {"code": "MISSING_ROOM_ID", "message": "room_id is required for voice_codec_neg."}})
+                    continue
                 params = {k: v for k, v in data.items() if k not in ("media_type", "codec", "room_id")}
                 evt = events.voice_codec_neg(media_type=media_type, codec=codec, **params)
-                if room_id is not None:
-                    room_user_ids = await self._get_voice_room_users(room_id, db_factory)
-                    await self.hub.broadcast(evt, user_ids=room_user_ids)
-                else:
-                    await self.hub.broadcast(evt)
+                room_user_ids = await self._get_voice_room_users(room_id, db_factory)
+                await self.hub.broadcast(evt, user_ids=room_user_ids)
 
             elif msg_type == "stage_response":
                 room_id = data.get("room_id")
+                if room_id is None:
+                    await self.send_json({"type": "error", "d": {"code": "MISSING_ROOM_ID", "message": "room_id is required for stage_response."}})
+                    continue
                 stage_data = {k: v for k, v in data.items() if k != "room_id"}
                 evt = events.stage_response(user_id=self.user_id, **stage_data)
-                if room_id is not None:
-                    room_user_ids = await self._get_voice_room_users(room_id, db_factory)
-                    await self.hub.broadcast(evt, user_ids=room_user_ids)
-                else:
-                    await self.hub.broadcast(evt)
+                room_user_ids = await self._get_voice_room_users(room_id, db_factory)
+                await self.hub.broadcast(evt, user_ids=room_user_ids)
 
             # Unknown types are silently ignored per spec tolerance
 

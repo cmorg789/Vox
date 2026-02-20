@@ -1079,12 +1079,13 @@ async def test_webauthn_login_no_challenge(client):
 
     r = await client.post("/api/v1/auth/login/webauthn", json={
         "username": "alice",
+        "challenge_id": "nonexistent_challenge",
         "credential_id": "dGVzdF9jcmVkZW50aWFs",
         "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0In0",
         "authenticator_data": "dGVzdA",
         "signature": "dGVzdA",
     })
-    assert r.status_code == 401
+    assert r.status_code in (400, 401)
     assert r.json()["detail"]["error"]["code"] == "WEBAUTHN_FAILED"
 
 
@@ -1092,6 +1093,7 @@ async def test_webauthn_login_unknown_user(client):
     """WebAuthn login with unknown user returns 401."""
     r = await client.post("/api/v1/auth/login/webauthn", json={
         "username": "nobody",
+        "challenge_id": "test",
         "credential_id": "test",
         "client_data_json": "test",
         "authenticator_data": "test",

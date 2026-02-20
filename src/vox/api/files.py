@@ -4,6 +4,7 @@ import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 
+import filetype
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse as FastAPIFileResponse, Response
 from sqlalchemy import func, select
@@ -39,7 +40,9 @@ async def upload_file(
 
     file_id = secrets.token_urlsafe(16)
     file_name = name or file.filename or "upload"
-    file_mime = mime or file.content_type or "application/octet-stream"
+    # Sniff MIME from content; fall back to client-supplied or application/octet-stream
+    detected = filetype.guess(content)
+    file_mime = detected.mime if detected else (mime or file.content_type or "application/octet-stream")
 
     if not check_mime(file_mime, config.media.allowed_file_mimes):
         raise HTTPException(
@@ -92,7 +95,9 @@ async def upload_dm_file(
 
     file_id = secrets.token_urlsafe(16)
     file_name = name or file.filename or "upload"
-    file_mime = mime or file.content_type or "application/octet-stream"
+    # Sniff MIME from content; fall back to client-supplied or application/octet-stream
+    detected = filetype.guess(content)
+    file_mime = detected.mime if detected else (mime or file.content_type or "application/octet-stream")
 
     if not check_mime(file_mime, config.media.allowed_file_mimes):
         raise HTTPException(
@@ -163,9 +168,14 @@ async def download_file(
             detail={"error": {"code": "FILE_NOT_FOUND", "message": "File data missing."}},
         )
 
-    # Fast path for local storage: use FileResponse for streaming
+    # Always set Content-Disposition: attachment to prevent content-sniffing attacks
     if isinstance(storage, LocalStorage):
-        return FastAPIFileResponse(path=str(storage.local_path / file_id), media_type=row.mime, filename=row.name)
+        return FastAPIFileResponse(
+            path=str(storage.local_path / file_id),
+            media_type=row.mime,
+            filename=row.name,
+            headers={"Content-Disposition": f'attachment; filename="{row.name}"'},
+        )
 
     data = await storage.get(file_id)
     return Response(content=data, media_type=row.mime, headers={"Content-Disposition": f'attachment; filename="{row.name}"'})

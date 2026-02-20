@@ -81,3 +81,18 @@ class FederationJoinClientRequest(BaseModel):
 class AdminFederationBlockRequest(BaseModel):
     domain: str
     reason: str | None = None
+
+
+class AdminFederationAllowRequest(BaseModel):
+    domain: str
+    reason: str | None = None
+
+
+class FederationEntryResponse(VoxModel):
+    domain: str
+    reason: str | None
+    created_at: str
+
+
+class FederationEntryListResponse(VoxModel):
+    items: list[FederationEntryResponse]

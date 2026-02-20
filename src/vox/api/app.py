@@ -104,6 +104,19 @@ def create_app(database_url: str | None = None) -> FastAPI:
     # Rate limiting middleware
     app.add_middleware(RateLimitMiddleware)
 
+    # CORS middleware (opt-in via VOX_CORS_ORIGINS env var)
+    import os
+    cors_origins = os.environ.get("VOX_CORS_ORIGINS", "")
+    if cors_origins:
+        from fastapi.middleware.cors import CORSMiddleware
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=[o.strip() for o in cors_origins.split(",") if o.strip()],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
     from fastapi.exceptions import RequestValidationError
     from fastapi.responses import JSONResponse
 

@@ -619,8 +619,8 @@ class TestRelayHandlers:
                 assert event["d"]["pair_id"] == "pair_123"
                 assert event["d"]["data"] == "sharedata"
 
-    def test_voice_codec_neg_relay(self, app, db):
-        """Voice codec neg broadcasts to all."""
+    def test_voice_codec_neg_relay_no_room_id(self, app, db):
+        """Voice codec neg without room_id returns error."""
         with TestClient(app) as tc:
             resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
             token = resp.json()["token"]
@@ -635,13 +635,11 @@ class TestRelayHandlers:
                     "d": {"media_type": "video", "codec": "av1", "spatial_layers": 3}
                 })
                 event = ws.receive_json()
-                assert event["type"] == "voice_codec_neg"
-                assert event["d"]["media_type"] == "video"
-                assert event["d"]["codec"] == "av1"
-                assert event["d"]["spatial_layers"] == 3
+                assert event["type"] == "error"
+                assert event["d"]["code"] == "MISSING_ROOM_ID"
 
-    def test_stage_response_relay(self, app, db):
-        """Stage response without room_id broadcasts to all."""
+    def test_stage_response_relay_no_room_id(self, app, db):
+        """Stage response without room_id returns error."""
         with TestClient(app) as tc:
             resp = tc.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
             token = resp.json()["token"]
@@ -656,8 +654,8 @@ class TestRelayHandlers:
                     "d": {"response_type": "request_ack", "accepted": True}
                 })
                 event = ws.receive_json()
-                assert event["type"] == "stage_response"
-                assert event["d"]["accepted"] is True
+                assert event["type"] == "error"
+                assert event["d"]["code"] == "MISSING_ROOM_ID"
 
     def test_unknown_type_ignored(self, app, db):
         """Unknown message types are silently ignored."""

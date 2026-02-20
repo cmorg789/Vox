@@ -33,25 +33,32 @@ class LocalStorage:
     """Store files on the local filesystem."""
 
     def __init__(self, base_dir: str = "uploads") -> None:
-        self.base_dir = Path(base_dir)
+        self.base_dir = Path(base_dir).resolve()
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
+    def _safe_path(self, key: str) -> Path:
+        """Resolve path and ensure it stays within base_dir (prevent path traversal)."""
+        resolved = (self.base_dir / key).resolve()
+        if not str(resolved).startswith(str(self.base_dir)):
+            raise ValueError("Invalid file key")
+        return resolved
+
     async def put(self, key: str, data: bytes, mime: str) -> str:
-        path = self.base_dir / key
+        path = self._safe_path(key)
         path.write_bytes(data)
         return f"/api/v1/files/{key}"
 
     async def get(self, key: str) -> bytes:
-        path = self.base_dir / key
+        path = self._safe_path(key)
         return path.read_bytes()
 
     async def delete(self, key: str) -> None:
-        path = self.base_dir / key
+        path = self._safe_path(key)
         if path.exists():
             path.unlink()
 
     async def exists(self, key: str) -> bool:
-        return (self.base_dir / key).exists()
+        return self._safe_path(key).exists()
 
     @property
     def local_path(self) -> Path:

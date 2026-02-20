@@ -101,6 +101,7 @@ class WebAuthnChallengeResponse(VoxModel):
 
 class WebAuthnLoginRequest(BaseModel):
     username: Annotated[str, AfterValidator(str_limit(max_attr="username_max"))]
+    challenge_id: Annotated[str, AfterValidator(str_limit(max_attr="webauthn_field_max"))]
     client_data_json: Annotated[str, AfterValidator(str_limit(max_attr="webauthn_field_max"))]
     authenticator_data: Annotated[str, AfterValidator(str_limit(max_attr="webauthn_field_max"))]
     signature: Annotated[str, AfterValidator(str_limit(max_attr="webauthn_field_max"))]

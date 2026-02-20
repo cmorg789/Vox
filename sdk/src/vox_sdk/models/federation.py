@@ -23,3 +23,13 @@ class FederationJoinResponse(VoxModel):
     accepted: bool
     federation_token: str
     server_info: dict = {}
+
+
+class FederationEntryResponse(VoxModel):
+    domain: str
+    reason: str | None = None
+    created_at: str = ""
+
+
+class FederationEntryListResponse(VoxModel):
+    items: list[FederationEntryResponse] = []

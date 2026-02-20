@@ -131,6 +131,83 @@ def has_permission(resolved: int, required: int) -> bool:
     return (resolved & required) == required
 
 
+async def resolve_user_permissions_multi_space(
+    db: AsyncSession,
+    user_id: int,
+    space_type: str,
+    space_ids: list[int],
+) -> dict[int, int]:
+    """Resolve permissions for a single user across multiple spaces in bulk.
+
+    Returns a dict mapping space_id -> resolved permission bitfield.
+    """
+    # 1. Compute base permissions once (shared across all spaces)
+    everyone_result = await db.execute(
+        select(Role).where(Role.position == 0, Role.name == "@everyone")
+    )
+    everyone_role = everyone_result.scalar_one_or_none()
+    everyone_perms = everyone_role.permissions if everyone_role else 0
+    everyone_role_id = everyone_role.id if everyone_role else None
+
+    user_role_ids_result = await db.execute(
+        select(role_members.c.role_id).where(role_members.c.user_id == user_id)
+    )
+    user_role_ids = set(user_role_ids_result.scalars().all())
+
+    base = everyone_perms
+    if user_role_ids:
+        roles_result = await db.execute(
+            select(Role).where(Role.id.in_(user_role_ids), Role.position != 0)
+        )
+        for role in roles_result.scalars().all():
+            base |= role.permissions
+
+    # Early admin short-circuit
+    if base & ADMINISTRATOR:
+        return {sid: ALL_PERMISSIONS for sid in space_ids}
+
+    # 2. Fetch ALL overrides for all requested spaces in one query
+    overrides_result = await db.execute(
+        select(PermissionOverride).where(
+            PermissionOverride.space_type == space_type,
+            PermissionOverride.space_id.in_(space_ids),
+        )
+    )
+    all_overrides = overrides_result.scalars().all()
+
+    # Group overrides by space_id
+    overrides_by_space: dict[int, list] = {sid: [] for sid in space_ids}
+    for o in all_overrides:
+        if o.space_id in overrides_by_space:
+            overrides_by_space[o.space_id].append(o)
+
+    # 3. Apply per-space
+    results: dict[int, int] = {}
+    for sid in space_ids:
+        perms = base
+        overrides = overrides_by_space.get(sid, [])
+        if overrides:
+            for o in overrides:
+                if o.target_type == "role" and o.target_id == everyone_role_id:
+                    perms = (perms & ~o.deny) | o.allow
+            role_allow = 0
+            role_deny = 0
+            for o in overrides:
+                if o.target_type == "role" and o.target_id in user_role_ids:
+                    role_allow |= o.allow
+                    role_deny |= o.deny
+            perms = (perms & ~role_deny) | role_allow
+            for o in overrides:
+                if o.target_type == "user" and o.target_id == user_id:
+                    perms = (perms & ~o.deny) | o.allow
+        if perms & ADMINISTRATOR:
+            results[sid] = ALL_PERMISSIONS
+        else:
+            results[sid] = perms
+
+    return results
+
+
 async def batch_resolve_permissions(
     db: AsyncSession,
     user_ids: list[int],

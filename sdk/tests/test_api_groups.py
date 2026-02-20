@@ -1170,6 +1170,75 @@ class TestFederationAPI:
         assert calls[0]["path"] == "/api/v1/federation/admin/block"
         assert calls[0]["body"] == {"domain": "bad.test", "reason": "abuse"}
 
+    @pytest.mark.asyncio
+    async def test_admin_unblock(self, http_client):
+        client, transport, calls = http_client
+        transport.response = httpx.Response(204)
+        from vox_sdk.api.federation import FederationAPI
+        api = FederationAPI(client)
+        await api.admin_unblock("bad.test")
+        assert calls[0]["method"] == "DELETE"
+        assert calls[0]["path"] == "/api/v1/federation/admin/block/bad.test"
+
+    @pytest.mark.asyncio
+    async def test_admin_block_list(self, http_client):
+        client, transport, calls = http_client
+        transport.response = httpx.Response(200, json={
+            "items": [{"domain": "evil.test", "reason": "spam", "created_at": "2025-01-01T00:00:00"}],
+        })
+        from vox_sdk.api.federation import FederationAPI
+        from vox_sdk.models.federation import FederationEntryListResponse
+        api = FederationAPI(client)
+        result = await api.admin_block_list()
+        assert calls[0]["path"] == "/api/v1/federation/admin/block"
+        assert isinstance(result, FederationEntryListResponse)
+        assert len(result.items) == 1
+        assert result.items[0].domain == "evil.test"
+
+    @pytest.mark.asyncio
+    async def test_admin_allow(self, http_client):
+        client, transport, calls = http_client
+        transport.response = httpx.Response(204)
+        from vox_sdk.api.federation import FederationAPI
+        api = FederationAPI(client)
+        await api.admin_allow("friend.test", reason="trusted")
+        assert calls[0]["path"] == "/api/v1/federation/admin/allow"
+        assert calls[0]["body"] == {"domain": "friend.test", "reason": "trusted"}
+
+    @pytest.mark.asyncio
+    async def test_admin_allow_no_reason(self, http_client):
+        client, transport, calls = http_client
+        transport.response = httpx.Response(204)
+        from vox_sdk.api.federation import FederationAPI
+        api = FederationAPI(client)
+        await api.admin_allow("friend.test")
+        assert calls[0]["body"] == {"domain": "friend.test"}
+
+    @pytest.mark.asyncio
+    async def test_admin_unallow(self, http_client):
+        client, transport, calls = http_client
+        transport.response = httpx.Response(204)
+        from vox_sdk.api.federation import FederationAPI
+        api = FederationAPI(client)
+        await api.admin_unallow("friend.test")
+        assert calls[0]["method"] == "DELETE"
+        assert calls[0]["path"] == "/api/v1/federation/admin/allow/friend.test"
+
+    @pytest.mark.asyncio
+    async def test_admin_allow_list(self, http_client):
+        client, transport, calls = http_client
+        transport.response = httpx.Response(200, json={
+            "items": [{"domain": "friend.test", "reason": "trusted", "created_at": "2025-01-01T00:00:00"}],
+        })
+        from vox_sdk.api.federation import FederationAPI
+        from vox_sdk.models.federation import FederationEntryListResponse
+        api = FederationAPI(client)
+        result = await api.admin_allow_list()
+        assert calls[0]["path"] == "/api/v1/federation/admin/allow"
+        assert isinstance(result, FederationEntryListResponse)
+        assert len(result.items) == 1
+        assert result.items[0].domain == "friend.test"
+
 
 # --- Search API ---
 

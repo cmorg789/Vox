@@ -40,9 +40,9 @@ async def get_current_user(
     if not user.active:
         raise HTTPException(status_code=403, detail={"error": {"code": "BANNED", "message": "Account is deactivated."}})
 
-    # Slide session expiry on use
+    # Slide session expiry on use — no commit here; the route handler's commit
+    # will persist the session slide atomically with the route's changes.
     session.expires_at = datetime.now(timezone.utc) + timedelta(days=config.auth.session_ttl_days)
-    await db.commit()
 
     return user
 

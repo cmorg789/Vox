@@ -36,7 +36,10 @@ from vox.federation.service import (
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.federation import (
+    AdminFederationAllowRequest,
     AdminFederationBlockRequest,
+    FederationEntryListResponse,
+    FederationEntryResponse,
     FederatedDevicePrekey,
     FederatedPrekeyResponse,
     FederatedUserProfile,
@@ -63,7 +66,10 @@ async def _find_local_user(db: AsyncSession, user_address: str) -> User | None:
     """Extract username from user@domain and find the local user."""
     if "@" not in user_address:
         return None
-    username = user_address.split("@", 1)[0]
+    username, domain = user_address.split("@", 1)
+    # Validate the domain matches our federation domain
+    if domain != config.federation.domain:
+        return None
     result = await db.execute(select(User).where(User.username == username, User.federated == False))
     return result.scalar_one_or_none()
 
@@ -145,6 +151,13 @@ async def relay_message(
                 status_code=403,
                 detail={"error": {"code": "FED_AUTH_FAILED", "message": "Origin does not match sender domain."}},
             )
+
+    # Enforce payload size limit on opaque_blob
+    if body.opaque_blob and len(body.opaque_blob) > config.limits.relay_payload_max:
+        raise HTTPException(
+            status_code=413,
+            detail={"error": {"code": "PAYLOAD_TOO_LARGE", "message": "Relay payload exceeds size limit."}},
+        )
 
     recipient = await _find_local_user(db, body.to)
     if recipient is None:
@@ -449,29 +462,12 @@ async def federation_block(
     origin: str = Depends(verify_federation_request),
     db: AsyncSession = Depends(get_db),
 ):
-    # Add origin to blocklist (idempotent — skip if already blocked)
-    existing = await db.execute(
-        select(FederationEntry).where(FederationEntry.entry == origin)
-    )
-    if existing.scalar_one_or_none() is None:
-        db.add(FederationEntry(
-            entry=origin,
-            reason=body.reason or "Remote server initiated block",
-            created_at=datetime.now(timezone.utc),
-        ))
-
-    # Deactivate all federated users from that domain
-    fed_users = await db.execute(
-        select(User).where(User.home_domain == origin, User.federated == True)
-    )
-    for u in fed_users.scalars().all():
-        u.active = False
-
-    # Audit log
+    # Log the block request for admin review only — do NOT modify local blocklist
+    # or deactivate users. Blocks should only be initiated via admin endpoints.
     db.add(AuditLog(
         id=await _snowflake(),
-        event_type="federation_block_received",
-        actor_id=0,
+        event_type="federation_block_request_received",
+        actor_id=None,
         extra=json.dumps({"origin": origin, "reason": body.reason}),
         timestamp=int(time.time() * 1000),
     ))
@@ -553,3 +549,160 @@ async def admin_federation_block(
         timestamp=int(time.time() * 1000),
     ))
     await db.commit()
+
+
+@router.delete("/admin/block/{domain}", status_code=204)
+async def admin_federation_unblock(
+    domain: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    from vox.permissions import ADMINISTRATOR, has_permission, resolve_permissions
+
+    perms = await resolve_permissions(db, user.id)
+    if not has_permission(perms, ADMINISTRATOR):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": "MISSING_PERMISSIONS", "message": "Administrator permission required."}},
+        )
+
+    result = await db.execute(
+        select(FederationEntry).where(FederationEntry.entry == domain)
+    )
+    entry = result.scalar_one_or_none()
+    if entry is not None:
+        await db.delete(entry)
+
+    db.add(AuditLog(
+        id=await _snowflake(),
+        event_type="federation_unblock",
+        actor_id=user.id,
+        extra=json.dumps({"domain": domain}),
+        timestamp=int(time.time() * 1000),
+    ))
+    await db.commit()
+
+
+@router.get("/admin/block")
+async def admin_federation_block_list(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> FederationEntryListResponse:
+    from vox.permissions import ADMINISTRATOR, has_permission, resolve_permissions
+
+    perms = await resolve_permissions(db, user.id)
+    if not has_permission(perms, ADMINISTRATOR):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": "MISSING_PERMISSIONS", "message": "Administrator permission required."}},
+        )
+
+    result = await db.execute(select(FederationEntry))
+    entries = result.scalars().all()
+    items = [
+        FederationEntryResponse(
+            domain=e.entry,
+            reason=e.reason,
+            created_at=e.created_at.isoformat(),
+        )
+        for e in entries
+        if not e.entry.startswith("allow:")
+    ]
+    return FederationEntryListResponse(items=items)
+
+
+@router.post("/admin/allow", status_code=204)
+async def admin_federation_allow(
+    body: AdminFederationAllowRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    from vox.permissions import ADMINISTRATOR, has_permission, resolve_permissions
+
+    perms = await resolve_permissions(db, user.id)
+    if not has_permission(perms, ADMINISTRATOR):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": "MISSING_PERMISSIONS", "message": "Administrator permission required."}},
+        )
+
+    allow_key = f"allow:{body.domain}"
+    existing = await db.execute(
+        select(FederationEntry).where(FederationEntry.entry == allow_key)
+    )
+    if existing.scalar_one_or_none() is None:
+        db.add(FederationEntry(
+            entry=allow_key,
+            reason=body.reason,
+            created_at=datetime.now(timezone.utc),
+        ))
+
+    db.add(AuditLog(
+        id=await _snowflake(),
+        event_type="federation_allow_added",
+        actor_id=user.id,
+        extra=json.dumps({"domain": body.domain, "reason": body.reason}),
+        timestamp=int(time.time() * 1000),
+    ))
+    await db.commit()
+
+
+@router.delete("/admin/allow/{domain}", status_code=204)
+async def admin_federation_unallow(
+    domain: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    from vox.permissions import ADMINISTRATOR, has_permission, resolve_permissions
+
+    perms = await resolve_permissions(db, user.id)
+    if not has_permission(perms, ADMINISTRATOR):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": "MISSING_PERMISSIONS", "message": "Administrator permission required."}},
+        )
+
+    allow_key = f"allow:{domain}"
+    result = await db.execute(
+        select(FederationEntry).where(FederationEntry.entry == allow_key)
+    )
+    entry = result.scalar_one_or_none()
+    if entry is not None:
+        await db.delete(entry)
+
+    db.add(AuditLog(
+        id=await _snowflake(),
+        event_type="federation_allow_removed",
+        actor_id=user.id,
+        extra=json.dumps({"domain": domain}),
+        timestamp=int(time.time() * 1000),
+    ))
+    await db.commit()
+
+
+@router.get("/admin/allow")
+async def admin_federation_allow_list(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> FederationEntryListResponse:
+    from vox.permissions import ADMINISTRATOR, has_permission, resolve_permissions
+
+    perms = await resolve_permissions(db, user.id)
+    if not has_permission(perms, ADMINISTRATOR):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": "MISSING_PERMISSIONS", "message": "Administrator permission required."}},
+        )
+
+    result = await db.execute(select(FederationEntry))
+    entries = result.scalars().all()
+    items = [
+        FederationEntryResponse(
+            domain=e.entry.removeprefix("allow:"),
+            reason=e.reason,
+            created_at=e.created_at.isoformat(),
+        )
+        for e in entries
+        if e.entry.startswith("allow:")
+    ]
+    return FederationEntryListResponse(items=items)

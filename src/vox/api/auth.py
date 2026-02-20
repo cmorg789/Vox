@@ -51,6 +51,10 @@ from vox.permissions import ADMINISTRATOR, EVERYONE_DEFAULTS
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
+# MFA brute-force protection: track failures per ticket
+_mfa_failures: dict[str, int] = {}
+_MFA_MAX_ATTEMPTS = 5
+
 
 @router.post("/register", status_code=201)
 async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)) -> RegisterResponse:
@@ -165,6 +169,19 @@ async def login_2fa(
     mfa_session = await validate_mfa_ticket(db, body.mfa_ticket)
     user_id = mfa_session.user_id
 
+    # Check if this ticket has exceeded max MFA attempts
+    if _mfa_failures.get(body.mfa_ticket, 0) >= _MFA_MAX_ATTEMPTS:
+        await db.delete(mfa_session)
+        _mfa_failures.pop(body.mfa_ticket, None)
+        await db.commit()
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": "2FA_MAX_ATTEMPTS", "message": "Too many failed attempts. Please log in again."}},
+        )
+
+    def _record_failure() -> None:
+        _mfa_failures[body.mfa_ticket] = _mfa_failures.get(body.mfa_ticket, 0) + 1
+
     if body.method == "totp":
         if not body.code:
             raise HTTPException(
@@ -176,6 +193,11 @@ async def login_2fa(
         )
         totp_secret = result.scalar_one_or_none()
         if totp_secret is None or not verify_totp(totp_secret.secret, body.code):
+            _record_failure()
+            if _mfa_failures.get(body.mfa_ticket, 0) >= _MFA_MAX_ATTEMPTS:
+                await db.delete(mfa_session)
+                _mfa_failures.pop(body.mfa_ticket, None)
+                await db.commit()
             raise HTTPException(
                 status_code=401,
                 detail={"error": {"code": "2FA_INVALID_CODE", "message": "Invalid TOTP code."}},
@@ -188,7 +210,15 @@ async def login_2fa(
                 detail={"error": {"code": "2FA_INVALID_CODE", "message": "WebAuthn assertion is required."}},
             )
         challenge_id = body.assertion.get("challenge_id", "")
-        await verify_webauthn_authentication(db, challenge_id, body.assertion)
+        try:
+            await verify_webauthn_authentication(db, challenge_id, body.assertion)
+        except HTTPException:
+            _record_failure()
+            if _mfa_failures.get(body.mfa_ticket, 0) >= _MFA_MAX_ATTEMPTS:
+                await db.delete(mfa_session)
+                _mfa_failures.pop(body.mfa_ticket, None)
+                await db.commit()
+            raise
 
     elif body.method == "recovery":
         if not body.code:
@@ -197,6 +227,11 @@ async def login_2fa(
                 detail={"error": {"code": "2FA_INVALID_CODE", "message": "Recovery code is required."}},
             )
         if not await verify_recovery_code(db, user_id, body.code):
+            _record_failure()
+            if _mfa_failures.get(body.mfa_ticket, 0) >= _MFA_MAX_ATTEMPTS:
+                await db.delete(mfa_session)
+                _mfa_failures.pop(body.mfa_ticket, None)
+                await db.commit()
             raise HTTPException(
                 status_code=401,
                 detail={"error": {"code": "2FA_INVALID_CODE", "message": "Invalid recovery code."}},
@@ -208,7 +243,8 @@ async def login_2fa(
             detail={"error": {"code": "2FA_INVALID_CODE", "message": "Unsupported 2FA method."}},
         )
 
-    # Delete the MFA session and create a real session
+    # Success — clear failure counter, delete the MFA session and create a real session
+    _mfa_failures.pop(body.mfa_ticket, None)
     await db.delete(mfa_session)
     token = await create_session(db, user_id)
     role_ids = await get_user_role_ids(db, user_id)
@@ -546,25 +582,8 @@ async def webauthn_login(
     if body.user_handle:
         assertion["response"]["userHandle"] = body.user_handle
 
-    # Find the most recent pending authentication challenge for this user
-    from vox.db.models import WebAuthnChallenge
-    now = datetime.now(timezone.utc)
-    challenge_result = await db.execute(
-        select(WebAuthnChallenge).where(
-            WebAuthnChallenge.user_id == user.id,
-            WebAuthnChallenge.challenge_type == "authentication",
-            WebAuthnChallenge.expires_at > now,
-        ).order_by(WebAuthnChallenge.expires_at.desc()).limit(1)
-    )
-    challenge_row = challenge_result.scalar_one_or_none()
-    if challenge_row is None:
-        raise HTTPException(
-            status_code=401,
-            detail={"error": {"code": "WEBAUTHN_FAILED", "message": "No pending WebAuthn challenge."}},
-        )
-    challenge_id = challenge_row.id
-
-    await verify_webauthn_authentication(db, challenge_id, assertion)
+    # Use the client-supplied challenge_id to look up the specific challenge
+    await verify_webauthn_authentication(db, body.challenge_id, assertion)
 
     token = await create_session(db, user.id)
     role_ids = await get_user_role_ids(db, user.id)

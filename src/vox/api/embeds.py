@@ -1,3 +1,4 @@
+import asyncio
 import ipaddress
 import re
 import socket
@@ -17,7 +18,7 @@ _MAX_RESPONSE_SIZE = 1 * 1024 * 1024  # 1MB
 _ALLOWED_SCHEMES = {"http", "https"}
 
 
-def _validate_url(url: str) -> str:
+async def _validate_url(url: str) -> str:
     """Validate URL to prevent SSRF: reject private/loopback/link-local IPs."""
     parsed = urlparse(url)
     if parsed.scheme not in _ALLOWED_SCHEMES:
@@ -31,8 +32,9 @@ def _validate_url(url: str) -> str:
             status_code=400,
             detail={"error": {"code": "INVALID_URL", "message": "URL must contain a hostname."}},
         )
+    loop = asyncio.get_running_loop()
     try:
-        addrinfos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        addrinfos = await loop.getaddrinfo(hostname, None, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM)
     except socket.gaierror:
         raise HTTPException(
             status_code=400,
@@ -107,7 +109,7 @@ async def resolve_embed(
     body: ResolveEmbedRequest,
     _: User = Depends(get_current_user),
 ) -> Embed:
-    _validate_url(body.url)
+    await _validate_url(body.url)
     try:
         async with httpx.AsyncClient(follow_redirects=False) as client:
             resp = await client.get(body.url, timeout=5.0, headers={"User-Agent": "VoxBot/1.0"})
@@ -117,7 +119,7 @@ async def resolve_embed(
                 location = resp.headers.get("location")
                 if not location:
                     break
-                _validate_url(location)
+                await _validate_url(location)
                 resp = await client.get(location, timeout=5.0, headers={"User-Agent": "VoxBot/1.0"})
                 redirects += 1
             if len(resp.content) > _MAX_RESPONSE_SIZE:
