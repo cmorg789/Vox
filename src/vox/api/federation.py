@@ -359,11 +359,15 @@ async def presence_notify(
     dm_ids = list(dm_ids_result.scalars().all())
 
     local_user_ids: set[int] = set()
-    for dm_id in dm_ids:
-        pids = await _get_dm_participant_ids(db, dm_id)
-        for pid in pids:
-            if pid != fed_user.id:
-                local_user_ids.add(pid)
+    if dm_ids:
+        other_participants = await db.execute(
+            select(dm_participants.c.user_id)
+            .where(
+                dm_participants.c.dm_id.in_(dm_ids),
+                dm_participants.c.user_id != fed_user.id,
+            )
+        )
+        local_user_ids = set(other_participants.scalars().all())
 
     if local_user_ids:
         await dispatch(

@@ -236,14 +236,18 @@ async def list_bans(
     _: User = require_permission(BAN_MEMBERS),
 ) -> BanListResponse:
     limit = min(limit, config.limits.page_limit_bans)
-    query = select(Ban).order_by(Ban.user_id).limit(limit)
+    query = (
+        select(Ban, User)
+        .outerjoin(User, User.id == Ban.user_id)
+        .order_by(Ban.user_id)
+        .limit(limit)
+    )
     if after is not None:
         query = query.where(Ban.user_id > after)
     result = await db.execute(query)
-    bans = result.scalars().all()
+    rows = result.all()
     items = []
-    for b in bans:
-        u = (await db.execute(select(User).where(User.id == b.user_id))).scalar_one_or_none()
-        items.append(BanResponse(user_id=b.user_id, display_name=u.display_name if u else None, reason=b.reason, created_at=int(b.created_at.timestamp())))
-    cursor = str(bans[-1].user_id) if bans else None
+    for ban, user in rows:
+        items.append(BanResponse(user_id=ban.user_id, display_name=user.display_name if user else None, reason=ban.reason, created_at=int(ban.created_at.timestamp())))
+    cursor = str(rows[-1][0].user_id) if rows else None
     return BanListResponse(items=items, cursor=cursor)
