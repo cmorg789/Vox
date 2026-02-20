@@ -69,6 +69,7 @@ class AuthAPI:
     async def login_webauthn(
         self,
         username: str,
+        challenge_id: str,
         client_data_json: str,
         authenticator_data: str,
         signature: str,
@@ -77,6 +78,7 @@ class AuthAPI:
     ) -> LoginResponse:
         payload: dict[str, Any] = {
             "username": username,
+            "challenge_id": challenge_id,
             "client_data_json": client_data_json,
             "authenticator_data": authenticator_data,
             "signature": signature,
