@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from vox_sdk.models.server import ServerInfoResponse, ServerLayoutResponse
+from vox_sdk.models.server import GatewayInfoResponse, ServerInfoResponse, ServerLayoutResponse
 
 if TYPE_CHECKING:
     from vox_sdk.http import HTTPClient
@@ -39,10 +39,14 @@ class ServerAPI:
         r = await self._http.get("/api/v1/server/layout")
         return ServerLayoutResponse.model_validate(r.json())
 
+    async def gateway_info(self) -> GatewayInfoResponse:
+        r = await self._http.get("/api/v1/gateway")
+        return GatewayInfoResponse.model_validate(r.json())
+
     async def get_limits(self) -> dict:
         r = await self._http.get("/api/v1/server/limits")
         return r.json()
 
     async def update_limits(self, **limits: Any) -> dict:
-        r = await self._http.patch("/api/v1/server/limits", json=limits)
+        r = await self._http.patch("/api/v1/server/limits", json={"limits": limits})
         return r.json()

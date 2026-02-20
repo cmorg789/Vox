@@ -54,6 +54,13 @@ _RESUMABLE_CODES = {4007, 4008}
 _RECONNECTABLE_CODES = {4000, 4001, 4002, 4006, 4007, 4008, 4009, 4010, 4011}
 
 
+class VoxNetworkError(Exception):
+    """Raised when a transport-level error occurs (connection refused, timeout, etc.)."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
 class VoxGatewayError(Exception):
     """Raised when the gateway connection is closed unexpectedly."""
 
