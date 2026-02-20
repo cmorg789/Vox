@@ -61,11 +61,14 @@ async def _setup_fed_keys_in_db(client):
 
 async def _fed_request(client, method, path, body, private_key, pub_b64, origin="remote.example"):
     """Make a signed federation request, properly matching the raw body bytes."""
+    import time as _time
     body_bytes = json.dumps(body).encode()
-    sig = fed_service.sign_body(body_bytes, private_key)
+    timestamp = str(int(_time.time()))
+    sig = fed_service.sign_body(body_bytes + timestamp.encode(), private_key)
     headers = {
         "X-Vox-Origin": origin,
         "X-Vox-Signature": sig,
+        "X-Vox-Timestamp": timestamp,
         "Content-Type": "application/json",
     }
     with patch.object(fed_service, "lookup_vox_key", new_callable=AsyncMock, return_value=pub_b64):
@@ -74,7 +77,7 @@ async def _fed_request(client, method, path, body, private_key, pub_b64, origin=
         else:
             # For GET requests, sign empty body
             empty_bytes = b""
-            sig = fed_service.sign_body(empty_bytes, private_key)
+            sig = fed_service.sign_body(empty_bytes + timestamp.encode(), private_key)
             headers["X-Vox-Signature"] = sig
             return await client.get(path, headers=headers)
 
@@ -279,11 +282,14 @@ async def test_relay_message_wrong_signature(client):
     _, wrong_pub = _generate_test_keypair()
 
     # Sign with one key, but DNS returns a different public key
+    import time as _time
     body_bytes = json.dumps(body).encode()
-    sig = fed_service.sign_body(body_bytes, other_key)
+    timestamp = str(int(_time.time()))
+    sig = fed_service.sign_body(body_bytes + timestamp.encode(), other_key)
     fed_headers = {
         "X-Vox-Origin": "remote.example",
         "X-Vox-Signature": sig,
+        "X-Vox-Timestamp": timestamp,
         "Content-Type": "application/json",
     }
     with patch.object(fed_service, "lookup_vox_key", new_callable=AsyncMock, return_value=wrong_pub):

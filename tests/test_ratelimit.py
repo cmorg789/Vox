@@ -169,18 +169,18 @@ def test_check_refill_restores_tokens(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ratelimit_webhook_key():
-    """Webhook execution is IP-keyed."""
+    """Webhook execution is keyed by webhook ID."""
     from vox.ratelimit import RateLimitMiddleware
 
     middleware = RateLimitMiddleware(app=MagicMock())
 
     mock_request = MagicMock()
-    mock_request.url.path = "/api/v1/webhooks/123/execute"
+    mock_request.url.path = "/api/v1/webhooks/123/abc/execute"
     mock_request.client.host = "1.2.3.4"
     mock_request.headers = {}
 
-    key = await middleware._resolve_key(mock_request, "/api/v1/webhooks/123/execute")
-    assert key == "ip:1.2.3.4"
+    key = await middleware._resolve_key(mock_request, "/api/v1/webhooks/123/abc/execute")
+    assert key == "webhook:123"
 
 
 @pytest.mark.asyncio

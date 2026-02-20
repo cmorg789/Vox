@@ -212,7 +212,7 @@ async def test_slash_command_http_callback_bot(client):
     mock_client_instance.__aexit__ = AsyncMock(return_value=False)
 
     with patch("vox.api.messages.httpx.AsyncClient", return_value=mock_client_instance), \
-         patch("vox.api.messages._is_safe_url", return_value=True):
+         patch("vox.api.messages._is_safe_url", return_value=(True, "127.0.0.1", "localhost")):
         r = await client.post("/api/v1/feeds/1/messages", headers=h, json={"body": "/ping"})
         assert r.status_code == 201
         assert r.json().get("interaction_id") is not None
@@ -312,7 +312,7 @@ async def test_slash_command_http_callback_error(client):
     mock_client_instance.__aexit__ = AsyncMock(return_value=False)
 
     with patch("vox.api.messages.httpx.AsyncClient", return_value=mock_client_instance), \
-         patch("vox.api.messages._is_safe_url", return_value=True):
+         patch("vox.api.messages._is_safe_url", return_value=(True, "127.0.0.1", "localhost")):
         r = await client.post("/api/v1/feeds/1/messages", headers=h, json={"body": "/fail"})
         assert r.status_code == 201
         assert r.json().get("interaction_id") is not None
