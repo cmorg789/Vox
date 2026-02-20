@@ -61,6 +61,25 @@ async def resolve_permissions(
     *,
     space_type: str | None = None,
     space_id: int | None = None,
+    perm_cache: dict | None = None,
+) -> int:
+    """Resolve effective permissions for *user_id*, optionally scoped to a space."""
+    cache_key = (user_id, space_type, space_id)
+    if perm_cache is not None and cache_key in perm_cache:
+        return perm_cache[cache_key]
+
+    result = await _resolve_permissions_uncached(db, user_id, space_type=space_type, space_id=space_id)
+    if perm_cache is not None:
+        perm_cache[cache_key] = result
+    return result
+
+
+async def _resolve_permissions_uncached(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    space_type: str | None = None,
+    space_id: int | None = None,
 ) -> int:
     """Resolve effective permissions for *user_id*, optionally scoped to a space."""
 

@@ -140,6 +140,22 @@ def reset() -> None:
     _buckets.clear()
 
 
+def evict_stale(max_age: float = 600.0) -> None:
+    """Remove buckets with last_refill older than *max_age* seconds."""
+    now = time.time()
+    stale = [k for k, b in _buckets.items() if now - b.last_refill > max_age]
+    for k in stale:
+        del _buckets[k]
+
+
+def evict_token_cache() -> None:
+    """Remove expired entries from the token cache."""
+    now = time.monotonic()
+    expired = [tok for tok, (_, exp) in _TOKEN_CACHE.items() if now >= exp]
+    for tok in expired:
+        del _TOKEN_CACHE[tok]
+
+
 # ---------------------------------------------------------------------------
 # Middleware
 # ---------------------------------------------------------------------------
@@ -165,11 +181,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         if not allowed:
             retry_after_s = math.ceil(retry_after_ms / 1000)
+            code = "AUTH_RATE_LIMITED" if category == "auth" else "RATE_LIMITED"
             return JSONResponse(
                 status_code=429,
                 content={
                     "error": {
-                        "code": "RATE_LIMITED",
+                        "code": code,
                         "message": "You are being rate limited.",
                         "retry_after_ms": retry_after_ms,
                     }

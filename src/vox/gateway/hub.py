@@ -30,6 +30,10 @@ class SessionState:
     created_at: float = field(default_factory=time.monotonic)
 
 
+_AUTH_FAIL_THRESHOLD = 10
+_AUTH_FAIL_WINDOW = 60.0
+
+
 class Hub:
     def __init__(self) -> None:
         # user_id -> set of active connections (supports multiple sessions)
@@ -42,24 +46,31 @@ class Hub:
         self._lock = asyncio.Lock()
         # IP-based connection tracking
         self._ip_connections: dict[str, int] = {}
+        # Auth failure tracking per IP
+        self._auth_failures: dict[str, list[float]] = {}
 
-    async def connect(self, conn: Connection, *, ip: str = "") -> bool:
-        """Register a connection. Returns False if limits exceeded."""
+    async def connect(self, conn: Connection, *, ip: str = "") -> str | None:
+        """Register a connection. Returns None on success, or a rejection reason string."""
+        from vox.config import config
         async with self._lock:
+            # Enforce total connection limit
+            total = sum(len(conns) for conns in self.connections.values())
+            if total >= config.limits.max_total_connections:
+                return "server_full"
             # Enforce per-IP limit
             if ip:
                 current_ip = self._ip_connections.get(ip, 0)
                 if current_ip >= MAX_CONNECTIONS_PER_IP:
-                    return False
+                    return "rate_limited"
             # Enforce per-user session limit
             existing = self.connections.get(conn.user_id, set())
             if len(existing) >= MAX_SESSIONS_PER_USER:
-                return False
+                return "rate_limited"
             self.connections.setdefault(conn.user_id, set()).add(conn)
             if ip:
                 self._ip_connections[ip] = self._ip_connections.get(ip, 0) + 1
         log.info("Hub: user %d connected (session %s)", conn.user_id, conn.session_id)
-        return True
+        return None
 
     async def disconnect(self, conn: Connection, *, ip: str = "") -> None:
         async with self._lock:
@@ -96,9 +107,9 @@ class Hub:
     async def broadcast(self, event: dict[str, Any], user_ids: list[int] | None = None) -> None:
         """Send event to specific users, or all connected users if user_ids is None."""
         if user_ids is None:
-            targets = self.connections
+            targets = {uid: set(conns) for uid, conns in self.connections.items()}
         else:
-            targets = {uid: self.connections[uid] for uid in user_ids if uid in self.connections}
+            targets = {uid: set(self.connections[uid]) for uid in user_ids if uid in self.connections}
 
         tasks = []
         for conns in targets.values():
@@ -121,6 +132,48 @@ class Hub:
 
     def clear_presence(self, user_id: int) -> None:
         self.presence.pop(user_id, None)
+
+    def record_auth_failure(self, ip: str) -> None:
+        now = time.monotonic()
+        failures = self._auth_failures.setdefault(ip, [])
+        failures.append(now)
+
+    def is_auth_rate_limited(self, ip: str) -> bool:
+        failures = self._auth_failures.get(ip)
+        if not failures:
+            return False
+        now = time.monotonic()
+        # Prune old entries
+        cutoff = now - _AUTH_FAIL_WINDOW
+        self._auth_failures[ip] = [t for t in failures if t > cutoff]
+        return len(self._auth_failures[ip]) >= _AUTH_FAIL_THRESHOLD
+
+    def cleanup_auth_failures(self) -> None:
+        now = time.monotonic()
+        cutoff = now - _AUTH_FAIL_WINDOW
+        to_delete = []
+        for ip, failures in self._auth_failures.items():
+            self._auth_failures[ip] = [t for t in failures if t > cutoff]
+            if not self._auth_failures[ip]:
+                to_delete.append(ip)
+        for ip in to_delete:
+            del self._auth_failures[ip]
+
+    def cleanup_orphaned_presence(self) -> None:
+        """Remove presence entries for users with no active connections."""
+        orphaned = [uid for uid in self.presence if uid not in self.connections]
+        for uid in orphaned:
+            del self.presence[uid]
+
+    async def close_all(self, code: int, reason: str = "") -> None:
+        """Send close frame to all connected clients (for graceful shutdown)."""
+        tasks = []
+        snapshot = {uid: set(conns) for uid, conns in self.connections.items()}
+        for conns in snapshot.values():
+            for conn in conns:
+                tasks.append(conn.close(code, reason))
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     @property
     def connected_user_ids(self) -> set[int]:

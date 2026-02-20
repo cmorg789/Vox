@@ -182,7 +182,7 @@ async def _handle_slash_command(
             return None
         try:
             pinned_url = bot.interaction_url.replace(f"://{host}", f"://{resolved_ip}", 1)
-            async with httpx.AsyncClient(verify=False) as client:
+            async with httpx.AsyncClient() as client:
                 resp = await client.post(pinned_url, json=payload, timeout=5.0, headers={"Host": host})
                 if resp.status_code == 200 and resp.content:
                     data = resp.json()
@@ -299,6 +299,8 @@ async def send_feed_message(
     # Empty message validation
     if not (body.body and body.body.strip()) and not body.attachments:
         raise HTTPException(status_code=400, detail={"error": {"code": "EMPTY_MESSAGE", "message": "Message must have body or attachments."}})
+    if body.body and len(body.body) > config.limits.message_body_max:
+        raise HTTPException(status_code=400, detail={"error": {"code": "MESSAGE_TOO_LARGE", "message": f"Message body exceeds maximum of {config.limits.message_body_max} characters."}})
 
     # Announcement feeds: only users with MANAGE_SPACES can post
     if feed.type == "announcement":
@@ -369,7 +371,7 @@ async def send_feed_message(
             parent_msg_id=msg_id,
             name=forum_thread.name,
         ), db=db)
-    embed_dict = json.loads(embed) if embed else None
+    embed_dict = json.loads(embed) if embed and isinstance(embed, str) else embed
     await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions, embed=embed_dict, attachments=attachment_dicts or None), db=db)
     await notify_for_message(db, msg_id=msg_id, feed_id=feed_id, thread_id=None, dm_id=None, author_id=user.id, body=body.body, reply_to=body.reply_to, mentions=body.mentions)
     return SendMessageResponse(msg_id=msg_id, timestamp=ts, mentions=body.mentions)
@@ -472,6 +474,8 @@ async def send_thread_message(
     # Empty message validation
     if not (body.body and body.body.strip()) and not body.attachments:
         raise HTTPException(status_code=400, detail={"error": {"code": "EMPTY_MESSAGE", "message": "Message must have body or attachments."}})
+    if body.body and len(body.body) > config.limits.message_body_max:
+        raise HTTPException(status_code=400, detail={"error": {"code": "MESSAGE_TOO_LARGE", "message": f"Message body exceeds maximum of {config.limits.message_body_max} characters."}})
     # Slash command interception
     intercepted = await _handle_slash_command(body.body, user, feed_id=feed_id, dm_id=None, db=db)
     if intercepted is not None:
@@ -515,7 +519,7 @@ async def send_thread_message(
             await db.execute(message_attachments.insert().values(msg_id=msg_id, file_id=file_id))
             attachment_dicts.append({"file_id": f.id, "name": f.name, "size": f.size, "mime": f.mime, "url": f.url})
     await db.commit()
-    embed_dict = json.loads(embed) if embed else None
+    embed_dict = json.loads(embed) if embed and isinstance(embed, str) else embed
     await dispatch(gw.message_create(msg_id=msg_id, feed_id=feed_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions, embed=embed_dict, attachments=attachment_dicts or None), db=db)
     await notify_for_message(db, msg_id=msg_id, feed_id=feed_id, thread_id=thread_id, dm_id=None, author_id=user.id, body=body.body, reply_to=body.reply_to, mentions=body.mentions)
     return SendMessageResponse(msg_id=msg_id, timestamp=ts, mentions=body.mentions)
@@ -570,7 +574,17 @@ async def pin_message(
     _: User = require_permission(MANAGE_MESSAGES, space_type="feed", space_id_param="feed_id"),
 ):
     from datetime import datetime, timezone
+    from sqlalchemy import func
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+    # Enforce pin cap
+    pin_count = (await db.execute(
+        select(func.count()).select_from(Pin).where(Pin.feed_id == feed_id)
+    )).scalar() or 0
+    if pin_count >= config.limits.max_pins_per_feed:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "PIN_LIMIT_REACHED", "message": f"Maximum of {config.limits.max_pins_per_feed} pins per feed."}},
+        )
     stmt = sqlite_insert(Pin).values(feed_id=feed_id, msg_id=msg_id, pinned_at=datetime.now(timezone.utc)).on_conflict_do_nothing()
     await db.execute(stmt)
     await db.commit()

@@ -102,6 +102,7 @@ class LimitsConfig(_DbSettings):
     # --- Messages ---
     message_body_max: int = 4000
     bulk_delete_max: int = 100
+    max_pins_per_feed: int = 50
 
     # --- DMs ---
     group_dm_recipients_max: int = 10
@@ -150,12 +151,19 @@ class LimitsConfig(_DbSettings):
 
     # --- Federation ---
     federation_address_max: int = 256
+    federation_presence_sub_limit: int = 1000
 
     # --- Relay ---
     relay_payload_max: int = 16384  # 16KB
 
     # --- Files ---
     file_upload_max_bytes: int = 25 * 1024 * 1024  # 25 MB
+
+    # --- Gateway ---
+    max_total_connections: int = 10000
+
+    # --- Voice ---
+    voice_room_max_members: int = 99
 
     # --- Pagination ---
     page_limit_messages: int = 100
@@ -230,8 +238,8 @@ class WebAuthnConfig(_DbSettings):
         "webauthn_origin": "origin",
     }
 
-    rp_id: str = "localhost"
-    origin: str = "http://localhost:8000"
+    rp_id: str | None = None
+    origin: str | None = None
 
 
 class FederationConfig(_DbSettings):

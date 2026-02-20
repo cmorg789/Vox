@@ -19,6 +19,9 @@ from vox.gateway.hub import Hub, SessionState
 
 log = logging.getLogger(__name__)
 
+# Strong references for fire-and-forget tasks to prevent GC
+_background_tasks: set[asyncio.Task] = set()
+
 try:
     import zstandard as zstd
 
@@ -49,6 +52,7 @@ CLOSE_SERVER_RESTART = 4008
 CLOSE_SESSION_EXPIRED = 4009
 CLOSE_REPLAY_EXHAUSTED = 4010
 CLOSE_VERSION_MISMATCH = 4011
+CLOSE_SERVER_FULL = 4012
 
 # MLS type -> event builder mapping
 _MLS_EVENT_MAP = {
@@ -201,7 +205,16 @@ class Connection:
 
     async def _handle_identify(self, data: dict[str, Any], db_factory: Any) -> None:
         token = data.get("token", "")
+        ip = self.ws.client.host if self.ws.client else ""
+
+        # Check auth rate limiting by IP
+        if ip and self.hub.is_auth_rate_limited(ip):
+            await self.close(CLOSE_SERVER_RESTART, "AUTH_RATE_LIMITED")
+            return
+
         if not token:
+            if ip:
+                self.hub.record_auth_failure(ip)
             await self.close(CLOSE_AUTH_FAILED, "AUTH_FAILED")
             return
 
@@ -214,6 +227,8 @@ class Connection:
         async with db_factory() as db:
             user, _sess = await get_user_by_token(db, token)
             if user is None:
+                if ip:
+                    self.hub.record_auth_failure(ip)
                 await self.close(CLOSE_AUTH_FAILED, "AUTH_FAILED")
                 return
 
@@ -227,8 +242,12 @@ class Connection:
         self.capabilities = data.get("capabilities", [])
         self._ip = self.ws.client.host if self.ws.client else ""
         self.authenticated = True
-        if not await self.hub.connect(self, ip=self._ip):
-            await self.close(CLOSE_RATE_LIMITED, "RATE_LIMITED")
+        rejection = await self.hub.connect(self, ip=self._ip)
+        if rejection is not None:
+            if rejection == "server_full":
+                await self.close(CLOSE_SERVER_FULL, "SERVER_FULL")
+            else:
+                await self.close(CLOSE_RATE_LIMITED, "RATE_LIMITED")
             self.authenticated = False
             return
 
@@ -252,17 +271,21 @@ class Connection:
         if other_ids:
             await self.hub.broadcast(events.presence_update(user_id=self.user_id, status="online"), user_ids=other_ids)
 
-        # Send current presence snapshot to newly connected client
+        # Send current presence snapshot to newly connected client (batched)
         async with self.hub._lock:
             presence_snapshot = dict(self.hub.presence)
+        presence_events = []
         for uid, pdata in presence_snapshot.items():
             if uid != self.user_id:
-                # Hide invisible users — show them as offline
                 if pdata.get("status") == "invisible":
                     filtered = {**pdata, "status": "offline"}
-                    await self.send_event(events.presence_update(**filtered))
+                    presence_events.append(events.presence_update(**filtered))
                 else:
-                    await self.send_event(events.presence_update(**pdata))
+                    presence_events.append(events.presence_update(**pdata))
+        # Send in batches of 50 using gather
+        for i in range(0, len(presence_events), 50):
+            batch = presence_events[i:i + 50]
+            await asyncio.gather(*(self.send_event(evt) for evt in batch))
 
     async def _handle_resume(self, data: dict[str, Any], db_factory: Any) -> None:
         token = data.get("token", "")
@@ -304,8 +327,12 @@ class Connection:
         self._replay_buffer = deque(session.replay_buffer, maxlen=REPLAY_BUFFER_SIZE)
         self._ip = self.ws.client.host if self.ws.client else ""
         self.authenticated = True
-        if not await self.hub.connect(self, ip=self._ip):
-            await self.close(CLOSE_RATE_LIMITED, "RATE_LIMITED")
+        rejection = await self.hub.connect(self, ip=self._ip)
+        if rejection is not None:
+            if rejection == "server_full":
+                await self.close(CLOSE_SERVER_FULL, "SERVER_FULL")
+            else:
+                await self.close(CLOSE_RATE_LIMITED, "RATE_LIMITED")
             self.authenticated = False
             return
 
@@ -375,7 +402,9 @@ class Connection:
                 await dispatch(evt)
                 # Federated DM typing relay (fire-and-forget)
                 if dm_id is not None:
-                    asyncio.create_task(self._relay_federated_typing(db_factory, dm_id))
+                    task = asyncio.create_task(self._relay_federated_typing(db_factory, dm_id))
+                    _background_tasks.add(task)
+                    task.add_done_callback(_background_tasks.discard)
 
             elif msg_type == "presence_update":
                 status = data.get("status", "online")
@@ -397,7 +426,9 @@ class Connection:
                 if other_ids:
                     await self.hub.broadcast(events.presence_update(user_id=self.user_id, **broadcast_data), user_ids=other_ids)
                 # Federated presence notification (fire-and-forget)
-                asyncio.create_task(self._notify_federated_presence(db_factory, broadcast_status, activity))
+                task = asyncio.create_task(self._notify_federated_presence(db_factory, broadcast_status, activity))
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
 
             elif msg_type == "voice_state_update":
                 from vox.gateway.dispatch import dispatch
@@ -467,13 +498,15 @@ class Connection:
             async with db_factory() as _db:
                 our_domain = await get_our_domain(_db)
                 if our_domain:
+                    # Hoist user lookup above the loop
+                    local_user = (await _db.execute(_select(User).where(User.id == self.user_id))).scalar_one()
+                    from_addr = f"{local_user.username}@{our_domain}"
                     parts = await _db.execute(
                         _select(User).join(dm_participants, dm_participants.c.user_id == User.id)
                         .where(dm_participants.c.dm_id == dm_id, User.federated == True)
                     )
                     for fed_user in parts.scalars().all():
                         if fed_user.home_domain:
-                            from_addr = f"{(await _db.execute(_select(User).where(User.id == self.user_id))).scalar_one().username}@{our_domain}"
                             await relay_typing(_db, from_addr, fed_user.username)
         except Exception:
             pass  # Fire-and-forget

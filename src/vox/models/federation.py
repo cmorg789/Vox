@@ -39,6 +39,7 @@ class FederatedDevicePrekey(VoxModel):
 class FederatedPrekeyResponse(VoxModel):
     user_address: str
     devices: list[FederatedDevicePrekey]
+    prekey_warning: str | None = None
 
 
 class FederatedUserProfile(VoxModel):

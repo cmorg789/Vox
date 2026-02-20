@@ -25,6 +25,7 @@ class DevicePrekey(VoxModel):
 class PrekeyBundleResponse(VoxModel):
     user_id: int
     devices: list[DevicePrekey]
+    prekey_warning: str | None = None
 
 
 # --- Devices ---

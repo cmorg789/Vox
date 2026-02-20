@@ -38,19 +38,14 @@ async def register_commands(
     if bot is None:
         raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Not a bot account."}})
 
-    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
     for cmd in body.commands:
+        existing = (await db.execute(
+            select(BotCommand).where(BotCommand.bot_id == bot.id, BotCommand.name == cmd.name)
+        )).scalar_one_or_none()
+        if existing is not None:
+            raise HTTPException(status_code=409, detail={"error": {"code": "CMD_ALREADY_REGISTERED", "message": f"Command '{cmd.name}' is already registered."}})
         params_json = json.dumps([p.model_dump() for p in cmd.params]) if cmd.params else None
-        stmt = sqlite_insert(BotCommand).values(
-            bot_id=bot.id,
-            name=cmd.name,
-            description=cmd.description,
-            params=params_json,
-        ).on_conflict_do_update(
-            index_elements=["bot_id", "name"],
-            set_={"description": cmd.description, "params": params_json},
-        )
-        await db.execute(stmt)
+        db.add(BotCommand(bot_id=bot.id, name=cmd.name, description=cmd.description, params=params_json))
     await db.commit()
     cmds = [{"name": c.name, "description": c.description, "params": json.loads(c.params) if c.params else []} for c in body.commands]
     await dispatch(gw.bot_commands_update(bot_id=bot.id, commands=cmds), db=db)
@@ -86,7 +81,12 @@ async def deregister_commands(
         raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Not a bot account."}})
 
     for name in body.command_names:
-        await db.execute(delete(BotCommand).where(BotCommand.bot_id == bot.id, BotCommand.name == name))
+        existing = (await db.execute(
+            select(BotCommand).where(BotCommand.bot_id == bot.id, BotCommand.name == name)
+        )).scalar_one_or_none()
+        if existing is None:
+            raise HTTPException(status_code=404, detail={"error": {"code": "CMD_NOT_FOUND", "message": f"Command '{name}' not found."}})
+        await db.delete(existing)
     await db.commit()
     await dispatch(gw.bot_commands_delete(bot_id=bot.id, command_names=body.command_names), db=db)
     return OkResponse()

@@ -32,10 +32,19 @@ def generate_totp_secret(username: str, issuer: str = "Vox") -> tuple[str, str]:
     return secret, uri
 
 
-def verify_totp(secret: str, code: str) -> bool:
-    """Verify a TOTP code with a 1-step window."""
+def verify_totp(secret: str, code: str, *, last_used_counter: int | None = None) -> tuple[bool, int | None]:
+    """Verify a TOTP code with a 1-step window.
+
+    Returns (valid, new_counter).  The caller must persist *new_counter*
+    on the ``TOTPSecret`` row to prevent replay attacks.
+    """
     totp = pyotp.TOTP(secret)
-    return totp.verify(code, valid_window=1)
+    if not totp.verify(code, valid_window=1):
+        return False, None
+    counter = int(datetime.now().timestamp()) // totp.interval
+    if last_used_counter is not None and counter <= last_used_counter:
+        return False, None
+    return True, counter
 
 
 # --- Recovery Codes ---
@@ -169,8 +178,16 @@ async def validate_mfa_ticket(db: AsyncSession, ticket: str) -> Session:
 
 
 def _get_webauthn_config() -> tuple[str, str]:
-    """Get WebAuthn RP ID and origin from in-memory config."""
+    """Get WebAuthn RP ID and origin from in-memory config.
+
+    Raises HTTPException 400 if WebAuthn is not configured.
+    """
     from vox.config import config
+    if config.webauthn.rp_id is None or config.webauthn.origin is None:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "WEBAUTHN_NOT_CONFIGURED", "message": "WebAuthn is not configured on this server."}},
+        )
     return config.webauthn.rp_id, config.webauthn.origin
 
 

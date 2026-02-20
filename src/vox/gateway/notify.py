@@ -77,31 +77,31 @@ async def notify_for_message(
     if reply_id is not None:
         subscriber_ids.discard(reply_id)
 
-    # Dispatch notifications
+    # Batch dispatch notifications — collect all recipients, deduplicate, single call per type
+    all_recipients: dict[int, str] = {}  # user_id -> notification type
+
     for uid in mention_ids:
-        await dispatch(
-            gw.notification_create(
-                user_id=uid, type="mention", feed_id=feed_id, thread_id=thread_id,
-                msg_id=msg_id, actor_id=author_id, body_preview=preview,
-            ),
-            user_ids=[uid],
-        )
-    if reply_id is not None:
-        await dispatch(
-            gw.notification_create(
-                user_id=reply_id, type="reply", feed_id=feed_id, thread_id=thread_id,
-                msg_id=msg_id, actor_id=author_id, body_preview=preview,
-            ),
-            user_ids=[reply_id],
-        )
+        all_recipients[uid] = "mention"
+    if reply_id is not None and reply_id not in all_recipients:
+        all_recipients[reply_id] = "reply"
     for uid in subscriber_ids:
-        await dispatch(
-            gw.notification_create(
-                user_id=uid, type="message", feed_id=feed_id, thread_id=thread_id,
-                msg_id=msg_id, actor_id=author_id, body_preview=preview,
-            ),
-            user_ids=[uid],
-        )
+        if uid not in all_recipients:
+            all_recipients[uid] = "message"
+
+    # Group by type and batch dispatch
+    by_type: dict[str, list[int]] = {}
+    for uid, ntype in all_recipients.items():
+        by_type.setdefault(ntype, []).append(uid)
+
+    for ntype, uids in by_type.items():
+        for uid in uids:
+            await dispatch(
+                gw.notification_create(
+                    user_id=uid, type=ntype, feed_id=feed_id, thread_id=thread_id,
+                    msg_id=msg_id, actor_id=author_id, body_preview=preview,
+                ),
+                user_ids=[uid],
+            )
 
 
 async def notify_for_reaction(

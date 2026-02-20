@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db
@@ -270,23 +270,38 @@ async def get_federated_prekeys(
 
     devices_result = await db.execute(select(Device).where(Device.user_id == user.id))
     devices = devices_result.scalars().all()
+    if not devices:
+        return FederatedPrekeyResponse(user_address=user_address, devices=[])
+
+    device_ids = [dev.id for dev in devices]
+
+    # Batch-load prekeys
+    prekeys_result = await db.execute(select(Prekey).where(Prekey.device_id.in_(device_ids)))
+    prekeys_by_device: dict[str, Prekey] = {pk.device_id: pk for pk in prekeys_result.scalars().all()}
+
+    # Batch-load one OTP per device (pick lowest ID per device)
+    from sqlalchemy import func
+    otp_subq = (
+        select(func.min(OneTimePrekey.id).label("min_id"))
+        .where(OneTimePrekey.device_id.in_(device_ids))
+        .group_by(OneTimePrekey.device_id)
+        .subquery()
+    )
+    otps_result = await db.execute(
+        select(OneTimePrekey).where(OneTimePrekey.id.in_(select(otp_subq.c.min_id)))
+    )
+    otps_by_device: dict[str, OneTimePrekey] = {otp.device_id: otp for otp in otps_result.scalars().all()}
 
     bundles = []
     for dev in devices:
-        prekey_result = await db.execute(select(Prekey).where(Prekey.device_id == dev.id))
-        prekey = prekey_result.scalar_one_or_none()
+        prekey = prekeys_by_device.get(dev.id)
         if prekey is None:
             continue
-
-        otp_result = await db.execute(
-            select(OneTimePrekey).where(OneTimePrekey.device_id == dev.id).limit(1)
-        )
-        otp = otp_result.scalar_one_or_none()
+        otp = otps_by_device.get(dev.id)
         otp_key = None
         if otp:
             otp_key = otp.key_data
             await db.delete(otp)
-
         bundles.append(FederatedDevicePrekey(
             device_id=dev.id,
             identity_key=prekey.identity_key,
@@ -295,7 +310,18 @@ async def get_federated_prekeys(
         ))
 
     await db.commit()
-    return FederatedPrekeyResponse(user_address=user_address, devices=bundles)
+
+    # Check remaining OTPs — warn if exhausted
+    prekey_warning = None
+    remaining_otps = (await db.execute(
+        select(func.count()).select_from(OneTimePrekey).where(
+            OneTimePrekey.device_id.in_(device_ids)
+        )
+    )).scalar()
+    if remaining_otps == 0:
+        prekey_warning = "PREKEY_EXHAUSTED"
+
+    return FederatedPrekeyResponse(user_address=user_address, devices=bundles, prekey_warning=prekey_warning)
 
 
 @router.get("/users/{user_address}")
@@ -328,11 +354,23 @@ async def presence_subscribe(
     origin: str = Depends(verify_federation_request),
     db: AsyncSession = Depends(get_db),
 ):
+    from sqlalchemy import func
+    from vox.db.models import FederationPresenceSub
+
     user = await _find_local_user(db, body.user_address)
     if user is None:
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": "FED_USER_NOT_FOUND", "message": "User not found on this server."}},
+        )
+    # Enforce per-domain subscription quota
+    count = (await db.execute(
+        select(func.count()).select_from(FederationPresenceSub).where(FederationPresenceSub.domain == origin)
+    )).scalar() or 0
+    if count >= config.limits.federation_presence_sub_limit:
+        raise HTTPException(
+            status_code=429,
+            detail={"error": {"code": "RATE_LIMITED", "message": "Presence subscription limit reached for this domain."}},
         )
     await add_presence_sub(db, origin, body.user_address)
     await db.commit()
@@ -589,10 +627,13 @@ async def admin_federation_unblock(
 
 @router.get("/admin/block")
 async def admin_federation_block_list(
+    limit: int = 100,
+    offset: int = 0,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> FederationEntryListResponse:
     from vox.permissions import ADMINISTRATOR, has_permission, resolve_permissions
+    from sqlalchemy import not_
 
     perms = await resolve_permissions(db, user.id)
     if not has_permission(perms, ADMINISTRATOR):
@@ -601,7 +642,13 @@ async def admin_federation_block_list(
             detail={"error": {"code": "MISSING_PERMISSIONS", "message": "Administrator permission required."}},
         )
 
-    result = await db.execute(select(FederationEntry))
+    result = await db.execute(
+        select(FederationEntry)
+        .where(not_(FederationEntry.entry.startswith("allow:")))
+        .order_by(FederationEntry.id)
+        .offset(offset)
+        .limit(min(limit, 200))
+    )
     entries = result.scalars().all()
     items = [
         FederationEntryResponse(
@@ -610,7 +657,6 @@ async def admin_federation_block_list(
             created_at=e.created_at.isoformat(),
         )
         for e in entries
-        if not e.entry.startswith("allow:")
     ]
     return FederationEntryListResponse(items=items)
 
@@ -686,6 +732,8 @@ async def admin_federation_unallow(
 
 @router.get("/admin/allow")
 async def admin_federation_allow_list(
+    limit: int = 100,
+    offset: int = 0,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> FederationEntryListResponse:
@@ -698,7 +746,13 @@ async def admin_federation_allow_list(
             detail={"error": {"code": "MISSING_PERMISSIONS", "message": "Administrator permission required."}},
         )
 
-    result = await db.execute(select(FederationEntry))
+    result = await db.execute(
+        select(FederationEntry)
+        .where(FederationEntry.entry.startswith("allow:"))
+        .order_by(FederationEntry.id)
+        .offset(offset)
+        .limit(min(limit, 200))
+    )
     entries = result.scalars().all()
     items = [
         FederationEntryResponse(
@@ -707,6 +761,5 @@ async def admin_federation_allow_list(
             created_at=e.created_at.isoformat(),
         )
         for e in entries
-        if e.entry.startswith("allow:")
     ]
     return FederationEntryListResponse(items=items)

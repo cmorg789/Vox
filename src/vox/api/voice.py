@@ -2,11 +2,11 @@ import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
-from vox.db.models import Room, StageSpeaker, User, VoiceState
+from vox.db.models import Room, StageSpeaker, StageInvite, User, VoiceState
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
 from vox.models.voice import (
@@ -29,8 +29,6 @@ from vox.voice import service as voice_service
 
 router = APIRouter(tags=["voice"])
 
-# In-memory tracking for pending stage invites: (room_id, user_id) -> timestamp
-_pending_stage_invites: dict[tuple[int, int], float] = {}
 _STAGE_INVITE_TTL = 300  # 5 minutes
 
 
@@ -219,14 +217,22 @@ async def stage_invite_to_speak(
         raise HTTPException(status_code=400, detail={"error": {"code": "NOT_IN_VOICE", "message": "Target user is not in this voice room."}})
 
     # Clean up stale invites
-    now = time.time()
-    stale = [k for k, ts in _pending_stage_invites.items() if now - ts > _STAGE_INVITE_TTL]
-    for k in stale:
-        del _pending_stage_invites[k]
+    now = datetime.now(tz=timezone.utc).replace(tzinfo=None)
+    from datetime import timedelta
+    await db.execute(
+        delete(StageInvite).where(StageInvite.created_at < now - timedelta(seconds=_STAGE_INVITE_TTL))
+    )
+
+    # Upsert invite
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+    stmt = sqlite_insert(StageInvite).values(
+        room_id=room_id, user_id=body.user_id, created_at=now
+    ).on_conflict_do_nothing()
+    await db.execute(stmt)
+    await db.commit()
 
     evt = gw.stage_invite(room_id=room_id, user_id=body.user_id)
     await dispatch(evt, user_ids=[body.user_id], db=db)
-    _pending_stage_invites[(room_id, body.user_id)] = now
 
 
 @router.post("/api/v1/rooms/{room_id}/stage/invite/respond", status_code=204)
@@ -236,21 +242,33 @@ async def stage_respond_to_invite(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    key = (room_id, user.id)
-    if key not in _pending_stage_invites:
+    result = await db.execute(
+        select(StageInvite).where(StageInvite.room_id == room_id, StageInvite.user_id == user.id)
+    )
+    invite = result.scalar_one_or_none()
+    if invite is None:
         raise HTTPException(status_code=400, detail={"error": {"code": "NO_PENDING_INVITE", "message": "You have not been invited to speak."}})
-    del _pending_stage_invites[key]
+
+    # Check TTL
+    from datetime import timedelta
+    if invite.created_at + timedelta(seconds=_STAGE_INVITE_TTL) < datetime.now(tz=timezone.utc).replace(tzinfo=None):
+        await db.delete(invite)
+        await db.commit()
+        raise HTTPException(status_code=400, detail={"error": {"code": "NO_PENDING_INVITE", "message": "Stage invite has expired."}})
+
+    await db.delete(invite)
 
     if body.accepted:
         speaker = StageSpeaker(
             room_id=room_id,
             user_id=user.id,
-            granted_at=datetime.now(timezone.utc),
+            granted_at=datetime.now(tz=timezone.utc).replace(tzinfo=None),
         )
         db.add(speaker)
         await db.commit()
         await _dispatch_voice_state(db, room_id)
     else:
+        await db.commit()
         evt = gw.stage_invite_decline(room_id=room_id, user_id=user.id)
         await dispatch(evt, db=db)
 
@@ -262,7 +280,6 @@ async def stage_revoke_speaker(
     db: AsyncSession = Depends(get_db),
     _: User = require_permission(STAGE_MODERATOR, space_type="room", space_id_param="room_id"),
 ):
-    from sqlalchemy import delete
     await db.execute(delete(StageSpeaker).where(StageSpeaker.room_id == room_id, StageSpeaker.user_id == body.user_id))
     await db.commit()
     evt = gw.stage_revoke(room_id=room_id, user_id=body.user_id)

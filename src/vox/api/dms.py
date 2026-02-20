@@ -179,10 +179,21 @@ async def list_dms(
         query = query.where(DM.id > after)
     result = await db.execute(query)
     dms = result.scalars().all()
-    items = []
-    for dm in dms:
-        pids = await _dm_participant_ids(db, dm.id)
-        items.append(DMResponse(dm_id=dm.id, participant_ids=pids, is_group=dm.is_group, name=dm.name, icon=dm.icon))
+    if not dms:
+        return DMListResponse(items=[], cursor=None)
+    # Batch-load all participants to avoid N+1
+    dm_ids = [dm.id for dm in dms]
+    parts_result = await db.execute(
+        select(dm_participants.c.dm_id, dm_participants.c.user_id)
+        .where(dm_participants.c.dm_id.in_(dm_ids))
+    )
+    pids_map: dict[int, list[int]] = {did: [] for did in dm_ids}
+    for did, uid in parts_result.all():
+        pids_map[did].append(uid)
+    items = [
+        DMResponse(dm_id=dm.id, participant_ids=pids_map.get(dm.id, []), is_group=dm.is_group, name=dm.name, icon=dm.icon)
+        for dm in dms
+    ]
     cursor = str(dms[-1].id) if dms else None
     return DMListResponse(items=items, cursor=cursor)
 
@@ -334,6 +345,8 @@ async def send_dm_message(
     # Empty message validation
     if not (body.body and body.body.strip()) and not body.attachments:
         raise HTTPException(status_code=400, detail={"error": {"code": "EMPTY_MESSAGE", "message": "Message must have body or attachments."}})
+    if body.body and len(body.body) > config.limits.message_body_max:
+        raise HTTPException(status_code=400, detail={"error": {"code": "MESSAGE_TOO_LARGE", "message": f"Message body exceeds maximum of {config.limits.message_body_max} characters."}})
     # Slash command interception
     intercepted = await _handle_slash_command(body.body, user, feed_id=None, dm_id=dm_id, db=db)
     if intercepted is not None:

@@ -103,6 +103,20 @@ async def join_room(
             detail={"error": {"code": "ALREADY_IN_VOICE", "message": "Already connected to a voice room."}},
         )
 
+    # Check room capacity
+    from sqlalchemy import func
+    from vox.config import config
+    room = (await db.execute(select(Room).where(Room.id == room_id))).scalar_one_or_none()
+    limit = room.max_members if room and room.max_members else config.limits.voice_room_max_members
+    current = (await db.execute(
+        select(func.count()).select_from(VoiceState).where(VoiceState.room_id == room_id)
+    )).scalar()
+    if current >= limit:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"code": "ROOM_FULL", "message": "Voice room is at capacity."}},
+        )
+
     vs = VoiceState(
         user_id=user_id,
         room_id=room_id,

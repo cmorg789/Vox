@@ -9,7 +9,7 @@ from vox.models.files import FileResponse
 
 
 class SendMessageRequest(BaseModel):
-    body: Annotated[str, AfterValidator(str_limit(max_attr="message_body_max"))] | None = None
+    body: str | None = None
     reply_to: int | None = None
     attachments: list[str] | None = None  # file_ids
     mentions: list[int] | None = None

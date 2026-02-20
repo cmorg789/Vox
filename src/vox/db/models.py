@@ -55,6 +55,7 @@ friends = Table(
     Column("friend_id", Integer, ForeignKey("users.id"), primary_key=True),
     Column("status", String(20), server_default="accepted"),  # pending | accepted
     Column("created_at", DateTime),
+    Index("ix_friends_friend_id", "friend_id"),
 )
 
 blocks = Table(
@@ -147,6 +148,7 @@ class Room(Base):
     type: Mapped[str] = mapped_column(String(50))  # voice, stage
     category_id: Mapped[Optional[int]] = mapped_column(ForeignKey("categories.id"))
     position: Mapped[int] = mapped_column(Integer)
+    max_members: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     topic: Mapped[Optional[str]] = mapped_column(String(255))
     category: Mapped[Optional["Category"]] = relationship(back_populates="rooms")
@@ -179,7 +181,7 @@ class Thread(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
-    feed_id: Mapped[int] = mapped_column(ForeignKey("feeds.id"))
+    feed_id: Mapped[int] = mapped_column(ForeignKey("feeds.id"), index=True)
     parent_msg_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("messages.id"))
     archived: Mapped[bool] = mapped_column(Boolean, server_default="0")
     locked: Mapped[bool] = mapped_column(Boolean, server_default="0")
@@ -223,7 +225,7 @@ class Ban(Base):
     __tablename__ = "bans"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     reason: Mapped[Optional[str]] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
@@ -364,7 +366,7 @@ class OneTimePrekey(Base):
     __tablename__ = "one_time_prekeys"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    device_id: Mapped[str] = mapped_column(String(255), ForeignKey("devices.id", ondelete="CASCADE"))
+    device_id: Mapped[str] = mapped_column(String(255), ForeignKey("devices.id", ondelete="CASCADE"), index=True)
     key_data: Mapped[str] = mapped_column(Text)
 
 
@@ -448,7 +450,7 @@ class FederationNonce(Base):
 
     nonce: Mapped[str] = mapped_column(String(255), primary_key=True)
     seen_at: Mapped[datetime] = mapped_column(DateTime)
-    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
 
 class FederationPresenceSub(Base):
@@ -502,6 +504,7 @@ class TOTPSecret(Base):
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), primary_key=True)
     secret: Mapped[str] = mapped_column(String(255))
     enabled: Mapped[bool] = mapped_column(Boolean, server_default="0")
+    last_used_counter: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
 class WebAuthnCredential(Base):
@@ -536,6 +539,14 @@ class RecoveryCode(Base):
 
 
 # --- Event Log (for sync) ---
+
+
+class StageInvite(Base):
+    __tablename__ = "stage_invites"
+
+    room_id: Mapped[int] = mapped_column(Integer, ForeignKey("rooms.id"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
 
 
 class EventLog(Base):

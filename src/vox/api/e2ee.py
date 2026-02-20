@@ -96,7 +96,18 @@ async def get_prekey_bundle(
         bundles.append(DevicePrekey(device_id=dev.id, identity_key=prekey.identity_key, signed_prekey=prekey.signed_prekey, one_time_prekey=otp_key))
 
     await db.commit()
-    return PrekeyBundleResponse(user_id=user_id, devices=bundles)
+
+    # Check remaining OTPs across all devices — warn if exhausted
+    prekey_warning = None
+    remaining_otps = (await db.execute(
+        select(func.count()).select_from(OneTimePrekey).where(
+            OneTimePrekey.device_id.in_([dev.id for dev in devices])
+        )
+    )).scalar()
+    if remaining_otps == 0:
+        prekey_warning = "PREKEY_EXHAUSTED"
+
+    return PrekeyBundleResponse(user_id=user_id, devices=bundles, prekey_warning=prekey_warning)
 
 
 @router.get("/devices")

@@ -129,7 +129,7 @@ async def resolve_embed(
     _url, resolved_ip, hostname = await _validate_url(body.url)
     pinned = _pin_url(body.url, hostname, resolved_ip)
     try:
-        async with httpx.AsyncClient(follow_redirects=False, verify=False) as client:
+        async with httpx.AsyncClient(follow_redirects=False) as client:
             resp = await client.get(pinned, timeout=5.0, headers={"User-Agent": "VoxBot/1.0", "Host": hostname})
             # Follow redirects manually, validating each target
             redirects = 0

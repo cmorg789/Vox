@@ -17,12 +17,33 @@ from fastapi.responses import FileResponse as FastAPIFileResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fastapi import Request as FastAPIRequest
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.db.models import File, Message, User, dm_participants, message_attachments
 from vox.config import check_mime, config
 from vox.models.files import FileResponse
 from vox.permissions import ATTACH_FILES, MANAGE_MESSAGES, VIEW_SPACE, has_permission, resolve_permissions
 from vox.storage import LocalStorage, get_storage
+
+_UPLOAD_CHUNK_SIZE = 64 * 1024  # 64KB
+
+
+async def _read_upload_chunked(file: UploadFile, max_bytes: int) -> bytes:
+    """Read upload in chunks, aborting early if it exceeds max_bytes."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_UPLOAD_CHUNK_SIZE)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {max_bytes} byte limit."}},
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 router = APIRouter(tags=["files"])
 
@@ -38,12 +59,7 @@ async def upload_file(
     db: AsyncSession = Depends(get_db),
     user: User = require_permission(ATTACH_FILES, space_type="feed", space_id_param="feed_id"),
 ) -> FileResponse:
-    content = await file.read()
-    if len(content) > config.limits.file_upload_max_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {config.limits.file_upload_max_bytes} byte limit."}},
-        )
+    content = await _read_upload_chunked(file, config.limits.file_upload_max_bytes)
 
     file_id = secrets.token_urlsafe(16)
     file_name = name or file.filename or "upload"
@@ -94,12 +110,7 @@ async def upload_dm_file(
             detail={"error": {"code": "NOT_DM_PARTICIPANT", "message": "You are not a participant in this DM."}},
         )
 
-    content = await file.read()
-    if len(content) > config.limits.file_upload_max_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail={"error": {"code": "FILE_TOO_LARGE", "message": f"File exceeds {config.limits.file_upload_max_bytes} byte limit."}},
-        )
+    content = await _read_upload_chunked(file, config.limits.file_upload_max_bytes)
 
     file_id = secrets.token_urlsafe(16)
     file_name = name or file.filename or "upload"

@@ -5,6 +5,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastapi import Header, Response
+from starlette.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncSessionType
 
 from vox.api.deps import get_current_user, get_db
@@ -85,7 +86,7 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)) ->
 
 
 @router.post("/login")
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> LoginResponse | MFARequiredResponse:
+async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> LoginResponse:
     user = await authenticate(db, body.username, body.password)
     if user is None:
         raise HTTPException(status_code=401, detail={"error": {"code": "AUTH_FAILED", "message": "Invalid username or password."}})
@@ -124,7 +125,14 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> Login
         if recovery.first() is not None:
             methods.append("recovery")
 
-        return MFARequiredResponse(mfa_ticket=mfa_ticket, available_methods=methods)
+        return JSONResponse(status_code=401, content={
+            "error": {
+                "code": "2FA_REQUIRED",
+                "message": "Two-factor authentication required.",
+                "mfa_ticket": mfa_ticket,
+                "available_methods": methods,
+            }
+        })
 
     # No 2FA, issue session directly
     token = await create_session(db, user.id)
@@ -191,7 +199,8 @@ async def login_2fa(
             select(TOTPSecret).where(TOTPSecret.user_id == user_id, TOTPSecret.enabled == True)
         )
         totp_secret = result.scalar_one_or_none()
-        if totp_secret is None or not verify_totp(totp_secret.secret, body.code):
+        valid, new_counter = verify_totp(totp_secret.secret, body.code, last_used_counter=totp_secret.last_used_counter) if totp_secret else (False, None)
+        if not valid:
             await _record_failure()
             if mfa_session.mfa_fail_count >= _MFA_MAX_ATTEMPTS:
                 await db.delete(mfa_session)
@@ -200,6 +209,7 @@ async def login_2fa(
                 status_code=401,
                 detail={"error": {"code": "2FA_INVALID_CODE", "message": "Invalid TOTP code."}},
             )
+        totp_secret.last_used_counter = new_counter
 
     elif body.method == "webauthn":
         if not body.assertion:
@@ -222,6 +232,14 @@ async def login_2fa(
             raise HTTPException(
                 status_code=400,
                 detail={"error": {"code": "2FA_INVALID_CODE", "message": "Recovery code is required."}},
+            )
+        unused = (await db.execute(
+            select(RecoveryCode).where(RecoveryCode.user_id == user_id, RecoveryCode.used == False)
+        )).first()
+        if unused is None:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": {"code": "2FA_RECOVERY_EXHAUSTED", "message": "All recovery codes have been used."}},
             )
         if not await verify_recovery_code(db, user_id, body.code):
             await _record_failure()
@@ -345,7 +363,8 @@ async def confirm_2fa_setup(
                 detail={"error": {"code": "2FA_SETUP_EXPIRED", "message": "No pending TOTP setup found."}},
             )
 
-        if not verify_totp(totp_secret.secret, body.code):
+        valid, _counter = verify_totp(totp_secret.secret, body.code)
+        if not valid:
             raise HTTPException(
                 status_code=401,
                 detail={"error": {"code": "2FA_INVALID_CODE", "message": "Invalid TOTP code."}},
@@ -414,6 +433,16 @@ async def remove_2fa(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SuccessResponse:
+    # Check that the method is actually enabled before proceeding
+    if body.method == "totp":
+        has = (await db.execute(select(TOTPSecret).where(TOTPSecret.user_id == user.id, TOTPSecret.enabled == True))).scalar_one_or_none()
+        if has is None:
+            raise HTTPException(status_code=422, detail={"error": {"code": "2FA_NOT_ENABLED", "message": "TOTP is not enabled."}})
+    elif body.method == "webauthn":
+        has = (await db.execute(select(WebAuthnCredential).where(WebAuthnCredential.user_id == user.id))).first()
+        if has is None:
+            raise HTTPException(status_code=422, detail={"error": {"code": "2FA_NOT_ENABLED", "message": "WebAuthn is not enabled."}})
+
     # Verify identity via code (TOTP, WebAuthn assertion, or recovery)
     verified = False
     if body.method == "webauthn" and body.assertion:
@@ -429,8 +458,11 @@ async def remove_2fa(
                 select(TOTPSecret).where(TOTPSecret.user_id == user.id, TOTPSecret.enabled == True)
             )
             totp_secret = result.scalar_one_or_none()
-            if totp_secret and verify_totp(totp_secret.secret, body.code):
-                verified = True
+            if totp_secret:
+                valid, new_counter = verify_totp(totp_secret.secret, body.code, last_used_counter=totp_secret.last_used_counter)
+                if valid:
+                    totp_secret.last_used_counter = new_counter
+                    verified = True
         if not verified:
             verified = await verify_recovery_code(db, user.id, body.code)
     if not verified:

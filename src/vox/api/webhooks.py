@@ -107,10 +107,10 @@ async def execute_webhook(
     db: AsyncSession = Depends(get_db),
 ):
     # No auth required — token in URL is the secret
-    result = await db.execute(select(Webhook).where(Webhook.id == webhook_id, Webhook.token == token))
+    result = await db.execute(select(Webhook).where(Webhook.id == webhook_id))
     wh = result.scalar_one_or_none()
-    if wh is None:
-        raise HTTPException(status_code=422, detail={"error": {"code": "WEBHOOK_TOKEN_INVALID", "message": "Webhook token is invalid."}})
+    if wh is None or not secrets.compare_digest(wh.token, token):
+        raise HTTPException(status_code=401, detail={"error": {"code": "WEBHOOK_TOKEN_INVALID", "message": "Webhook token is invalid."}})
     embed_list = [e.model_dump() for e in body.embeds] if body.embeds else None
     embed_json = json.dumps(embed_list) if embed_list else None
     msg_id = await _snowflake()

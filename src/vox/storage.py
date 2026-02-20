@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from typing import Protocol
@@ -45,20 +46,20 @@ class LocalStorage:
 
     async def put(self, key: str, data: bytes, mime: str) -> str:
         path = self._safe_path(key)
-        path.write_bytes(data)
+        await asyncio.to_thread(path.write_bytes, data)
         return f"/api/v1/files/{key}"
 
     async def get(self, key: str) -> bytes:
         path = self._safe_path(key)
-        return path.read_bytes()
+        return await asyncio.to_thread(path.read_bytes)
 
     async def delete(self, key: str) -> None:
         path = self._safe_path(key)
-        if path.exists():
-            path.unlink()
+        if await asyncio.to_thread(path.exists):
+            await asyncio.to_thread(path.unlink)
 
     async def exists(self, key: str) -> bool:
-        return self._safe_path(key).exists()
+        return await asyncio.to_thread(self._safe_path(key).exists)
 
     @property
     def local_path(self) -> Path:
@@ -87,6 +88,7 @@ class S3Storage:
         self.secret_key = secret_key
         self.region = region
         self.public_url = public_url  # e.g. "https://cdn.example.com"
+        self._session = aioboto3.Session()
 
     def _session_kwargs(self) -> dict:
         kwargs: dict = {}
@@ -100,36 +102,25 @@ class S3Storage:
         return kwargs
 
     async def put(self, key: str, data: bytes, mime: str) -> str:
-        import aioboto3
-
-        session = aioboto3.Session()
-        async with session.client("s3", **self._session_kwargs()) as s3:
+        async with self._session.client("s3", **self._session_kwargs()) as s3:
             await s3.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType=mime)
         if self.public_url:
             return f"{self.public_url}/{key}"
         return f"/api/v1/files/{key}"
 
     async def get(self, key: str) -> bytes:
-        import aioboto3
-
-        session = aioboto3.Session()
-        async with session.client("s3", **self._session_kwargs()) as s3:
+        async with self._session.client("s3", **self._session_kwargs()) as s3:
             resp = await s3.get_object(Bucket=self.bucket, Key=key)
             return await resp["Body"].read()
 
     async def delete(self, key: str) -> None:
-        import aioboto3
-
-        session = aioboto3.Session()
-        async with session.client("s3", **self._session_kwargs()) as s3:
+        async with self._session.client("s3", **self._session_kwargs()) as s3:
             await s3.delete_object(Bucket=self.bucket, Key=key)
 
     async def exists(self, key: str) -> bool:
-        import aioboto3
         from botocore.exceptions import ClientError
 
-        session = aioboto3.Session()
-        async with session.client("s3", **self._session_kwargs()) as s3:
+        async with self._session.client("s3", **self._session_kwargs()) as s3:
             try:
                 await s3.head_object(Bucket=self.bucket, Key=key)
                 return True

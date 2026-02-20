@@ -1,8 +1,11 @@
 import asyncio
+import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket
+from fastapi import APIRouter, FastAPI, WebSocket
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.db.engine import get_engine, get_session_factory, init_engine
 from vox.db.models import Base
@@ -11,16 +14,46 @@ from vox.gateway.hub import get_hub, init_hub
 from vox.ratelimit import RateLimitMiddleware
 from vox.voice.service import stop_sfu
 
+logger = logging.getLogger(__name__)
+
+
+def _configure_logging() -> None:
+    """Configure structured JSON logging (or plain text for dev)."""
+    log_format = os.environ.get("VOX_LOG_FORMAT", "json")
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    # Remove existing handlers
+    for h in root.handlers[:]:
+        root.removeHandler(h)
+    handler = logging.StreamHandler()
+    if log_format == "json":
+        import json as _json
+
+        class JsonFormatter(logging.Formatter):
+            def format(self, record: logging.LogRecord) -> str:
+                return _json.dumps({
+                    "timestamp": self.formatTime(record),
+                    "level": record.levelname,
+                    "logger": record.name,
+                    "message": record.getMessage(),
+                })
+
+        handler.setFormatter(JsonFormatter())
+    else:
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    root.addHandler(handler)
+
 
 async def _periodic_cleanup(db_factory):
-    """Background task: clean expired sessions and federation nonces hourly."""
+    """Background task: clean expired sessions, federation nonces, event log, rate limiter, and presence hourly."""
     while True:
         await asyncio.sleep(3600)
         try:
             from vox.auth.service import cleanup_expired_sessions
-            from vox.db.models import FederationNonce
+            from vox.db.models import EventLog, FederationNonce
             from sqlalchemy import delete
             from datetime import datetime, timezone
+            import time
 
             async with db_factory() as db:
                 await cleanup_expired_sessions(db)
@@ -31,19 +64,63 @@ async def _periodic_cleanup(db_factory):
                     delete(FederationNonce).where(FederationNonce.expires_at <= now)
                 )
                 await db.commit()
+
+            # EventLog cleanup: delete rows older than 7 days (matching SYNC_RETENTION_MS)
+            async with db_factory() as db:
+                retention_ms = 7 * 24 * 60 * 60 * 1000  # 7 days
+                cutoff_ts = int(time.time() * 1000) - retention_ms
+                cutoff_snowflake = cutoff_ts << 22
+                await db.execute(
+                    delete(EventLog).where(EventLog.id < cutoff_snowflake)
+                )
+                await db.commit()
+
+            # Rate limiter eviction
+            from vox.ratelimit import evict_stale, evict_token_cache
+            evict_stale()
+            evict_token_cache()
+
+            # Presence orphan cleanup + auth failure cleanup
+            hub = get_hub()
+            hub.cleanup_orphaned_presence()
+            hub.cleanup_auth_failures()
+
         except Exception:
-            import logging
-            logging.getLogger(__name__).warning("Periodic cleanup failed", exc_info=True)
+            logger.warning("Periodic cleanup failed", exc_info=True)
+
+
+# --- Health and readiness endpoints ---
+_health_router = APIRouter(tags=["health"])
+
+
+@_health_router.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+@_health_router.get("/ready")
+async def ready():
+    from sqlalchemy import text
+    try:
+        engine = get_engine()
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        return {"status": "ok"}
+    except Exception:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
 
 
 def create_app(database_url: str | None = None) -> FastAPI:
     if database_url is None:
-        import os
         database_url = os.environ.get("VOX_DATABASE_URL", "sqlite+aiosqlite:///vox.db")
     init_engine(database_url)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Configure logging
+        _configure_logging()
+
         # Create tables on startup
         engine = get_engine()
         async with engine.begin() as conn:
@@ -68,6 +145,22 @@ def create_app(database_url: str | None = None) -> FastAPI:
                         connection.execute(text("ALTER TABLE files ADD COLUMN feed_id INTEGER REFERENCES feeds(id)"))
                     if "dm_id" not in cols:
                         connection.execute(text("ALTER TABLE files ADD COLUMN dm_id INTEGER REFERENCES dms(id)"))
+                if "totp_secrets" in inspector.get_table_names():
+                    cols = {c["name"] for c in inspector.get_columns("totp_secrets")}
+                    if "last_used_counter" not in cols:
+                        connection.execute(text("ALTER TABLE totp_secrets ADD COLUMN last_used_counter INTEGER"))
+                if "rooms" in inspector.get_table_names():
+                    cols = {c["name"] for c in inspector.get_columns("rooms")}
+                    if "max_members" not in cols:
+                        connection.execute(text("ALTER TABLE rooms ADD COLUMN max_members INTEGER"))
+                if "stage_invites" not in inspector.get_table_names():
+                    connection.execute(text(
+                        "CREATE TABLE IF NOT EXISTS stage_invites ("
+                        "room_id INTEGER NOT NULL REFERENCES rooms(id), "
+                        "user_id INTEGER NOT NULL REFERENCES users(id), "
+                        "created_at DATETIME NOT NULL, "
+                        "PRIMARY KEY (room_id, user_id))"
+                    ))
             await conn.run_sync(_migrate)
         # Initialize storage backend
         from vox.storage import init_storage
@@ -78,9 +171,23 @@ def create_app(database_url: str | None = None) -> FastAPI:
             await load_config(db)
         # Initialize the gateway hub
         init_hub()
+
+        # Startup warnings
+        from vox.config import config
+        if config.webauthn.rp_id is None:
+            logger.warning("WebAuthn is not configured (VOX_WEBAUTHN_RP_ID / VOX_WEBAUTHN_ORIGIN not set)")
+        logger.warning(
+            "Vox uses in-memory state (rate limiter, gateway hub, presence). "
+            "Run with a single worker process only."
+        )
+
         # Start background cleanup task
         cleanup_task = asyncio.create_task(_periodic_cleanup(get_session_factory()))
         yield
+        # Graceful WebSocket shutdown
+        hub = get_hub()
+        await hub.close_all(4008, "Server restarting")
+        await asyncio.sleep(1)
         # Cancel background cleanup
         cleanup_task.cancel()
         try:
@@ -113,19 +220,6 @@ def create_app(database_url: str | None = None) -> FastAPI:
 
     # Rate limiting middleware
     app.add_middleware(RateLimitMiddleware)
-
-    # CORS middleware (opt-in via VOX_CORS_ORIGINS env var)
-    import os
-    cors_origins = os.environ.get("VOX_CORS_ORIGINS", "")
-    if cors_origins:
-        from fastapi.middleware.cors import CORSMiddleware
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=[o.strip() for o in cors_origins.split(",") if o.strip()],
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
 
     from fastapi.exceptions import RequestValidationError
     from fastapi.responses import JSONResponse
@@ -160,6 +254,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     from vox.api.sync import router as sync_router
     from vox.api.federation import router as federation_router
 
+    app.include_router(_health_router)
     app.include_router(auth_router)
     app.include_router(users_router)
     app.include_router(server_router)
