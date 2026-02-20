@@ -212,7 +212,7 @@ async def test_init_sfu_and_stop_sfu(client):
         with patch.object(voice_service, "SFU", mock_sfu_class):
             voice_service.init_sfu("0.0.0.0:4444")
             assert voice_service._sfu == mock_sfu_instance
-            mock_sfu_class.assert_called_once_with("0.0.0.0:4444")
+            mock_sfu_class.assert_called_once_with("0.0.0.0:4444", tls_cert=None, tls_key=None)
 
             voice_service.stop_sfu()
             assert voice_service._sfu is None

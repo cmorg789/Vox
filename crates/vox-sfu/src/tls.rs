@@ -14,7 +14,7 @@ pub fn generate_self_signed() -> (quinn::ServerConfig, Vec<u8>) {
         .expect("failed to generate self-signed cert");
 
     let cert_der = CertificateDer::from(cert.cert);
-    let key_der = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+    let key_der = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
 
     let mut rustls_config = rustls::ServerConfig::builder()
         .with_no_client_auth()
