@@ -227,16 +227,8 @@ async def verify_voucher(voucher: str, expected_target: str, db: AsyncSession | 
         if now > payload.get("expires_at", 0):
             return None
 
-        # Check nonce replay via DB
-        nonce = payload.get("nonce", "")
-        if db is not None:
-            existing = await db.execute(
-                select(FederationNonce).where(FederationNonce.nonce == nonce)
-            )
-            if existing.scalar_one_or_none() is not None:
-                return None
-
         # Verify signature using origin's public key
+        nonce = payload.get("nonce", "")
         user_address = payload.get("user_address", "")
         if "@" not in user_address:
             return None
@@ -247,16 +239,23 @@ async def verify_voucher(voucher: str, expected_target: str, db: AsyncSession | 
         if not verify_signature(payload_bytes, sig_b64, pub_b64):
             return None
 
-        # Mark nonce as seen in DB
+        # Mark nonce as seen in DB (atomic via unique constraint on PK).
+        # If a concurrent request already inserted this nonce, the flush
+        # raises IntegrityError and we reject the duplicate.
         if db is not None:
             from datetime import datetime, timedelta, timezone
+            from sqlalchemy.exc import IntegrityError
             nonce_row = FederationNonce(
                 nonce=nonce,
                 seen_at=datetime.now(timezone.utc),
                 expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
             )
             db.add(nonce_row)
-            await db.flush()
+            try:
+                await db.flush()
+            except IntegrityError:
+                await db.rollback()
+                return None
 
         return payload
 
@@ -323,13 +322,15 @@ async def send_federation_request(
             return None
 
         body_bytes = json.dumps(body or {}, separators=(",", ":")).encode()
-        sig = sign_body(body_bytes, private_key)
+        timestamp = str(int(time.time()))
+        sig = sign_body(body_bytes + timestamp.encode(), private_key)
 
         scheme = "https"
         url = f"{scheme}://{host}:{port}{path}"
         headers = {
             "X-Vox-Origin": our_domain,
             "X-Vox-Signature": sig,
+            "X-Vox-Timestamp": timestamp,
             "Content-Type": "application/json",
         }
 

@@ -13,6 +13,11 @@ from starlette.responses import JSONResponse
 from vox.auth.service import get_user_by_token
 from vox.db.engine import get_session_factory
 
+# Short-lived cache: token -> (user_id, expiry_monotonic).
+# Avoids opening a DB connection per request in the rate-limit middleware.
+_TOKEN_CACHE: dict[str, tuple[int, float]] = {}
+_TOKEN_CACHE_TTL = 30.0  # seconds
+
 # ---------------------------------------------------------------------------
 # Token bucket data
 # ---------------------------------------------------------------------------
@@ -81,6 +86,9 @@ def classify(path: str) -> str:
     """Map a URL path to a rate-limit category."""
     # Messages endpoint is nested under /feeds/.../messages
     if "/messages" in path:
+        return "messages"
+    # Webhook execute creates messages — use the messages rate limit.
+    if path.startswith("/api/v1/webhooks/") and "/execute" in path:
         return "messages"
     if "/search" in path:
         return "search"
@@ -183,14 +191,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def _resolve_key(self, request: Request, path: str) -> str:
         ip = request.client.host if request.client else "unknown"
 
-        # Federation endpoints are keyed by IP + X-Vox-Origin header
+        # Federation endpoints are keyed by IP only
         if path.startswith("/api/v1/federation"):
-            origin = request.headers.get("x-vox-origin", ip)
-            return f"fed:{ip}:{origin}"
+            return f"fed:{ip}"
 
-        # Webhook execution is always IP-keyed
+        # Webhook execution is keyed by webhook ID (extracted from path)
+        # to apply the messages rate limit per-webhook.
         if path.startswith("/api/v1/webhooks/") and "/execute" in path:
-            return f"ip:{ip}"
+            parts = path.split("/")
+            # /api/v1/webhooks/{id}/{token}/execute -> parts[4] is webhook ID
+            wh_id = parts[4] if len(parts) > 4 else "unknown"
+            return f"webhook:{wh_id}"
 
         # Try to extract user from Authorization header
         auth = request.headers.get("authorization")
@@ -202,11 +213,21 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             else:
                 return f"ip:{ip}"
 
+            # Check cache first to avoid a DB round-trip per request.
+            now = time.monotonic()
+            cached = _TOKEN_CACHE.get(token)
+            if cached is not None:
+                uid, expires = cached
+                if now < expires:
+                    return f"user:{uid}"
+                del _TOKEN_CACHE[token]
+
             try:
                 factory = get_session_factory()
                 async with factory() as db:
                     user, _sess = await get_user_by_token(db, token)
                     if user is not None:
+                        _TOKEN_CACHE[token] = (user.id, now + _TOKEN_CACHE_TTL)
                         return f"user:{user.id}"
             except Exception:
                 pass
