@@ -153,7 +153,9 @@ async def _handle_slash_command(
 
     # Get the bot
     result = await db.execute(select(Bot).where(Bot.id == bot_cmd.bot_id))
-    bot = result.scalar_one()
+    bot = result.scalar_one_or_none()
+    if bot is None:
+        return None  # Bot was deleted, treat as normal message
 
     interaction = interactions.create(
         type="slash_command",
@@ -302,9 +304,11 @@ async def send_feed_message(
     if body.body and len(body.body) > config.limits.message_body_max:
         raise HTTPException(status_code=400, detail={"error": {"code": "MESSAGE_TOO_LARGE", "message": f"Message body exceeds maximum of {config.limits.message_body_max} characters."}})
 
+    # Resolve permissions once for all checks in this handler
+    perms = await resolve_permissions(db, user.id, space_type="feed", space_id=feed_id)
+
     # Announcement feeds: only users with MANAGE_SPACES can post
     if feed.type == "announcement":
-        perms = await resolve_permissions(db, user.id, space_type="feed", space_id=feed_id)
         if not has_permission(perms, MANAGE_SPACES):
             raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Only moderators can post in announcement feeds."}})
 
@@ -315,14 +319,12 @@ async def send_feed_message(
 
     # Strip @everyone sentinel if user lacks MENTION_EVERYONE permission
     if body.mentions and 0 in body.mentions:
-        perms = await resolve_permissions(db, user.id, space_type="feed", space_id=feed_id)
         if not has_permission(perms, MENTION_EVERYONE):
             body.mentions = [uid for uid in body.mentions if uid != 0]
 
     # Check SEND_EMBEDS permission if embed provided
     embed = body.embed
     if embed is not None:
-        perms = await resolve_permissions(db, user.id, space_type="feed", space_id=feed_id)
         if not has_permission(perms, SEND_EMBEDS):
             embed = None  # Silently strip embed if user lacks permission
 
@@ -341,8 +343,10 @@ async def send_feed_message(
     await db.flush()
     attachment_dicts = []
     if body.attachments:
+        files = (await db.execute(select(File).where(File.id.in_(body.attachments)))).scalars().all()
+        files_by_id = {f.id: f for f in files}
         for file_id in body.attachments:
-            f = (await db.execute(select(File).where(File.id == file_id))).scalar_one_or_none()
+            f = files_by_id.get(file_id)
             if f is None:
                 raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_ATTACHMENT", "message": f"File {file_id} not found."}})
             if f.uploader_id != user.id and f.feed_id != feed_id:
@@ -510,8 +514,10 @@ async def send_thread_message(
     await db.flush()
     attachment_dicts = []
     if body.attachments:
+        files = (await db.execute(select(File).where(File.id.in_(body.attachments)))).scalars().all()
+        files_by_id = {f.id: f for f in files}
         for file_id in body.attachments:
-            f = (await db.execute(select(File).where(File.id == file_id))).scalar_one_or_none()
+            f = files_by_id.get(file_id)
             if f is None:
                 raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_ATTACHMENT", "message": f"File {file_id} not found."}})
             if f.uploader_id != user.id and f.feed_id != feed_id:

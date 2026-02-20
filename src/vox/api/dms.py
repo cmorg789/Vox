@@ -358,8 +358,10 @@ async def send_dm_message(
     await db.flush()
     attachment_dicts = []
     if body.attachments:
+        files = (await db.execute(select(File).where(File.id.in_(body.attachments)))).scalars().all()
+        files_by_id = {f.id: f for f in files}
         for file_id in body.attachments:
-            f = (await db.execute(select(File).where(File.id == file_id))).scalar_one_or_none()
+            f = files_by_id.get(file_id)
             if f is None:
                 raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_ATTACHMENT", "message": f"File {file_id} not found."}})
             if f.uploader_id != user.id and f.dm_id != dm_id:

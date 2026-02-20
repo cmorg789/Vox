@@ -61,7 +61,6 @@ async def list_role_members(
     _: User = Depends(get_current_user),
 ):
     from vox.models.members import MemberListResponse, MemberResponse
-    from vox.auth.service import get_user_role_ids
     role = (await db.execute(select(Role).where(Role.id == role_id))).scalar_one_or_none()
     if role is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Role not found."}})
@@ -77,10 +76,20 @@ async def list_role_members(
         query = query.where(User.id > after)
     result = await db.execute(query)
     users = result.scalars().all()
-    items = []
-    for u in users:
-        rids = await get_user_role_ids(db, u.id)
-        items.append(MemberResponse(user_id=u.id, display_name=u.display_name, avatar=u.avatar, nickname=u.nickname, role_ids=rids))
+    # Batch-fetch role assignments to avoid N+1
+    user_ids = [u.id for u in users]
+    role_map: dict[int, list[int]] = {uid: [] for uid in user_ids}
+    if user_ids:
+        rm_result = await db.execute(
+            select(role_members.c.user_id, role_members.c.role_id)
+            .where(role_members.c.user_id.in_(user_ids))
+        )
+        for uid, rid in rm_result.all():
+            role_map[uid].append(rid)
+    items = [
+        MemberResponse(user_id=u.id, display_name=u.display_name, avatar=u.avatar, nickname=u.nickname, role_ids=role_map.get(u.id, []))
+        for u in users
+    ]
     cursor = str(users[-1].id) if users else None
     return MemberListResponse(items=items, cursor=cursor)
 
