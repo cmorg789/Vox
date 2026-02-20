@@ -5,7 +5,8 @@ mod state;
 mod video;
 
 use pyo3::prelude::*;
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -14,12 +15,49 @@ enum MediaCommand {
     Connect {
         url: String,
         token: String,
+        room_id: u32,
+        user_id: u32,
         cert_der: Option<Vec<u8>>,
+        idle_timeout_secs: u64,
+        datagram_buffer_size: usize,
     },
     Disconnect,
     SetMute(bool),
     SetDeaf(bool),
     SetVideo(bool),
+}
+
+/// Events emitted by the media runtime for Python consumption.
+enum MediaEvent {
+    Connected,
+    Disconnected(String),
+    ConnectFailed(String),
+    Reconnecting { attempt: u32, delay_secs: u64 },
+    AudioError(String),
+}
+
+impl MediaEvent {
+    fn to_tuple(&self) -> (String, String) {
+        match self {
+            MediaEvent::Connected => ("connected".into(), String::new()),
+            MediaEvent::Disconnected(reason) => ("disconnected".into(), reason.clone()),
+            MediaEvent::ConnectFailed(reason) => ("connect_failed".into(), reason.clone()),
+            MediaEvent::Reconnecting { attempt, delay_secs } => {
+                ("reconnecting".into(), format!("attempt={attempt},delay={delay_secs}"))
+            }
+            MediaEvent::AudioError(msg) => ("audio_error".into(), msg.clone()),
+        }
+    }
+}
+
+/// Thread-safe event queue for pushing events from the media runtime to Python.
+pub(crate) type EventQueue = Arc<Mutex<VecDeque<(String, String)>>>;
+
+/// Push an event onto the queue.
+pub(crate) fn push_event(queue: &EventQueue, event: MediaEvent) {
+    if let Ok(mut q) = queue.lock() {
+        q.push_back(event.to_tuple());
+    }
 }
 
 /// Client-side media transport for Vox voice/video rooms.
@@ -31,6 +69,7 @@ struct VoxMediaClient {
     cmd_tx: Option<mpsc::UnboundedSender<MediaCommand>>,
     cancel: Option<CancellationToken>,
     rt_handle: Option<std::thread::JoinHandle<()>>,
+    events: EventQueue,
     muted: bool,
     deafened: bool,
     video: bool,
@@ -40,10 +79,12 @@ struct VoxMediaClient {
 impl VoxMediaClient {
     #[new]
     fn new() -> Self {
+        let _ = tracing_subscriber::fmt::try_init();
         VoxMediaClient {
             cmd_tx: None,
             cancel: None,
             rt_handle: None,
+            events: Arc::new(Mutex::new(VecDeque::new())),
             muted: false,
             deafened: false,
             video: false,
@@ -64,10 +105,18 @@ impl VoxMediaClient {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         self.cmd_tx = Some(cmd_tx);
 
+        let events = self.events.clone();
+        let events_thread = self.events.clone();
         let handle = std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    push_event(&events_thread, MediaEvent::ConnectFailed(format!("Failed to create runtime: {e}")));
+                    return;
+                }
+            };
             rt.block_on(async move {
-                state::run_media_loop(cmd_rx, cancel).await;
+                state::run_media_loop(cmd_rx, cancel, events).await;
             });
         });
 
@@ -76,12 +125,16 @@ impl VoxMediaClient {
     }
 
     /// Connect to a voice room via the SFU.
-    #[pyo3(signature = (url, token, cert_der=None))]
-    fn connect(&self, url: &str, token: &str, cert_der: Option<Vec<u8>>) -> PyResult<()> {
+    #[pyo3(signature = (url, token, room_id, user_id, cert_der=None, idle_timeout_secs=30, datagram_buffer_size=65535))]
+    fn connect(&self, url: &str, token: &str, room_id: u32, user_id: u32, cert_der: Option<Vec<u8>>, idle_timeout_secs: u64, datagram_buffer_size: usize) -> PyResult<()> {
         self.send_cmd(MediaCommand::Connect {
             url: url.to_string(),
             token: token.to_string(),
+            room_id,
+            user_id,
             cert_der,
+            idle_timeout_secs,
+            datagram_buffer_size,
         })
     }
 
@@ -104,8 +157,19 @@ impl VoxMediaClient {
 
     /// Enable or disable video.
     fn set_video(&mut self, enabled: bool) -> PyResult<()> {
-        self.video = enabled;
-        self.send_cmd(MediaCommand::SetVideo(enabled))
+        if enabled {
+            return Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+                "Video is not yet supported",
+            ));
+        }
+        self.video = false;
+        Ok(())
+    }
+
+    /// Poll for the next event from the media runtime.
+    /// Returns a (event_type, detail) tuple, or None if no events are pending.
+    fn poll_event(&self) -> Option<(String, String)> {
+        self.events.lock().ok()?.pop_front()
     }
 
     /// Stop the media runtime entirely.
