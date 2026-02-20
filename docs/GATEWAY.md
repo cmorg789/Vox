@@ -560,6 +560,16 @@ See `E2EE.md` for protocol details.
 | 4009 | SESSION_EXPIRED | Session too old to resume | Yes (re-identify) |
 | 4010 | REPLAY_EXHAUSTED | Session valid but replay buffer cannot cover gap | Yes (re-identify + /sync) |
 | 4011 | VERSION_MISMATCH | No compatible protocol version | No |
+| 4012 | SERVER_FULL | Server has reached maximum gateway connections | Yes (after delay) |
+| 4008 | AUTH_RATE_LIMITED | Too many authentication failures from this IP | Yes (after delay) |
+
+### Gateway Authentication Rate Limiting
+
+The gateway tracks authentication failures per IP address. After **10 failed authentication attempts within 60 seconds**, subsequent connections from that IP are immediately closed with close code 4008 and reason `AUTH_RATE_LIMITED`.
+
+### Presence Batching
+
+When a client first connects, the server sends initial presence snapshots for online users in **batches of 50** via `presence_update` events. This prevents overwhelming the client with a large burst of events on servers with many online users.
 
 ## 8. Compression
 

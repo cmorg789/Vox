@@ -53,6 +53,8 @@ Rate limits, size limits, and pagination constraints.
 | `VOX_LIMIT_MAX_DEVICES` | `limits.max_devices` | `int` | `10` | Maximum number of devices per user |
 | `VOX_LIMIT_PAGE_SIZE_DEFAULT` | `limits.page_size_default` | `int` | `50` | Default page size for paginated endpoints |
 | `VOX_LIMIT_PAGE_SIZE_MAX` | `limits.page_size_max` | `int` | `100` | Maximum allowed page size |
+| `VOX_LIMIT_MAX_PINS_PER_FEED` | `limits.max_pins_per_feed` | `int` | `50` | Maximum number of pinned messages per feed |
+| `VOX_LIMIT_FEDERATION_PRESENCE_SUB_LIMIT` | `limits.federation_presence_sub_limit` | `int` | `1000` | Maximum presence subscriptions per federated domain |
 
 ### Media (`VOX_MEDIA_` prefix)
 
@@ -74,8 +76,8 @@ WebAuthn/passkey authentication settings.
 | `VOX_WEBAUTHN_RP_ID` | `webauthn.rp_id` | `str` | `null` | Relying Party ID (typically your domain name, e.g. `example.com`) |
 | `VOX_WEBAUTHN_ORIGIN` | `webauthn.origin` | `str` | `null` | Expected origin for WebAuthn ceremonies (e.g. `https://example.com`) |
 
-!!! warning "Required for passkeys"
-    Both `rp_id` and `origin` must be set for WebAuthn registration and authentication to work. These should match your deployment domain.
+!!! info "Optional configuration"
+    Both `rp_id` and `origin` must be set for WebAuthn registration and authentication to work. These should match your deployment domain. If left unset, WebAuthn endpoints return `400 WEBAUTHN_NOT_CONFIGURED`.
 
 ### Federation (`VOX_FEDERATION_` prefix)
 
@@ -92,6 +94,25 @@ Federation settings for cross-server communication.
     - **`closed`** -- No federation. The server operates in isolation (default).
     - **`allow_list`** -- Only federate with explicitly approved servers.
     - **`open`** -- Federate with any server that initiates contact.
+
+### Database (`VOX_DB_` prefix)
+
+Database connection settings. Pool settings apply to PostgreSQL only; SQLite uses a single connection with WAL mode enabled automatically.
+
+| Environment Variable | Type | Default | Description |
+|---|---|---|---|
+| `VOX_DB_POOL_SIZE` | `int` | `10` | PostgreSQL connection pool size |
+| `VOX_DB_MAX_OVERFLOW` | `int` | `20` | Maximum overflow connections above pool size |
+| `VOX_DB_POOL_RECYCLE` | `int` | `1800` | Seconds before a connection is recycled |
+
+!!! note "SQLite defaults"
+    When using SQLite, the engine automatically enables WAL mode (`journal_mode=WAL`), sets `synchronous=NORMAL`, and configures a 5-second busy timeout. These are not configurable via environment variables.
+
+### Logging (`VOX_LOG_` prefix)
+
+| Environment Variable | Type | Default | Description |
+|---|---|---|---|
+| `VOX_LOG_FORMAT` | `str` | `"json"` | Log output format. `"json"` for structured JSON logging, any other value for plain text. |
 
 ---
 
@@ -142,6 +163,15 @@ VOX_AUTH_SESSION_TTL_DAYS=14
 # Limits
 VOX_LIMIT_MESSAGE_BODY_MAX=4000
 VOX_LIMIT_FILE_UPLOAD_MAX_BYTES=52428800
+VOX_LIMIT_MAX_PINS_PER_FEED=50
+
+# Database (PostgreSQL)
+VOX_DB_POOL_SIZE=10
+VOX_DB_MAX_OVERFLOW=20
+VOX_DB_POOL_RECYCLE=1800
+
+# Logging
+VOX_LOG_FORMAT=json
 
 # Media (QUIC SFU)
 VOX_MEDIA_URL="https://media.example.com"

@@ -3,10 +3,11 @@
 All federation endpoints are server-to-server HTTPS REST calls. Every request
 **must** include the following headers:
 
-| Header            | Description                                            |
-|-------------------|--------------------------------------------------------|
-| `X-Vox-Origin`    | The sending server's domain.                           |
-| `X-Vox-Signature` | Base64-encoded Ed25519 signature of the request body.  |
+| Header              | Description                                                            |
+|---------------------|------------------------------------------------------------------------|
+| `X-Vox-Origin`      | The sending server's domain.                                           |
+| `X-Vox-Timestamp`   | Unix timestamp of the request. Rejected if older than 300 seconds.     |
+| `X-Vox-Signature`   | Base64-encoded Ed25519 signature of `request_body + timestamp`.        |
 
 The receiving server verifies the signature against the public key published in
 the `_voxkey` TXT DNS record for the `X-Vox-Origin` domain.
@@ -255,3 +256,32 @@ notification sent by the blocking server.
 | `reason` | string | No       | Optional reason for the block. |
 
 **Response:** `204 No Content`
+
+---
+
+## Admin Endpoints
+
+These endpoints are called by local administrators, not remote servers. They
+require authentication with an admin-level session token.
+
+### GET /federation/admin/block-list
+
+List blocked federation domains. Supports pagination.
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description                    |
+|-----------|------|---------|--------------------------------|
+| `limit`   | int  | 100     | Maximum entries to return (max 200). |
+| `offset`  | int  | 0       | Number of entries to skip.     |
+
+### GET /federation/admin/allow-list
+
+List allowed federation domains. Supports pagination.
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description                    |
+|-----------|------|---------|--------------------------------|
+| `limit`   | int  | 100     | Maximum entries to return (max 200). |
+| `offset`  | int  | 0       | Number of entries to skip.     |

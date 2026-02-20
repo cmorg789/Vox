@@ -57,7 +57,36 @@ In endpoints that can target either a feed or a DM (e.g., message endpoints), ex
 
 Message IDs (`msg_id`) use snowflake uint64 values. See `PROTOCOL.md` for the snowflake bit layout and epoch definition.
 
-## 2. Error Handling
+## 2. Operational Endpoints
+
+These endpoints do not require authentication and are intended for load balancers and orchestration systems.
+
+### Health Check
+
+```
+GET /health
+```
+
+Returns `200 OK` when the server process is running.
+
+```json
+{"status": "ok"}
+```
+
+### Readiness Probe
+
+```
+GET /ready
+```
+
+Returns `200 OK` when the server is ready to accept traffic (database is reachable). Returns `503 Service Unavailable` if the database connection fails.
+
+```json
+{"status": "ok"}
+```
+
+## 3. Error Handling
+
 
 ### Error Response Format
 
@@ -86,14 +115,14 @@ Fields:
 
 | HTTP Status | Error Codes | Description |
 |---|---|---|
-| 400 Bad Request | `PROTOCOL_VERSION_MISMATCH`, `MESSAGE_TOO_LARGE`, `SPACE_TYPE_MISMATCH`, `GATEWAY_VERSION_MISMATCH` | Invalid request |
-| 401 Unauthorized | `AUTH_FAILED`, `AUTH_EXPIRED`, `2FA_REQUIRED`, `2FA_INVALID_CODE`, `WEBAUTHN_INVALID` | Authentication issue |
+| 400 Bad Request | `PROTOCOL_VERSION_MISMATCH`, `MESSAGE_TOO_LARGE`, `SPACE_TYPE_MISMATCH`, `GATEWAY_VERSION_MISMATCH`, `WEBAUTHN_NOT_CONFIGURED`, `PIN_LIMIT_REACHED` | Invalid request |
+| 401 Unauthorized | `AUTH_FAILED`, `AUTH_EXPIRED`, `2FA_REQUIRED`, `2FA_INVALID_CODE`, `2FA_MAX_ATTEMPTS`, `WEBAUTHN_INVALID`, `WEBHOOK_TOKEN_INVALID` | Authentication issue |
 | 403 Forbidden | `FORBIDDEN`, `BANNED`, `ROLE_HIERARCHY`, `DM_PERMISSION_DENIED`, `USER_BLOCKED`, `FEDERATION_DENIED` | Permission denied |
 | 404 Not Found | `USER_NOT_FOUND`, `SPACE_NOT_FOUND`, `MESSAGE_NOT_FOUND`, `REPORT_NOT_FOUND`, `CMD_NOT_FOUND`, `WEBHOOK_NOT_FOUND`, `KEY_BACKUP_NOT_FOUND`, `WEBAUTHN_CREDENTIAL_NOT_FOUND` | Resource not found |
 | 409 Conflict | `ALREADY_IN_VOICE`, `CMD_ALREADY_REGISTERED`, `2FA_ALREADY_ENABLED` | Conflicting state |
 | 410 Gone | `INVITE_EXPIRED`, `INTERACTION_EXPIRED`, `2FA_SETUP_EXPIRED`, `DEVICE_PAIR_EXPIRED`, `CPACE_EXPIRED` | Resource expired |
 | 413 Payload Too Large | `FILE_TOO_LARGE` | Request too large |
-| 422 Unprocessable Entity | `INVITE_INVALID`, `WEBHOOK_TOKEN_INVALID`, `2FA_NOT_ENABLED`, `2FA_RECOVERY_EXHAUSTED`, `CPACE_FAILED` | Validation failure |
+| 422 Unprocessable Entity | `INVITE_INVALID`, `2FA_NOT_ENABLED`, `2FA_RECOVERY_EXHAUSTED`, `CPACE_FAILED` | Validation failure |
 | 429 Too Many Requests | `RATE_LIMITED` | Rate limited |
 | 500 Internal Server Error | `UNKNOWN_ERROR` | Server error |
 | 502 Bad Gateway | `FEDERATION_UNAVAILABLE` | Upstream error |
@@ -140,18 +169,21 @@ Fields:
 | `INTERACTION_EXPIRED` | Interaction response too slow |
 | `WEBHOOK_NOT_FOUND` | Webhook does not exist |
 | `WEBHOOK_TOKEN_INVALID` | Webhook token is invalid |
+| `WEBAUTHN_NOT_CONFIGURED` | WebAuthn is not configured on this server |
+| `PIN_LIMIT_REACHED` | Maximum pinned messages reached for this feed |
 | `2FA_REQUIRED` | Two-factor authentication required |
 | `2FA_INVALID_CODE` | 2FA code is incorrect or expired |
 | `2FA_ALREADY_ENABLED` | 2FA method already enrolled |
 | `2FA_NOT_ENABLED` | 2FA is not enabled |
 | `2FA_SETUP_EXPIRED` | 2FA setup session expired |
+| `2FA_MAX_ATTEMPTS` | Too many failed 2FA attempts |
 | `2FA_RECOVERY_EXHAUSTED` | All recovery codes used |
 | `CPACE_FAILED` | CPace key exchange failed |
 | `CPACE_EXPIRED` | CPace pairing session expired |
 | `WEBAUTHN_INVALID` | WebAuthn assertion verification failed |
 | `WEBAUTHN_CREDENTIAL_NOT_FOUND` | WebAuthn credential ID not recognized |
 
-## 3. Rate Limiting
+## 4. Rate Limiting
 
 When a client exceeds rate limits, the server returns:
 
@@ -184,7 +216,7 @@ X-RateLimit-Reset: 1700000005
 
 Servers SHOULD apply rate limits per endpoint category. Specific limits are server policy.
 
-## 4. Authentication
+## 5. Authentication
 
 ### Register
 
@@ -291,6 +323,7 @@ POST /api/v1/auth/login/webauthn
 // Request
 {
   "username": "alice",
+  "challenge_id": "chall_abc123",
   "client_data_json": "...",   // base64
   "authenticator_data": "...", // base64
   "signature": "...",          // base64
@@ -325,6 +358,7 @@ POST /api/v1/auth/login/webauthn/challenge
 
 // Response
 {
+  "challenge_id": "chall_abc123",
   "challenge": "...",
   "credential_ids": ["..."]
 }
@@ -454,7 +488,7 @@ GET /api/v1/auth/webauthn/credentials
 DELETE /api/v1/auth/webauthn/credentials/{credential_id}
 ```
 
-## 5. REST API Endpoints
+## 6. REST API Endpoints
 
 All endpoints require authentication unless noted otherwise. Request and response bodies are JSON.
 
@@ -2395,14 +2429,15 @@ Servers MUST support all listed categories. Future protocol versions may add add
 
 If `since_timestamp` is too far in the past (server-configured retention), the server returns an empty events list and the client should fall back to a full state fetch (`GET /api/v1/server/layout`, `GET /api/v1/members`, etc.).
 
-## 6. Federation (Server-to-Server)
+## 7. Federation (Server-to-Server)
 
 Federation endpoints are called by remote servers, not clients. All federation requests MUST include:
 
 | Header | Description |
 |---|---|
 | `X-Vox-Origin` | Sending server's domain |
-| `X-Vox-Signature` | Ed25519 signature of the request body, verifiable via `_voxkey` DNS TXT record |
+| `X-Vox-Timestamp` | Unix timestamp of the request. Must be within 300 seconds of the receiver's clock. |
+| `X-Vox-Signature` | Ed25519 signature of `request_body + timestamp`, verifiable via `_voxkey` DNS TXT record |
 
 The receiving server MUST verify the signature against the DNS key before processing. See `FEDERATION.md` for DNS records, authentication, and security rules.
 

@@ -53,7 +53,7 @@ Two layers of authentication:
 
 **1. TLS:** Standard HTTPS with certificate verification.
 
-**2. DNS key signature (like DKIM):** Each federation request includes an `X-Vox-Origin` header (sending domain) and an `X-Vox-Signature` header (Ed25519 signature over the request body). The receiving server verifies the signature against the `_voxkey` DNS TXT record for that domain.
+**2. DNS key signature (like DKIM):** Each federation request includes an `X-Vox-Origin` header (sending domain), an `X-Vox-Timestamp` header (Unix timestamp), and an `X-Vox-Signature` header (Ed25519 signature over `request_body + timestamp`). The receiving server verifies the signature against the `_voxkey` DNS TXT record for that domain. Requests with a timestamp older than **300 seconds** are rejected.
 
 ```
 Server A                                          Server B
@@ -65,11 +65,13 @@ Server A                                          Server B
   |   relay/message                                  |
   |   Headers:                                       |
   |     X-Vox-Origin: servera.com                    |
-  |     X-Vox-Signature: sign(body, privkey)         |
+  |     X-Vox-Timestamp: 1700000000                  |
+  |     X-Vox-Signature: sign(body+ts, privkey)      |
   |   Body: {from, to, opaque_blob}                  |
   |   ------------------------------------------------>|
   |                                                  |
   |   [Server B verifies signature against DNS key]  |
+  |   [Server B rejects if timestamp > 300s old]     |
   |                                                  |
   |<-- 200 OK --------------------------------------|
 ```
@@ -214,11 +216,15 @@ Incoming federation from sketchyserver.net:
 
 ### Rate Limiting Per Peer
 
+Federation traffic is rate-limited per peer, keyed by the peer's IP address (`fed:{ip}`).
+
 | Limit | Example | Description |
 |---|---|---|
 | Max DM relays/hour/peer | 100 | Caps message relay from a single domain |
-| Max presence subs/peer | 500 | Caps presence subscriptions |
+| Max presence subs/peer | 1000 | Caps presence subscriptions (configurable via `limits.federation_presence_sub_limit`) |
 | Max join requests/hour/peer | 20 | Caps join requests |
+
+When the presence subscription limit is exceeded, the server returns HTTP 429.
 
 ### User-Level Controls
 
@@ -235,6 +241,8 @@ Existing DM permission settings apply to federated users. Users can block specif
 | `FED_POLICY_DENIED` | Remote server's policy denies federation |
 | `FED_NOT_ON_ALLOWLIST` | Domain not on allowlist |
 | `FED_BLOCKED` | Domain is on blocklist |
+| `FED_MISSING_TIMESTAMP` | Required `X-Vox-Timestamp` header is missing |
+| `FED_TIMESTAMP_EXPIRED` | `X-Vox-Timestamp` is older than 300 seconds |
 | `FED_RATE_LIMITED` | Rate limited (includes retry_after_ms) |
 | `FED_USER_NOT_FOUND` | Remote user does not exist |
 | `FED_INVITE_INVALID` | Invite code invalid or expired |

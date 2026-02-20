@@ -16,9 +16,14 @@ Standard TOTP as defined in RFC 6238:
 | Digits | 6 |
 | Period | 30 seconds |
 | Window | +/- 1 period (accepts codes from the previous, current, or next period) |
+| Replay prevention | Each TOTP counter value can only be used once (`last_used_counter` tracked in DB) |
 
 Users register TOTP by scanning a QR code or manually entering the shared secret into
 their authenticator app.
+
+TOTP codes are protected against replay attacks. The server tracks the counter value
+of the last successfully used code. Any code with a counter less than or equal to the
+previously used counter is rejected, even if it falls within the valid time window.
 
 ### WebAuthn (FIDO2 / U2F)
 
@@ -65,6 +70,13 @@ Client                              Server
 
 The `mfa_ticket` is short-lived and single-use. It binds the 2FA step to the specific
 password authentication that preceded it.
+
+## Brute-Force Protection
+
+Failed 2FA attempts are tracked per session in the database (`mfa_fail_count` on the
+session record). After exceeding the maximum number of attempts, the server returns
+`2FA_MAX_ATTEMPTS` and the session is locked. This counter persists across server
+restarts and multiple workers, unlike an in-memory approach.
 
 ## When 2FA Applies
 

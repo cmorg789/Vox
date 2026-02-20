@@ -164,6 +164,7 @@ Request a WebAuthn authentication challenge. No authentication required.
 
 ```json
 {
+  "challenge_id": "chall_abc123",
   "challenge": "base64-encoded-challenge",
   "credential_ids": [
     "base64-credential-id-1",
@@ -172,18 +173,32 @@ Request a WebAuthn authentication challenge. No authentication required.
 }
 ```
 
+| Field | Type | Description |
+|---|---|---|
+| `challenge_id` | `string` | Unique ID for this challenge. Must be passed to the login endpoint. |
+| `challenge` | `string` | Base64-encoded WebAuthn challenge. |
+| `credential_ids` | `string[]` | Base64-encoded credential IDs registered for this user. |
+
+**Errors**
+
+| Status | Code | Condition |
+|---|---|---|
+| 400 | `WEBAUTHN_NOT_CONFIGURED` | WebAuthn is not configured on this server |
+
 ---
 
 ## POST /auth/login/webauthn
 
 Authenticate directly with a WebAuthn assertion (passwordless flow). No
-authentication required.
+authentication required. The `challenge_id` must be obtained from a prior call
+to [POST /auth/login/webauthn/challenge](#post-authloginwebauthnchallenges).
 
 **Request**
 
 ```json
 {
   "username": "alice",
+  "challenge_id": "chall_abc123",
   "client_data_json": "base64...",
   "authenticator_data": "base64...",
   "signature": "base64...",
@@ -206,6 +221,7 @@ authentication required.
 
 | Status | Code | Condition |
 |---|---|---|
+| 400 | `WEBAUTHN_NOT_CONFIGURED` | WebAuthn is not configured on this server |
 | 401 | `UNAUTHORIZED` | Assertion verification failed |
 
 ---

@@ -42,9 +42,17 @@ Rate limits are enforced per-endpoint category. Different API operations may hav
 
 Exact limits are configured by the server operator and are not fixed by the protocol.
 
+## Webhook rate limits
+
+Webhook execution is rate-limited per webhook ID (`webhook:{id}`), not per IP address. This prevents a single webhook from being used to flood a feed while allowing different webhooks to operate independently.
+
 ## Federation rate limits
 
-Federation traffic is rate-limited on a per-peer basis. Each federated peer has its own rate limit bucket, preventing a single peer from consuming disproportionate resources.
+Federation traffic is rate-limited on a per-peer basis, keyed by the peer's IP address (`fed:{ip}`). Each federated peer has its own rate limit bucket, preventing a single peer from consuming disproportionate resources.
+
+## Gateway authentication rate limits
+
+The WebSocket gateway tracks failed authentication attempts per IP address. After **10 failures within 60 seconds**, new connections from that IP are immediately closed with code `AUTH_RATE_LIMITED`. This protects against brute-force token guessing over the gateway.
 
 ## Client best practices
 

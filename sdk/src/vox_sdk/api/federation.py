@@ -55,8 +55,13 @@ class FederationAPI:
         encoded = quote(domain, safe="")
         await self._http.delete(f"/api/v1/federation/admin/block/{encoded}")
 
-    async def admin_block_list(self) -> FederationEntryListResponse:
-        r = await self._http.get("/api/v1/federation/admin/block")
+    async def admin_block_list(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> FederationEntryListResponse:
+        r = await self._http.get(
+            "/api/v1/federation/admin/block",
+            params={"limit": limit, "offset": offset},
+        )
         return FederationEntryListResponse.model_validate(r.json())
 
     async def admin_allow(self, domain: str, reason: str | None = None) -> None:
@@ -69,6 +74,11 @@ class FederationAPI:
         encoded = quote(domain, safe="")
         await self._http.delete(f"/api/v1/federation/admin/allow/{encoded}")
 
-    async def admin_allow_list(self) -> FederationEntryListResponse:
-        r = await self._http.get("/api/v1/federation/admin/allow")
+    async def admin_allow_list(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> FederationEntryListResponse:
+        r = await self._http.get(
+            "/api/v1/federation/admin/allow",
+            params={"limit": limit, "offset": offset},
+        )
         return FederationEntryListResponse.model_validate(r.json())
