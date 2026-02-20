@@ -223,6 +223,7 @@ class PermissionOverride(Base):
 
 class Ban(Base):
     __tablename__ = "bans"
+    __table_args__ = (UniqueConstraint("user_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
@@ -526,7 +527,7 @@ class WebAuthnChallenge(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     challenge_type: Mapped[str] = mapped_column(String(50))  # registration or authentication
     challenge_data: Mapped[str] = mapped_column(Text)  # JSON
-    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
 
 class RecoveryCode(Base):

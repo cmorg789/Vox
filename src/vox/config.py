@@ -161,6 +161,9 @@ class LimitsConfig(_DbSettings):
 
     # --- Gateway ---
     max_total_connections: int = 10000
+    presence_custom_status_max: int = 128
+    presence_activity_max: int = 512
+    max_request_body: int = 1 * 1024 * 1024  # 1 MB default for non-upload endpoints
 
     # --- Voice ---
     voice_room_max_members: int = 99

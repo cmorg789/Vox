@@ -40,9 +40,14 @@ async def get_current_user(
     if not user.active:
         raise HTTPException(status_code=403, detail={"error": {"code": "BANNED", "message": "Account is deactivated."}})
 
-    # Slide session expiry and commit so it persists even on read-only routes
-    session.expires_at = datetime.now(timezone.utc) + timedelta(days=config.auth.session_ttl_days)
-    await db.commit()
+    # Slide session expiry only when remaining TTL is less than half the configured TTL
+    ttl = timedelta(days=config.auth.session_ttl_days)
+    now = datetime.now(timezone.utc)
+    expires = session.expires_at if session.expires_at.tzinfo else session.expires_at.replace(tzinfo=timezone.utc)
+    remaining = expires - now
+    if remaining < ttl / 2:
+        session.expires_at = now + ttl
+        await db.commit()
 
     return user
 

@@ -466,7 +466,21 @@ async def federation_join(
                 status_code=410,
                 detail={"error": {"code": "INVITE_EXPIRED", "message": "Invite has expired."}},
             )
-        invite.uses += 1
+        # Atomic increment to prevent TOCTOU race on max_uses
+        from sqlalchemy import update
+        if invite.max_uses:
+            result = await db.execute(
+                update(Invite)
+                .where(Invite.code == body.invite_code, Invite.uses < Invite.max_uses)
+                .values(uses=Invite.uses + 1)
+            )
+            if result.rowcount == 0:
+                raise HTTPException(
+                    status_code=410,
+                    detail={"error": {"code": "INVITE_EXPIRED", "message": "Invite has been used up."}},
+                )
+        else:
+            invite.uses += 1
 
     # Check bans
     fed_user = await _find_or_create_federated_user(db, body.user_address)
@@ -478,12 +492,13 @@ async def federation_join(
         )
 
     # Create federation token
+    from vox.auth.service import hash_token
     fed_token = "fed_" + secrets.token_urlsafe(48)
     session = Session(
-        token=fed_token,
+        token=hash_token(fed_token),
         user_id=fed_user.id,
         created_at=datetime.now(timezone.utc),
-        expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
     )
     db.add(session)
     await db.commit()

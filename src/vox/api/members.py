@@ -118,7 +118,18 @@ async def join_server(
     ban = await db.execute(select(Ban).where(Ban.user_id == user.id))
     if ban.scalar_one_or_none() is not None:
         raise HTTPException(status_code=403, detail={"error": {"code": "BANNED", "message": "You are banned from this server."}})
-    invite.uses += 1
+    # Atomic increment to prevent TOCTOU race on max_uses
+    from sqlalchemy import update
+    if invite.max_uses:
+        result = await db.execute(
+            update(Invite)
+            .where(Invite.code == body.invite_code, Invite.uses < Invite.max_uses)
+            .values(uses=Invite.uses + 1)
+        )
+        if result.rowcount == 0:
+            raise HTTPException(status_code=422, detail={"error": {"code": "INVITE_INVALID", "message": "Invite has reached max uses."}})
+    else:
+        invite.uses += 1
     user.active = True
     await db.commit()
     await dispatch(gw.member_join(user_id=user.id, display_name=user.display_name), db=db)

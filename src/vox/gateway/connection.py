@@ -89,7 +89,8 @@ class Connection:
         self._msg_timestamps: deque[float] = deque(maxlen=120)
         self._send_lock = asyncio.Lock()
 
-    async def send_json(self, data: dict[str, Any]) -> None:
+    async def _send_raw(self, data: dict[str, Any]) -> None:
+        """Send data over WebSocket without locking — caller must hold _send_lock."""
         if not self._closed:
             try:
                 if self._compress:
@@ -99,6 +100,10 @@ class Connection:
                     await self.ws.send_json(data)
             except Exception:
                 self._closed = True
+
+    async def send_json(self, data: dict[str, Any]) -> None:
+        async with self._send_lock:
+            await self._send_raw(data)
 
     async def send_event(self, event: dict[str, Any]) -> None:
         """Send a sequenced event to this client."""
@@ -111,7 +116,7 @@ class Connection:
             if session is not None:
                 session.replay_buffer.append(msg)
                 session.seq = self.seq
-            await self.send_json(msg)
+            await self._send_raw(msg)
 
     async def close(self, code: int, reason: str = "") -> None:
         self._closed = True
@@ -192,14 +197,23 @@ class Connection:
                     created_at=original_created_at,
                 )
                 self.hub.save_session(self.session_id, state)
-                await self.hub.disconnect(self, ip=self._ip)
-                # If no remaining sessions, clear presence and broadcast offline
-                # clear_presence must be inside the lock to prevent a race where
-                # a new connection registers between the check and the clear
+                # Disconnect and check presence in a single lock acquisition
+                # to prevent a race where a new connection registers between
+                # disconnect and the presence check.
                 async with self.hub._lock:
+                    conns = self.hub.connections.get(self.user_id)
+                    if conns:
+                        conns.discard(self)
+                        if not conns:
+                            del self.hub.connections[self.user_id]
+                    if self._ip and self._ip in self.hub._ip_connections:
+                        self.hub._ip_connections[self._ip] -= 1
+                        if self.hub._ip_connections[self._ip] <= 0:
+                            del self.hub._ip_connections[self._ip]
                     has_connections = self.user_id in self.hub.connections
                     if not has_connections:
                         self.hub.clear_presence(self.user_id)
+                log.info("Hub: user %d disconnected (session %s)", self.user_id, self.session_id)
                 if not has_connections:
                     await self.hub.broadcast(events.presence_update(user_id=self.user_id, status="offline"))
 
@@ -414,9 +428,18 @@ class Connection:
                 custom_status = data.get("custom_status")
                 activity = data.get("activity")
                 presence_data: dict[str, Any] = {"status": status}
+                from vox.config import config as _config
                 if custom_status is not None:
+                    if isinstance(custom_status, str):
+                        custom_status = custom_status[:_config.limits.presence_custom_status_max]
                     presence_data["custom_status"] = custom_status
                 if activity is not None:
+                    if isinstance(activity, dict):
+                        import json as _json
+                        serialized = _json.dumps(activity)
+                        if len(serialized) > _config.limits.presence_activity_max:
+                            await self.send_json({"type": "error", "d": {"code": "PAYLOAD_TOO_LARGE", "message": "Activity payload exceeds size limit."}})
+                            continue
                     presence_data["activity"] = activity
                 self.hub.set_presence(self.user_id, presence_data)
                 # If invisible, broadcast offline to others
@@ -499,7 +522,9 @@ class Connection:
                 our_domain = await get_our_domain(_db)
                 if our_domain:
                     # Hoist user lookup above the loop
-                    local_user = (await _db.execute(_select(User).where(User.id == self.user_id))).scalar_one()
+                    local_user = (await _db.execute(_select(User).where(User.id == self.user_id))).scalar_one_or_none()
+                    if local_user is None:
+                        return
                     from_addr = f"{local_user.username}@{our_domain}"
                     parts = await _db.execute(
                         _select(User).join(dm_participants, dm_participants.c.user_id == User.id)
