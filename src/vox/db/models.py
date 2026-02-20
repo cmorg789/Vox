@@ -1,8 +1,22 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+from sqlalchemy.types import TypeDecorator
+
+
+class TSVector(TypeDecorator):
+    """A tsvector type that compiles to TSVECTOR on PostgreSQL, TEXT on other dialects."""
+    impl = Text
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            from sqlalchemy.dialects.postgresql import TSVECTOR
+            return dialect.type_descriptor(TSVECTOR())
+        return dialect.type_descriptor(Text())
 
 
 class Base(DeclarativeBase):
@@ -11,7 +25,7 @@ class Base(DeclarativeBase):
 
 # --- Junction tables (no ORM class needed, just Table objects) ---
 
-from sqlalchemy import Table, Column
+from sqlalchemy import Table
 
 role_members = Table(
     "role_members",
@@ -278,6 +292,9 @@ class Message(Base):
     federated: Mapped[bool] = mapped_column(Boolean, server_default="0")
     author_address: Mapped[Optional[str]] = mapped_column(String(255))
     webhook_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webhooks.id"))
+
+    # Full-text search vector (TSVECTOR on PostgreSQL, TEXT on SQLite — unused on SQLite)
+    search_vector = mapped_column(TSVector, nullable=True)
 
     author: Mapped[Optional["User"]] = relationship()
     attachments: Mapped[list["File"]] = relationship(secondary=message_attachments)

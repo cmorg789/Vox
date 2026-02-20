@@ -79,6 +79,19 @@ async def _snowflake() -> int:
         return (ts << 22) | (_seq & 0x3FFFFF)
 
 
+async def _update_search_vector(db, msg_id: int, body: str | None) -> None:
+    """Populate the search_vector column on PostgreSQL. No-op on SQLite."""
+    from vox.db.engine import get_engine
+    if get_engine().dialect.name != "postgresql" or not body:
+        return
+    from sqlalchemy import func, update
+    await db.execute(
+        update(Message)
+        .where(Message.id == msg_id)
+        .values(search_vector=func.to_tsvector("english", body))
+    )
+
+
 def _msg_response(m: Message) -> MessageResponse:
     from vox.models.bots import Embed
     from vox.models.files import FileResponse
@@ -341,6 +354,10 @@ async def send_feed_message(
     )
     db.add(msg)
     await db.flush()
+
+    # Populate FTS search_vector on PostgreSQL
+    await _update_search_vector(db, msg_id, body.body)
+
     attachment_dicts = []
     if body.attachments:
         files = (await db.execute(select(File).where(File.id.in_(body.attachments)))).scalars().all()
@@ -512,6 +529,10 @@ async def send_thread_message(
     )
     db.add(msg)
     await db.flush()
+
+    # Populate FTS search_vector on PostgreSQL
+    await _update_search_vector(db, msg_id, body.body)
+
     attachment_dicts = []
     if body.attachments:
         files = (await db.execute(select(File).where(File.id.in_(body.attachments)))).scalars().all()
@@ -541,11 +562,11 @@ async def add_reaction(
     db: AsyncSession = Depends(get_db),
     user: User = require_permission(ADD_REACTIONS, space_type="feed", space_id_param="feed_id"),
 ):
-    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+    from vox.db.engine import dialect_insert
     msg = (await db.execute(select(Message).where(Message.id == msg_id, Message.feed_id == feed_id))).scalar_one_or_none()
     if msg is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "MESSAGE_NOT_FOUND", "message": "Message does not exist."}})
-    stmt = sqlite_insert(Reaction).values(msg_id=msg_id, user_id=user.id, emoji=emoji).on_conflict_do_nothing()
+    stmt = dialect_insert(Reaction).values(msg_id=msg_id, user_id=user.id, emoji=emoji).on_conflict_do_nothing()
     await db.execute(stmt)
     await db.commit()
     await dispatch(gw.message_reaction_add(msg_id=msg_id, user_id=user.id, emoji=emoji), db=db)
@@ -581,7 +602,7 @@ async def pin_message(
 ):
     from datetime import datetime, timezone
     from sqlalchemy import func
-    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+    from vox.db.engine import dialect_insert
     # Enforce pin cap
     pin_count = (await db.execute(
         select(func.count()).select_from(Pin).where(Pin.feed_id == feed_id)
@@ -591,7 +612,7 @@ async def pin_message(
             status_code=400,
             detail={"error": {"code": "PIN_LIMIT_REACHED", "message": f"Maximum of {config.limits.max_pins_per_feed} pins per feed."}},
         )
-    stmt = sqlite_insert(Pin).values(feed_id=feed_id, msg_id=msg_id, pinned_at=datetime.now(timezone.utc)).on_conflict_do_nothing()
+    stmt = dialect_insert(Pin).values(feed_id=feed_id, msg_id=msg_id, pinned_at=datetime.now(timezone.utc)).on_conflict_do_nothing()
     await db.execute(stmt)
     await db.commit()
     await dispatch(gw.message_pin_update(msg_id=msg_id, feed_id=feed_id, pinned=True), db=db)
