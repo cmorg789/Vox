@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, WebSocket
+from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.db.engine import get_engine, get_session_factory, init_engine
@@ -133,10 +134,15 @@ def create_app(database_url: str | None = None) -> FastAPI:
         # Configure logging
         _configure_logging()
 
-        # Create tables on startup
         engine = get_engine()
+        # Only auto-create tables when no tables exist (fresh database).
+        # For existing databases, use: alembic upgrade head
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+            tables = await conn.run_sync(
+                lambda sync_conn: inspect(sync_conn).get_table_names()
+            )
+            if not tables:
+                await conn.run_sync(Base.metadata.create_all)
         # Initialize storage backend
         from vox.storage import init_storage
         init_storage()
@@ -190,6 +196,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
             404: {"model": ErrorEnvelope},
             422: {"model": ErrorEnvelope},
             429: {"model": ErrorEnvelope},
+            500: {"model": ErrorEnvelope},
         },
     )
 
@@ -225,6 +232,14 @@ def create_app(database_url: str | None = None) -> FastAPI:
         return JSONResponse(
             status_code=422,
             content={"error": {"code": "VALIDATION_ERROR", "message": str(exc)}},
+        )
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request, exc):
+        logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+        return JSONResponse(
+            status_code=500,
+            content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error"}},
         )
 
     # Register routers
