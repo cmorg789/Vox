@@ -200,7 +200,7 @@ class ServerIdentityConfig(_DbSettings):
     name: str = "Vox Server"
     icon: str | None = None
     description: str | None = None
-    gateway_url: str = "wss://localhost/gateway"
+    gateway_url: str = "ws://localhost/gateway"
 
 
 class AuthConfig(_DbSettings):
