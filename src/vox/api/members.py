@@ -162,7 +162,15 @@ async def remove_member(
 ):
     actor, target, is_self = resolved
     if is_self:
+        resolved_perms = await resolve_permissions(db, actor.id)
+        if has_permission(resolved_perms, ADMINISTRATOR):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": "INVALID_TARGET", "message": "Administrators cannot leave the server."}},
+            )
         target.active = False
+        from vox.audit import write_audit
+        await write_audit(db, "member.leave", actor_id=actor.id, target_id=target.id, extra={"reason": "Left"})
         await db.commit()
         await dispatch(gw.member_leave(user_id=target.id), db=db)
         return
@@ -184,6 +192,8 @@ async def ban_member(
     db: AsyncSession = Depends(get_db),
     actor: User = require_permission(BAN_MEMBERS),
 ) -> BanResponse:
+    if actor.id == user_id:
+        raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_TARGET", "message": "You cannot ban yourself."}})
     result = await db.execute(select(User).where(User.id == user_id))
     target = result.scalar_one_or_none()
     if target is None:
