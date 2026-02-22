@@ -87,12 +87,12 @@ async def get_layout(
     feeds = []
     for f in feed_rows:
         overrides = await _overrides_for(db, "feed", f.id)
-        feeds.append(FeedInfo(feed_id=f.id, name=f.name, type=f.type, topic=f.topic, category_id=f.category_id, permission_overrides=overrides))
+        feeds.append(FeedInfo(feed_id=f.id, name=f.name, type=f.type, topic=f.topic, category_id=f.category_id, position=f.position, permission_overrides=overrides))
 
     rooms = []
     for r in room_rows:
         overrides = await _overrides_for(db, "room", r.id)
-        rooms.append(RoomInfo(room_id=r.id, name=r.name, type=r.type, category_id=r.category_id, permission_overrides=overrides))
+        rooms.append(RoomInfo(room_id=r.id, name=r.name, type=r.type, category_id=r.category_id, position=r.position, permission_overrides=overrides))
 
     categories = [CategoryInfo(category_id=c.id, name=c.name, position=c.position) for c in cats]
     return ServerLayoutResponse(categories=categories, feeds=feeds, rooms=rooms)

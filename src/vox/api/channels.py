@@ -31,6 +31,45 @@ from vox.models.channels import (
 router = APIRouter(tags=["channels"])
 
 
+async def _normalize_channel_positions(
+    db: AsyncSession,
+    category_id: int | None,
+    moved: Feed | Room,
+    target_pos: int,
+) -> None:
+    """Re-index all feeds + rooms in a category so positions are 0, 1, 2, ...
+
+    *moved* is the item being repositioned; *target_pos* is its desired index
+    among the combined list of sibling feeds and rooms.
+    """
+    feed_rows = (await db.execute(
+        select(Feed).where(Feed.category_id == category_id).order_by(Feed.position, Feed.id)
+    )).scalars().all()
+    room_rows = (await db.execute(
+        select(Room).where(Room.category_id == category_id).order_by(Room.position, Room.id)
+    )).scalars().all()
+
+    # Merge into one list tagged by type, sorted by current position
+    siblings: list[tuple[str, Feed | Room]] = []
+    for f in feed_rows:
+        siblings.append(("feed", f))
+    for r in room_rows:
+        siblings.append(("room", r))
+    siblings.sort(key=lambda t: (t[1].position, t[1].id))
+
+    # Remove the moved item
+    moved_tag = "feed" if isinstance(moved, Feed) else "room"
+    others = [(tag, obj) for tag, obj in siblings if not (tag == moved_tag and obj.id == moved.id)]
+
+    # Insert at the requested index
+    target_pos = max(0, min(target_pos, len(others)))
+    others.insert(target_pos, (moved_tag, moved))
+
+    # Reassign sequential positions
+    for i, (_tag, obj) in enumerate(others):
+        obj.position = i
+
+
 async def _overrides_for(db: AsyncSession, space_type: str, space_id: int) -> list[PermissionOverrideData]:
     result = await db.execute(
         select(PermissionOverride).where(
@@ -99,8 +138,16 @@ async def update_feed(
     if body.topic is not None:
         feed.topic = body.topic
         changed["topic"] = body.topic
+    if body.category_id is not None:
+        feed.category_id = body.category_id
+        changed["category_id"] = body.category_id
+    if body.position is not None:
+        changed["position"] = body.position
     from vox.audit import write_audit
     await write_audit(db, "feed.update", actor_id=actor.id, target_id=feed_id, extra=changed if changed else None)
+    # Normalize sibling positions (feeds + rooms together) when position is set
+    if body.position is not None:
+        await _normalize_channel_positions(db, feed.category_id, moved=feed, target_pos=body.position)
     await db.commit()
     if changed:
         await dispatch(gw.feed_update(feed_id=feed_id, **changed), db=db)
@@ -207,8 +254,16 @@ async def update_room(
     if body.name is not None:
         room.name = body.name
         changed["name"] = body.name
+    if body.category_id is not None:
+        room.category_id = body.category_id
+        changed["category_id"] = body.category_id
+    if body.position is not None:
+        changed["position"] = body.position
     from vox.audit import write_audit
     await write_audit(db, "room.update", actor_id=actor.id, target_id=room_id, extra=changed if changed else None)
+    # Normalize sibling positions (feeds + rooms together) when position is set
+    if body.position is not None:
+        await _normalize_channel_positions(db, room.category_id, moved=room, target_pos=body.position)
     await db.commit()
     if changed:
         await dispatch(gw.room_update(room_id=room_id, **changed), db=db)
@@ -267,10 +322,20 @@ async def update_category(
         cat.name = body.name
         changed["name"] = body.name
     if body.position is not None:
-        cat.position = body.position
         changed["position"] = body.position
     from vox.audit import write_audit
     await write_audit(db, "category.update", actor_id=actor.id, target_id=category_id, extra=changed if changed else None)
+    # Normalize sibling positions when position is set
+    if body.position is not None:
+        target_pos = body.position
+        siblings = (await db.execute(
+            select(Category).order_by(Category.position, Category.id)
+        )).scalars().all()
+        others = [s for s in siblings if s.id != cat.id]
+        target_pos = max(0, min(target_pos, len(others)))
+        others.insert(target_pos, cat)
+        for i, s in enumerate(others):
+            s.position = i
     await db.commit()
     if changed:
         await dispatch(gw.category_update(category_id=category_id, **changed), db=db)
