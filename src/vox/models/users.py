@@ -4,6 +4,7 @@ from pydantic import AfterValidator, BaseModel
 
 from vox.config import str_limit
 from vox.models.base import VoxModel
+from vox.models.enums import DMPermission
 
 
 class UserResponse(VoxModel):
@@ -32,7 +33,7 @@ class FriendResponse(VoxModel):
 
 
 class DMSettingsResponse(VoxModel):
-    dm_permission: str  # everyone | friends_only | mutual_servers | nobody
+    dm_permission: DMPermission
 
 
 class PresenceResponse(VoxModel):
@@ -52,4 +53,4 @@ class FriendListResponse(VoxModel):
 
 
 class UpdateDMSettingsRequest(BaseModel):
-    dm_permission: str
+    dm_permission: DMPermission

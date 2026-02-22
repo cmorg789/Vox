@@ -1,20 +1,21 @@
-from typing import Annotated, Literal
+from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel
 
 from vox.config import str_limit
 from vox.models.base import VoxModel
+from vox.models.enums import FeedType, OverrideTargetType, RoomType
 
 
 class PermissionOverrideInput(BaseModel):
-    target_type: Literal["role", "user"]
+    target_type: OverrideTargetType
     target_id: int
     allow: int
     deny: int
 
 
 class PermissionOverrideOutput(VoxModel):
-    target_type: str
+    target_type: OverrideTargetType
     target_id: int
     allow: int
     deny: int
@@ -44,7 +45,7 @@ class CategoryResponse(VoxModel):
 
 class CreateFeedRequest(BaseModel):
     name: Annotated[str, AfterValidator(str_limit(min_attr="channel_name_min", max_attr="channel_name_max"))]
-    type: Literal["text", "forum", "announcement"]
+    type: FeedType
     category_id: int | None = None
     permission_overrides: list[PermissionOverrideInput] | None = None
 
@@ -52,12 +53,14 @@ class CreateFeedRequest(BaseModel):
 class UpdateFeedRequest(BaseModel):
     name: Annotated[str, AfterValidator(str_limit(max_attr="channel_name_max"))] | None = None
     topic: Annotated[str, AfterValidator(str_limit(max_attr="topic_max"))] | None = None
+    category_id: int | None = None
+    position: int | None = None
 
 
 class FeedResponse(VoxModel):
     feed_id: int
     name: str
-    type: str
+    type: FeedType
     topic: str | None = None
     category_id: int | None = None
     position: int = 0
@@ -69,19 +72,21 @@ class FeedResponse(VoxModel):
 
 class CreateRoomRequest(BaseModel):
     name: Annotated[str, AfterValidator(str_limit(min_attr="channel_name_min", max_attr="channel_name_max"))]
-    type: Literal["voice", "stage"]
+    type: RoomType
     category_id: int | None = None
     permission_overrides: list[PermissionOverrideInput] | None = None
 
 
 class UpdateRoomRequest(BaseModel):
     name: Annotated[str, AfterValidator(str_limit(max_attr="channel_name_max"))] | None = None
+    category_id: int | None = None
+    position: int | None = None
 
 
 class RoomResponse(VoxModel):
     room_id: int
     name: str
-    type: str
+    type: RoomType
     category_id: int | None = None
     position: int = 0
     permission_overrides: list[PermissionOverrideOutput] = []

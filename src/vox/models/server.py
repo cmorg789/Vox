@@ -4,6 +4,7 @@ from pydantic import AfterValidator, BaseModel
 
 from vox.config import str_limit
 from vox.models.base import VoxModel
+from vox.models.enums import FeedType, OverrideTargetType, RoomType
 
 
 class ServerInfoResponse(VoxModel):
@@ -20,7 +21,7 @@ class UpdateServerRequest(BaseModel):
 
 
 class PermissionOverrideData(VoxModel):
-    target_type: str  # role or user
+    target_type: OverrideTargetType
     target_id: int
     allow: int
     deny: int
@@ -29,17 +30,19 @@ class PermissionOverrideData(VoxModel):
 class FeedInfo(VoxModel):
     feed_id: int
     name: str
-    type: str
+    type: FeedType
     topic: str | None = None
     category_id: int | None = None
+    position: int
     permission_overrides: list[PermissionOverrideData] = []
 
 
 class RoomInfo(VoxModel):
     room_id: int
     name: str
-    type: str
+    type: RoomType
     category_id: int | None = None
+    position: int
     permission_overrides: list[PermissionOverrideData] = []
 
 
