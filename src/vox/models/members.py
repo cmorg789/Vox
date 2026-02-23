@@ -8,6 +8,7 @@ from vox.models.base import VoxModel
 
 class MemberResponse(VoxModel):
     user_id: int
+    username: str
     display_name: str | None
     avatar: str | None
     nickname: str | None

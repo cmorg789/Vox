@@ -81,7 +81,7 @@ async def list_members(
             role_map[uid].append(rid)
     items = []
     for u in users:
-        items.append(MemberResponse(user_id=u.id, display_name=u.display_name, avatar=u.avatar, nickname=u.nickname, role_ids=role_map.get(u.id, [])))
+        items.append(MemberResponse(user_id=u.id, username=u.username, display_name=u.display_name, avatar=u.avatar, nickname=u.nickname, role_ids=role_map.get(u.id, [])))
     cursor = str(users[-1].id) if users else None
     return MemberListResponse(items=items, cursor=cursor)
 
@@ -97,7 +97,7 @@ async def get_member(
     if user is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "USER_NOT_FOUND", "message": "Member does not exist."}})
     role_ids = await get_user_role_ids(db, user.id)
-    return MemberResponse(user_id=user.id, display_name=user.display_name, avatar=user.avatar, nickname=user.nickname, role_ids=role_ids)
+    return MemberResponse(user_id=user.id, username=user.username, display_name=user.display_name, avatar=user.avatar, nickname=user.nickname, role_ids=role_ids)
 
 
 @router.post("/api/v1/members/join", status_code=204)
@@ -132,7 +132,7 @@ async def join_server(
         invite.uses += 1
     user.active = True
     await db.commit()
-    await dispatch(gw.member_join(user_id=user.id, display_name=user.display_name), db=db)
+    await dispatch(gw.member_join(user_id=user.id, username=user.username, display_name=user.display_name), db=db)
 
 
 @router.patch("/api/v1/members/{user_id}")
@@ -151,7 +151,7 @@ async def update_member(
     await db.commit()
     await dispatch(gw.member_update(user_id=target.id, nickname=target.nickname), db=db)
     role_ids = await get_user_role_ids(db, target.id)
-    return MemberResponse(user_id=target.id, display_name=target.display_name, avatar=target.avatar, nickname=target.nickname, role_ids=role_ids)
+    return MemberResponse(user_id=target.id, username=target.username, display_name=target.display_name, avatar=target.avatar, nickname=target.nickname, role_ids=role_ids)
 
 
 @router.delete("/api/v1/members/{user_id}", status_code=204)

@@ -87,7 +87,7 @@ async def list_role_members(
         for uid, rid in rm_result.all():
             role_map[uid].append(rid)
     items = [
-        MemberResponse(user_id=u.id, display_name=u.display_name, avatar=u.avatar, nickname=u.nickname, role_ids=role_map.get(u.id, []))
+        MemberResponse(user_id=u.id, username=u.username, display_name=u.display_name, avatar=u.avatar, nickname=u.nickname, role_ids=role_map.get(u.id, []))
         for u in users
     ]
     cursor = str(users[-1].id) if users else None

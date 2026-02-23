@@ -122,8 +122,8 @@ def message_pin_update(msg_id: int, feed_id: int, pinned: bool) -> dict[str, Any
 
 # --- Member Events ---
 
-def member_join(user_id: int, display_name: str | None = None) -> dict[str, Any]:
-    d: dict[str, Any] = {"user_id": user_id}
+def member_join(user_id: int, username: str, display_name: str | None = None) -> dict[str, Any]:
+    d: dict[str, Any] = {"user_id": user_id, "username": username}
     if display_name is not None:
         d["display_name"] = display_name
     return _event("member_join", d)

@@ -200,7 +200,7 @@ class ServerIdentityConfig(_DbSettings):
     name: str = "Vox Server"
     icon: str | None = None
     description: str | None = None
-    gateway_url: str = "ws://localhost/gateway"
+    gateway_url: str = "ws://localhost:8000/gateway"
 
 
 class AuthConfig(_DbSettings):
@@ -225,7 +225,7 @@ class MediaConfig(_DbSettings):
         "allowed_sticker_mimes": "allowed_sticker_mimes",
     }
 
-    url: str = "quic://localhost:4443"
+    url: str = "quic://127.0.0.1:4443"
     tls_cert: str | None = None  # Path to PEM cert file; omit to use self-signed
     tls_key: str | None = None   # Path to PEM key file; omit to use self-signed
     allowed_file_mimes: str = "image/*,video/*,audio/*,application/pdf,text/plain"
