@@ -226,6 +226,16 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.add_middleware(BodySizeLimitMiddleware)
 
     from fastapi.exceptions import RequestValidationError
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(request, exc):
+        detail = exc.detail
+        if isinstance(detail, dict):
+            content = detail
+        else:
+            content = {"error": {"code": "UNKNOWN", "message": str(detail)}}
+        return JSONResponse(status_code=exc.status_code, content=content)
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request, exc):
