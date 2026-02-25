@@ -260,8 +260,11 @@ def role_revoke(role_id: int, user_id: int) -> dict[str, Any]:
 
 # --- Emoji Events ---
 
-def emoji_create(emoji_id: int, name: str, creator_id: int) -> dict[str, Any]:
-    return _event("emoji_create", {"emoji_id": emoji_id, "name": name, "creator_id": creator_id})
+def emoji_create(emoji_id: int, name: str, creator_id: int, image: str | None = None) -> dict[str, Any]:
+    d: dict[str, Any] = {"emoji_id": emoji_id, "name": name, "creator_id": creator_id}
+    if image is not None:
+        d["image"] = image
+    return _event("emoji_create", d)
 
 
 def emoji_update(emoji_id: int, **changed: Any) -> dict[str, Any]:
@@ -274,8 +277,11 @@ def emoji_delete(emoji_id: int) -> dict[str, Any]:
 
 # --- Sticker Events ---
 
-def sticker_create(sticker_id: int, name: str, creator_id: int) -> dict[str, Any]:
-    return _event("sticker_create", {"sticker_id": sticker_id, "name": name, "creator_id": creator_id})
+def sticker_create(sticker_id: int, name: str, creator_id: int, image: str | None = None) -> dict[str, Any]:
+    d: dict[str, Any] = {"sticker_id": sticker_id, "name": name, "creator_id": creator_id}
+    if image is not None:
+        d["image"] = image
+    return _event("sticker_create", d)
 
 
 def sticker_update(sticker_id: int, **changed: Any) -> dict[str, Any]:

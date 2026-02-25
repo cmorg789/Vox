@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastapi import Request as FastAPIRequest
 from vox.api.deps import get_current_user, get_db, require_permission
-from vox.db.models import File, Message, User, dm_participants, message_attachments
+from vox.db.models import Emoji, File, Message, Sticker, User, dm_participants, message_attachments
 from vox.config import check_mime, config
 from vox.models.files import FileResponse
 from vox.permissions import ATTACH_FILES, MANAGE_MESSAGES, VIEW_SPACE, has_permission, resolve_permissions
@@ -178,8 +178,16 @@ async def download_file(
             if not is_participant:
                 raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "You do not have access to this file."}})
     elif row.uploader_id != user.id:
-        # Orphan file: only uploader can access
-        raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "You do not have access to this file."}})
+        # Check if the file is an emoji or sticker image (server-wide access)
+        is_emoji = await db.scalar(
+            select(func.count()).select_from(Emoji).where(Emoji.image == row.url)
+        )
+        is_sticker = not is_emoji and await db.scalar(
+            select(func.count()).select_from(Sticker).where(Sticker.image == row.url)
+        )
+        if not is_emoji and not is_sticker:
+            # Orphan file: only uploader can access
+            raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "You do not have access to this file."}})
 
     storage = get_storage()
     if not await storage.exists(file_id):

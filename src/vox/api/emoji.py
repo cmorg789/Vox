@@ -1,4 +1,5 @@
 import secrets
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile
 from sqlalchemy import select
@@ -6,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
 from vox.storage import get_storage
-from vox.db.models import Emoji, Sticker, User
+from vox.db.models import Emoji, File, Sticker, User
 from vox.config import check_mime, config
 from vox.permissions import MANAGE_EMOJI
 from vox.models.emoji import EmojiListResponse, EmojiResponse, StickerListResponse, StickerResponse, UpdateEmojiRequest, UpdateStickerRequest
@@ -52,11 +53,21 @@ async def create_emoji(
     file_id = secrets.token_urlsafe(16)
     storage = get_storage()
     image_url = await storage.put(file_id, content, emoji_mime)
+    file_row = File(
+        id=file_id,
+        name=f"{name}.emoji",
+        size=len(content),
+        mime=emoji_mime,
+        url=image_url,
+        uploader_id=user.id,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(file_row)
     emoji = Emoji(name=name, creator_id=user.id, image=image_url)
     db.add(emoji)
     await db.flush()
     await db.commit()
-    await dispatch(gw.emoji_create(emoji_id=emoji.id, name=emoji.name, creator_id=emoji.creator_id), db=db)
+    await dispatch(gw.emoji_create(emoji_id=emoji.id, name=emoji.name, creator_id=emoji.creator_id, image=image_url), db=db)
     return EmojiResponse(emoji_id=emoji.id, name=emoji.name, creator_id=emoji.creator_id, image=image_url)
 
 
@@ -87,6 +98,17 @@ async def delete_emoji(
     emoji = result.scalar_one_or_none()
     if emoji is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Emoji not found."}})
+    # Clean up storage and file record
+    if emoji.image:
+        file_key = emoji.image.rsplit("/", 1)[-1]
+        storage = get_storage()
+        try:
+            await storage.delete(file_key)
+        except Exception:
+            pass
+        file_row = await db.get(File, file_key)
+        if file_row:
+            await db.delete(file_row)
     await db.delete(emoji)
     await db.commit()
     await dispatch(gw.emoji_delete(emoji_id=emoji_id), db=db)
@@ -128,11 +150,21 @@ async def create_sticker(
     file_id = secrets.token_urlsafe(16)
     storage = get_storage()
     image_url = await storage.put(file_id, content, sticker_mime)
+    file_row = File(
+        id=file_id,
+        name=f"{name}.sticker",
+        size=len(content),
+        mime=sticker_mime,
+        url=image_url,
+        uploader_id=user.id,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(file_row)
     sticker = Sticker(name=name, creator_id=user.id, image=image_url)
     db.add(sticker)
     await db.flush()
     await db.commit()
-    await dispatch(gw.sticker_create(sticker_id=sticker.id, name=sticker.name, creator_id=sticker.creator_id), db=db)
+    await dispatch(gw.sticker_create(sticker_id=sticker.id, name=sticker.name, creator_id=sticker.creator_id, image=image_url), db=db)
     return StickerResponse(sticker_id=sticker.id, name=sticker.name, creator_id=sticker.creator_id, image=image_url)
 
 
@@ -163,6 +195,17 @@ async def delete_sticker(
     sticker = result.scalar_one_or_none()
     if sticker is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Sticker not found."}})
+    # Clean up storage and file record
+    if sticker.image:
+        file_key = sticker.image.rsplit("/", 1)[-1]
+        storage = get_storage()
+        try:
+            await storage.delete(file_key)
+        except Exception:
+            pass
+        file_row = await db.get(File, file_key)
+        if file_row:
+            await db.delete(file_row)
     await db.delete(sticker)
     await db.commit()
     await dispatch(gw.sticker_delete(sticker_id=sticker_id), db=db)
