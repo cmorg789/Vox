@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vox.api.deps import get_current_user, get_db, require_permission
@@ -30,6 +30,37 @@ async def _get_space_viewers(db: AsyncSession, space_type: str, space_id: int) -
         return []
     perms_map = await batch_resolve_permissions(db, all_user_ids, space_type=space_type, space_id=space_id)
     return [uid for uid, perms in perms_map.items() if has_permission(perms, VIEW_SPACE)]
+
+
+async def _would_have_admin(db: AsyncSession, *, drop_role_id: int | None = None, drop_user_from_role: tuple[int, int] | None = None) -> bool:
+    """Return True if at least one user would still have ADMINISTRATOR.
+
+    - *drop_role_id*: pretend this role no longer grants admin (delete role / strip perms).
+    - *drop_user_from_role*: ``(user_id, role_id)`` — pretend this user lost that role
+      assignment (revoke), but they still count if they hold another admin role.
+    """
+    # All roles that carry ADMINISTRATOR
+    admin_roles_q = select(Role.id).where(Role.permissions.op("&")(ADMINISTRATOR) != 0)
+    if drop_role_id is not None:
+        admin_roles_q = admin_roles_q.where(Role.id != drop_role_id)
+    admin_role_ids = set((await db.execute(admin_roles_q)).scalars().all())
+
+    if not admin_role_ids:
+        return False
+
+    # All (user_id, role_id) pairs for admin roles
+    pairs = await db.execute(
+        select(role_members.c.user_id, role_members.c.role_id).where(
+            role_members.c.role_id.in_(admin_role_ids)
+        )
+    )
+    admin_user_ids: set[int] = set()
+    for uid, rid in pairs.all():
+        if drop_user_from_role and (uid, rid) == drop_user_from_role:
+            continue
+        admin_user_ids.add(uid)
+
+    return len(admin_user_ids) > 0
 
 
 # --- Roles ---
@@ -138,6 +169,13 @@ async def update_role(
         role.color = body.color
         changed["color"] = body.color
     if body.permissions is not None:
+        # Prevent stripping ADMINISTRATOR if it would leave zero admins
+        if (role.permissions & ADMINISTRATOR) and not (body.permissions & ADMINISTRATOR):
+            if not await _would_have_admin(db, drop_role_id=role.id):
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": {"code": "INVALID_TARGET", "message": "Cannot remove the last administrator."}},
+                )
         role.permissions = body.permissions
         changed["permissions"] = body.permissions
     if body.position is not None:
@@ -161,6 +199,13 @@ async def delete_role(
     role = result.scalar_one_or_none()
     if role is None:
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Role not found."}})
+    # Prevent deleting a role if it's the only source of ADMINISTRATOR
+    if role.permissions & ADMINISTRATOR:
+        if not await _would_have_admin(db, drop_role_id=role.id):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": "INVALID_TARGET", "message": "Cannot remove the last administrator."}},
+            )
     from vox.audit import write_audit
     await write_audit(db, "role.delete", actor_id=actor.id, target_id=role_id)
     await db.delete(role)
@@ -212,6 +257,13 @@ async def revoke_role(
             raise HTTPException(
                 status_code=403,
                 detail={"error": {"code": "ROLE_HIERARCHY", "message": "You cannot revoke a role at or above your own rank."}},
+            )
+    # Prevent revoking the last administrator
+    if role.permissions & ADMINISTRATOR:
+        if not await _would_have_admin(db, drop_user_from_role=(user_id, role_id)):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": "INVALID_TARGET", "message": "Cannot remove the last administrator."}},
             )
     await db.execute(delete(role_members).where(role_members.c.role_id == role_id, role_members.c.user_id == user_id))
     from vox.audit import write_audit
