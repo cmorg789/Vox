@@ -232,7 +232,67 @@ async def test_revoke_role_hierarchy(client):
     # Moderator tries to revoke the senior role from admin -> should get 403
     r = await client.delete(f"/api/v1/members/{admin_uid}/roles/{senior_role_id}", headers=h_mod)
     assert r.status_code == 403
-    assert r.json()["detail"]["error"]["code"] == "ROLE_HIERARCHY"
+    assert r.json()["error"]["code"] == "ROLE_HIERARCHY"
+
+
+async def test_revoke_last_admin_blocked(client):
+    """Revoking the admin role from the sole administrator returns 400 LAST_ADMIN."""
+    h, uid = await auth(client)
+    # First user auto-gets the Admin role (role_id=2, position=1).
+    # Fetch roles to find the admin role.
+    r = await client.get("/api/v1/roles", headers=h)
+    admin_role = next(r for r in r.json()["items"] if r["name"] == "Admin")
+    admin_role_id = admin_role["role_id"]
+
+    r = await client.delete(f"/api/v1/members/{uid}/roles/{admin_role_id}", headers=h)
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "INVALID_TARGET"
+
+
+async def test_update_role_strip_admin_blocked(client):
+    """Removing ADMINISTRATOR bit from the only admin role returns 400 LAST_ADMIN."""
+    h, _ = await auth(client)
+    r = await client.get("/api/v1/roles", headers=h)
+    admin_role = next(r for r in r.json()["items"] if r["name"] == "Admin")
+    admin_role_id = admin_role["role_id"]
+
+    r = await client.patch(f"/api/v1/roles/{admin_role_id}", headers=h, json={"permissions": 0})
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "INVALID_TARGET"
+
+
+async def test_delete_last_admin_role_blocked(client):
+    """Deleting the only role with ADMINISTRATOR returns 400 LAST_ADMIN."""
+    h, _ = await auth(client)
+    r = await client.get("/api/v1/roles", headers=h)
+    admin_role = next(r for r in r.json()["items"] if r["name"] == "Admin")
+    admin_role_id = admin_role["role_id"]
+
+    r = await client.delete(f"/api/v1/roles/{admin_role_id}", headers=h)
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "INVALID_TARGET"
+
+
+async def test_revoke_admin_allowed_when_another_admin_exists(client):
+    """Revoking an admin role is allowed when another user still has ADMINISTRATOR."""
+    from vox.permissions import ADMINISTRATOR
+    h_admin, admin_uid = await auth(client, "admin")
+    _, bob_uid = await auth(client, "bob")
+
+    # Create a second admin role and assign it to bob
+    r = await client.post("/api/v1/roles", headers=h_admin, json={
+        "name": "Admin2", "permissions": ADMINISTRATOR, "position": 1,
+    })
+    admin2_role_id = r.json()["role_id"]
+    await client.put(f"/api/v1/members/{bob_uid}/roles/{admin2_role_id}", headers=h_admin)
+
+    # Now the original admin can revoke their own admin role
+    r = await client.get("/api/v1/roles", headers=h_admin)
+    original_admin_role = next(r for r in r.json()["items"] if r["name"] == "Admin")
+    original_admin_role_id = original_admin_role["role_id"]
+
+    r = await client.delete(f"/api/v1/members/{admin_uid}/roles/{original_admin_role_id}", headers=h_admin)
+    assert r.status_code == 204
 
 
 async def test_set_permission_override_invalid_target_type(client):
@@ -242,4 +302,4 @@ async def test_set_permission_override_invalid_target_type(client):
 
     r = await client.put("/api/v1/feeds/1/permissions/badtype/1", headers=h, json={"allow": 3, "deny": 0})
     assert r.status_code == 400
-    assert r.json()["detail"]["error"]["code"] == "INVALID_TARGET_TYPE"
+    assert r.json()["error"]["code"] == "INVALID_TARGET_TYPE"

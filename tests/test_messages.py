@@ -355,7 +355,7 @@ async def test_send_thread_message_locked(client):
     # Try to post
     r = await client.post(f"/api/v1/feeds/1/threads/{thread_id}/messages", headers=h, json={"body": "can't post"})
     assert r.status_code == 403
-    assert r.json()["detail"]["error"]["code"] == "THREAD_LOCKED"
+    assert r.json()["error"]["code"] == "THREAD_LOCKED"
 
 
 async def test_feed_reaction_add_remove(client):

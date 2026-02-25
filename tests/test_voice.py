@@ -45,7 +45,7 @@ async def test_already_in_voice(client):
     await client.post(f"/api/v1/rooms/{room_id}/voice/join", headers=h, json={})
     r = await client.post(f"/api/v1/rooms/{room_id}/voice/join", headers=h, json={})
     assert r.status_code == 409
-    assert r.json()["detail"]["error"]["code"] == "ALREADY_IN_VOICE"
+    assert r.json()["error"]["code"] == "ALREADY_IN_VOICE"
 
 
 async def test_leave_voice(client):
@@ -146,7 +146,7 @@ async def test_stage_request_not_in_voice(client):
     room_id = await _create_room(client, h, "Stage", "stage")
     r = await client.post(f"/api/v1/rooms/{room_id}/stage/request", headers=h)
     assert r.status_code == 400
-    assert r.json()["detail"]["error"]["code"] == "NOT_IN_VOICE"
+    assert r.json()["error"]["code"] == "NOT_IN_VOICE"
 
 
 async def test_stage_invite_accept(client):
@@ -432,7 +432,7 @@ async def test_server_mute_not_in_voice(client):
     room_id = await _create_room(client, h1)
     r = await client.post(f"/api/v1/rooms/{room_id}/voice/mute", headers=h1, json={"user_id": 2, "muted": True})
     assert r.status_code == 400
-    assert r.json()["detail"]["error"]["code"] == "NOT_IN_VOICE"
+    assert r.json()["error"]["code"] == "NOT_IN_VOICE"
 
 
 async def test_server_deafen(client):
@@ -450,7 +450,7 @@ async def test_server_deafen_not_in_voice(client):
     room_id = await _create_room(client, h1)
     r = await client.post(f"/api/v1/rooms/{room_id}/voice/deafen", headers=h1, json={"user_id": 2, "deafened": True})
     assert r.status_code == 400
-    assert r.json()["detail"]["error"]["code"] == "NOT_IN_VOICE"
+    assert r.json()["error"]["code"] == "NOT_IN_VOICE"
 
 
 # --- Stage edge cases ---
@@ -464,7 +464,7 @@ async def test_stage_invite_not_in_voice(client):
     # Bob is NOT in voice, so invite should fail
     r = await client.post(f"/api/v1/rooms/{room_id}/stage/invite", headers=h1, json={"user_id": 2})
     assert r.status_code == 400
-    assert r.json()["detail"]["error"]["code"] == "NOT_IN_VOICE"
+    assert r.json()["error"]["code"] == "NOT_IN_VOICE"
 
 
 async def test_stage_respond_no_pending_invite(client):
@@ -473,7 +473,7 @@ async def test_stage_respond_no_pending_invite(client):
     await client.post(f"/api/v1/rooms/{room_id}/voice/join", headers=h1, json={})
     r = await client.post(f"/api/v1/rooms/{room_id}/stage/invite/respond", headers=h1, json={"accepted": True})
     assert r.status_code == 400
-    assert r.json()["detail"]["error"]["code"] == "NO_PENDING_INVITE"
+    assert r.json()["error"]["code"] == "NO_PENDING_INVITE"
 
 
 async def test_stage_set_topic_room_not_found(client):

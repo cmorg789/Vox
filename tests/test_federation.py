@@ -295,7 +295,7 @@ async def test_relay_message_wrong_signature(client):
     with patch.object(fed_service, "lookup_vox_key", new_callable=AsyncMock, return_value=wrong_pub):
         r = await client.post("/api/v1/federation/relay/message", content=body_bytes, headers=fed_headers)
         assert r.status_code == 403
-        assert r.json()["detail"]["error"]["code"] == "FED_AUTH_FAILED"
+        assert r.json()["error"]["code"] == "FED_AUTH_FAILED"
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +349,7 @@ async def test_user_profile_lookup(client):
 
     r = await _fed_request(client, "GET", "/api/v1/federation/users/unknown@test.local", {}, private_key, pub_b64)
     assert r.status_code == 404
-    assert r.json()["detail"]["error"]["code"] == "FED_USER_NOT_FOUND"
+    assert r.json()["error"]["code"] == "FED_USER_NOT_FOUND"
 
 
 # ---------------------------------------------------------------------------

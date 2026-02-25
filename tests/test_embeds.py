@@ -215,7 +215,7 @@ async def test_resolve_embed_redirect_ssrf(client):
 
     # The HTTPException from _validate_url now properly propagates as a 400
     assert r.status_code == 400
-    assert r.json()["detail"]["error"]["code"] == "INVALID_URL"
+    assert r.json()["error"]["code"] == "INVALID_URL"
 
 
 async def test_resolve_embed_redirect_followed(client):

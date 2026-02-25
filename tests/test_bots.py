@@ -169,7 +169,7 @@ async def test_interaction_response_expired(client):
         json={"body": "hello"},
     )
     assert r.status_code == 404
-    assert r.json()["detail"]["error"]["code"] == "INTERACTION_NOT_FOUND"
+    assert r.json()["error"]["code"] == "INTERACTION_NOT_FOUND"
 
 
 async def test_interaction_response_wrong_bot(client):
@@ -256,7 +256,7 @@ async def test_component_interaction_non_bot_message(client):
         json={"msg_id": msg_id, "component_id": "btn_1"},
     )
     assert r.status_code == 400
-    assert r.json()["detail"]["error"]["code"] == "NOT_BOT_MESSAGE"
+    assert r.json()["error"]["code"] == "NOT_BOT_MESSAGE"
 
 
 async def test_deregister_commands(client):
@@ -305,7 +305,7 @@ async def test_register_commands_not_bot(client):
         "commands": [{"name": "test", "description": "Test"}]
     })
     assert r.status_code == 403
-    assert r.json()["detail"]["error"]["code"] == "FORBIDDEN"
+    assert r.json()["error"]["code"] == "FORBIDDEN"
 
 
 async def test_deregister_commands_not_bot(client):
@@ -329,7 +329,7 @@ async def test_register_duplicate_command(client):
         "commands": [{"name": "help", "description": "Updated help"}]
     })
     assert r.status_code == 409
-    assert r.json()["detail"]["error"]["code"] == "CMD_ALREADY_REGISTERED"
+    assert r.json()["error"]["code"] == "CMD_ALREADY_REGISTERED"
 
 
 async def test_respond_interaction_message_not_found(client):

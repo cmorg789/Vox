@@ -148,7 +148,7 @@ async def test_edit_dm_message_not_found(client):
 
     r = await client.patch(f"/api/v1/dms/{dm_id}/messages/999999", headers=h1, json={"body": "edited"})
     assert r.status_code == 404
-    assert r.json()["detail"]["error"]["code"] == "MESSAGE_NOT_FOUND"
+    assert r.json()["error"]["code"] == "MESSAGE_NOT_FOUND"
 
 
 async def test_edit_dm_message_wrong_author(client):
@@ -162,7 +162,7 @@ async def test_edit_dm_message_wrong_author(client):
     # Bob tries to edit alice's message
     r = await client.patch(f"/api/v1/dms/{dm_id}/messages/{msg_id}", headers=h2, json={"body": "hacked"})
     assert r.status_code == 403
-    assert r.json()["detail"]["error"]["code"] == "FORBIDDEN"
+    assert r.json()["error"]["code"] == "FORBIDDEN"
 
 
 async def test_delete_dm_message(client):
@@ -204,7 +204,7 @@ async def test_update_group_dm_not_found(client):
     # Non-existent DM returns 403 (participant check) — doesn't leak existence
     r = await client.patch("/api/v1/dms/99999", headers=h1, json={"name": "New"})
     assert r.status_code == 403
-    assert r.json()["detail"]["error"]["code"] == "NOT_DM_PARTICIPANT"
+    assert r.json()["error"]["code"] == "NOT_DM_PARTICIPANT"
 
 
 async def test_send_dm_message_invalid_attachment(client):
@@ -214,7 +214,7 @@ async def test_send_dm_message_invalid_attachment(client):
 
     r = await client.post(f"/api/v1/dms/{dm_id}/messages", headers=h1, json={"body": "hi", "attachments": ["nonexistent_file_id"]})
     assert r.status_code == 400
-    assert r.json()["detail"]["error"]["code"] == "INVALID_ATTACHMENT"
+    assert r.json()["error"]["code"] == "INVALID_ATTACHMENT"
 
 
 async def test_open_dm_blocked(client):
@@ -224,7 +224,7 @@ async def test_open_dm_blocked(client):
     await client.put(f"/api/v1/users/{uid2}/blocks/{uid1}", headers=h2)
     r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
     assert r.status_code == 403
-    assert r.json()["detail"]["error"]["code"] == "USER_BLOCKED"
+    assert r.json()["error"]["code"] == "USER_BLOCKED"
 
 
 async def test_open_dm_permission_nobody(client):
@@ -233,7 +233,7 @@ async def test_open_dm_permission_nobody(client):
     await client.patch(f"/api/v1/users/{uid2}/dm-settings", headers=h2, json={"dm_permission": "nobody"})
     r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
     assert r.status_code == 403
-    assert r.json()["detail"]["error"]["code"] == "DM_PERMISSION_DENIED"
+    assert r.json()["error"]["code"] == "DM_PERMISSION_DENIED"
 
 
 async def test_open_dm_permission_friends_only(client):
@@ -242,7 +242,7 @@ async def test_open_dm_permission_friends_only(client):
     await client.patch(f"/api/v1/users/{uid2}/dm-settings", headers=h2, json={"dm_permission": "friends_only"})
     r = await client.post("/api/v1/dms", headers=h1, json={"recipient_id": uid2})
     assert r.status_code == 403
-    assert r.json()["detail"]["error"]["code"] == "DM_PERMISSION_DENIED"
+    assert r.json()["error"]["code"] == "DM_PERMISSION_DENIED"
 
 
 async def test_open_dm_friends_only_accepted(client):
@@ -439,7 +439,7 @@ async def test_send_dm_not_participant(client):
 
     r = await client.post(f"/api/v1/dms/{dm_id}/messages", headers=h3, json={"body": "hi"})
     assert r.status_code == 403
-    assert r.json()["detail"]["error"]["code"] == "NOT_DM_PARTICIPANT"
+    assert r.json()["error"]["code"] == "NOT_DM_PARTICIPANT"
 
 
 async def test_get_dm_messages_not_participant(client):
@@ -483,4 +483,4 @@ async def test_update_group_dm_not_participant(client):
 
     r = await client.patch(f"/api/v1/dms/{dm_id}", headers=h4, json={"name": "test"})
     assert r.status_code == 403
-    assert r.json()["detail"]["error"]["code"] == "NOT_DM_PARTICIPANT"
+    assert r.json()["error"]["code"] == "NOT_DM_PARTICIPANT"

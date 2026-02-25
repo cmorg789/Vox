@@ -50,7 +50,7 @@ async def test_message_too_large_feed(client):
     big_body = "x" * 4001
     r = await client.post(f"/api/v1/feeds/{feed_id}/messages", headers=h, json={"body": big_body})
     assert r.status_code == 400
-    assert r.json()["detail"]["error"]["code"] == "MESSAGE_TOO_LARGE"
+    assert r.json()["error"]["code"] == "MESSAGE_TOO_LARGE"
 
 
 async def test_message_too_large_dm(client):
@@ -65,7 +65,7 @@ async def test_message_too_large_dm(client):
     big_body = "x" * 4001
     r = await client.post(f"/api/v1/dms/{dm_id}/messages", headers=h1, json={"body": big_body})
     assert r.status_code == 400
-    assert r.json()["detail"]["error"]["code"] == "MESSAGE_TOO_LARGE"
+    assert r.json()["error"]["code"] == "MESSAGE_TOO_LARGE"
 
 
 async def test_message_at_limit_succeeds(client):
@@ -112,7 +112,7 @@ async def test_2fa_not_enabled_totp(client):
         "method": "totp", "code": "123456",
     })
     assert r.status_code == 422
-    assert r.json()["detail"]["error"]["code"] == "2FA_NOT_ENABLED"
+    assert r.json()["error"]["code"] == "2FA_NOT_ENABLED"
 
 
 async def test_2fa_not_enabled_webauthn(client):
@@ -124,7 +124,7 @@ async def test_2fa_not_enabled_webauthn(client):
         "method": "webauthn", "assertion": {"challenge_id": "test"},
     })
     assert r.status_code == 422
-    assert r.json()["detail"]["error"]["code"] == "2FA_NOT_ENABLED"
+    assert r.json()["error"]["code"] == "2FA_NOT_ENABLED"
 
 
 # --- 2FA_RECOVERY_EXHAUSTED ---
@@ -157,7 +157,7 @@ async def test_2fa_recovery_exhausted(client):
         "mfa_ticket": mfa_ticket, "method": "recovery", "code": "XXXX-XXXX",
     })
     assert r.status_code == 422
-    assert r.json()["detail"]["error"]["code"] == "2FA_RECOVERY_EXHAUSTED"
+    assert r.json()["error"]["code"] == "2FA_RECOVERY_EXHAUSTED"
 
 
 # --- AUTH_RATE_LIMITED ---
@@ -215,7 +215,7 @@ async def test_cmd_not_found(client):
         "command_names": ["nonexistent"],
     })
     assert r.status_code == 404
-    assert r.json()["detail"]["error"]["code"] == "CMD_NOT_FOUND"
+    assert r.json()["error"]["code"] == "CMD_NOT_FOUND"
 
 
 # --- CMD_ALREADY_REGISTERED ---
@@ -234,7 +234,7 @@ async def test_cmd_already_registered(client):
         "commands": [{"name": "help", "description": "Updated help"}]
     })
     assert r.status_code == 409
-    assert r.json()["detail"]["error"]["code"] == "CMD_ALREADY_REGISTERED"
+    assert r.json()["error"]["code"] == "CMD_ALREADY_REGISTERED"
 
 
 # --- ROOM_FULL ---
@@ -269,7 +269,7 @@ async def test_room_full(client):
     # Bob tries to join — should be ROOM_FULL
     r = await client.post(f"/api/v1/rooms/{room_id}/voice/join", headers=h2, json={})
     assert r.status_code == 503
-    assert r.json()["detail"]["error"]["code"] == "ROOM_FULL"
+    assert r.json()["error"]["code"] == "ROOM_FULL"
 
 
 # --- PREKEY_EXHAUSTED ---

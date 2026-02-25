@@ -196,7 +196,7 @@ async def test_mfa_ticket_rejected_for_auth(client):
         headers={"Authorization": "Bearer mfa_fake_token"},
     )
     assert r.status_code == 401
-    assert r.json()["detail"]["error"]["code"] == "AUTH_FAILED"
+    assert r.json()["error"]["code"] == "AUTH_FAILED"
 
 
 async def test_setup_token_rejected_for_auth(client):
@@ -206,7 +206,7 @@ async def test_setup_token_rejected_for_auth(client):
         headers={"Authorization": "Bearer setup_totp_fake"},
     )
     assert r.status_code == 401
-    assert r.json()["detail"]["error"]["code"] == "AUTH_FAILED"
+    assert r.json()["error"]["code"] == "AUTH_FAILED"
 
 
 async def test_totp_setup_flow(client):
@@ -236,7 +236,7 @@ async def test_totp_setup_already_enabled(client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 409
-    assert r.json()["detail"]["error"]["code"] == "2FA_ALREADY_ENABLED"
+    assert r.json()["error"]["code"] == "2FA_ALREADY_ENABLED"
 
 
 async def test_totp_setup_confirm_wrong_code(client):
@@ -467,7 +467,7 @@ async def test_delete_webauthn_credential_not_found(client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 404
-    assert r.json()["detail"]["error"]["code"] == "WEBAUTHN_CREDENTIAL_NOT_FOUND"
+    assert r.json()["error"]["code"] == "WEBAUTHN_CREDENTIAL_NOT_FOUND"
 
 
 async def test_setup_invalid_method(client):
@@ -596,7 +596,7 @@ async def test_login_2fa_unsupported_method(client):
         "code": "123456",
     })
     assert r.status_code == 400
-    assert r.json()["detail"]["error"]["message"] == "Unsupported 2FA method."
+    assert r.json()["error"]["message"] == "Unsupported 2FA method."
 
 
 async def test_confirm_2fa_setup_invalid_prefix(client):
@@ -609,7 +609,7 @@ async def test_confirm_2fa_setup_invalid_prefix(client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 400
-    assert r.json()["detail"]["error"]["code"] == "2FA_SETUP_EXPIRED"
+    assert r.json()["error"]["code"] == "2FA_SETUP_EXPIRED"
 
 
 async def test_login_webauthn_only_2fa(client):
@@ -1075,7 +1075,7 @@ async def test_confirm_2fa_setup_totp_no_pending(client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 400
-    assert r.json()["detail"]["error"]["code"] == "2FA_SETUP_EXPIRED"
+    assert r.json()["error"]["code"] == "2FA_SETUP_EXPIRED"
 
 
 async def test_confirm_webauthn_setup_no_attestation(client):
@@ -1095,7 +1095,7 @@ async def test_confirm_webauthn_setup_no_attestation(client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 400
-    assert r.json()["detail"]["error"]["code"] == "WEBAUTHN_FAILED"
+    assert r.json()["error"]["code"] == "WEBAUTHN_FAILED"
     await _clear_webauthn_config()
 
 
@@ -1156,7 +1156,7 @@ async def test_webauthn_login_no_challenge(client):
         "signature": "dGVzdA",
     })
     assert r.status_code in (400, 401)
-    assert r.json()["detail"]["error"]["code"] == "WEBAUTHN_FAILED"
+    assert r.json()["error"]["code"] == "WEBAUTHN_FAILED"
 
 
 async def test_webauthn_login_unknown_user(client):

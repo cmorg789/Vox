@@ -164,11 +164,15 @@ async def test_delete_category_not_found(client):
 
 async def test_update_category_position(client):
     h = await auth(client)
-    r = await client.post("/api/v1/categories", headers=h, json={"name": "Cat", "position": 0})
+    # Create three categories so position reordering is meaningful
+    r = await client.post("/api/v1/categories", headers=h, json={"name": "Cat1", "position": 0})
     cat_id = r.json()["category_id"]
-    r = await client.patch(f"/api/v1/categories/{cat_id}", headers=h, json={"position": 5})
+    await client.post("/api/v1/categories", headers=h, json={"name": "Cat2", "position": 1})
+    await client.post("/api/v1/categories", headers=h, json={"name": "Cat3", "position": 2})
+    # Move Cat1 to position 2 (last)
+    r = await client.patch(f"/api/v1/categories/{cat_id}", headers=h, json={"position": 2})
     assert r.status_code == 200
-    assert r.json()["position"] == 5
+    assert r.json()["position"] == 2
 
 
 # --- Thread operations ---

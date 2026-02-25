@@ -100,7 +100,7 @@ async def test_unprivileged_user_denied_manage_spaces(client):
 
     r = await client.post("/api/v1/feeds", headers=user_h, json={"name": "hacked", "type": "text"})
     assert r.status_code == 403
-    assert r.json()["detail"]["error"]["code"] == "MISSING_PERMISSIONS"
+    assert r.json()["error"]["code"] == "MISSING_PERMISSIONS"
 
 
 async def test_unprivileged_user_denied_manage_roles(client):
@@ -258,7 +258,7 @@ async def test_non_author_without_manage_messages_cannot_delete(client):
     # Unprivileged user tries to delete admin's message
     r = await client.delete(f"/api/v1/feeds/1/messages/{msg_id}", headers=user_h)
     assert r.status_code == 403
-    assert r.json()["detail"]["error"]["code"] == "MISSING_PERMISSIONS"
+    assert r.json()["error"]["code"] == "MISSING_PERMISSIONS"
 
 
 async def test_admin_can_delete_others_message(client):

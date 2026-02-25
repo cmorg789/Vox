@@ -102,8 +102,9 @@ async def test_join_banned_user(client):
 
 
 async def test_leave_server(client):
-    h, uid = await auth(client, "alice")
-    r = await client.delete(f"/api/v1/members/{uid}", headers=h)
+    await auth(client, "alice")  # first user becomes admin
+    h_bob, bob_uid = await auth(client, "bob")  # non-admin can leave
+    r = await client.delete(f"/api/v1/members/{bob_uid}", headers=h_bob)
     assert r.status_code == 204
 
 
@@ -124,7 +125,7 @@ async def test_join_invalid_invite(client):
     h, _ = await auth(client, "alice")
     r = await client.post("/api/v1/members/join", headers=h, json={"invite_code": "nonexistent"})
     assert r.status_code == 422
-    assert r.json()["detail"]["error"]["code"] == "INVITE_INVALID"
+    assert r.json()["error"]["code"] == "INVITE_INVALID"
 
 
 async def test_join_expired_invite(client):
@@ -151,7 +152,7 @@ async def test_join_expired_invite(client):
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
         r = await client.post("/api/v1/members/join", headers=h, json={"invite_code": "expired"})
     assert r.status_code == 410
-    assert r.json()["detail"]["error"]["code"] == "INVITE_EXPIRED"
+    assert r.json()["error"]["code"] == "INVITE_EXPIRED"
 
 
 async def test_list_bans_pagination(client):
@@ -203,4 +204,4 @@ async def test_invalid_user_id_returns_400(client):
     h, _ = await auth(client)
     r = await client.delete("/api/v1/members/notanumber", headers=h)
     assert r.status_code == 400
-    assert r.json()["detail"]["error"]["code"] == "INVALID_USER_ID"
+    assert r.json()["error"]["code"] == "INVALID_USER_ID"

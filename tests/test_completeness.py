@@ -61,7 +61,7 @@ async def test_message_body_too_long(client):
     fid = await setup_feed(client, h)
     r = await client.post(f"/api/v1/feeds/{fid}/messages", headers=h, json={"body": "x" * 4001})
     assert r.status_code == 400
-    assert r.json()["detail"]["error"]["code"] == "MESSAGE_TOO_LARGE"
+    assert r.json()["error"]["code"] == "MESSAGE_TOO_LARGE"
 
 
 async def test_edit_message_body_too_long(client):
@@ -219,7 +219,7 @@ async def test_device_limit(client):
     reset_ratelimit()
     r = await client.post("/api/v1/keys/devices", headers=h, json={"device_id": "dev_10", "device_name": "Device 10"})
     assert r.status_code == 403
-    assert r.json()["detail"]["error"]["code"] == "DEVICE_LIMIT_REACHED"
+    assert r.json()["error"]["code"] == "DEVICE_LIMIT_REACHED"
 
 
 async def test_device_limit_after_removal(client):
@@ -306,7 +306,7 @@ async def test_announcement_feed_non_mod_cannot_post(client):
 
     r = await client.post(f"/api/v1/feeds/{fid}/messages", headers=h_user, json={"body": "Try to post"})
     assert r.status_code == 403
-    assert r.json()["detail"]["error"]["code"] == "FORBIDDEN"
+    assert r.json()["error"]["code"] == "FORBIDDEN"
 
 
 # ==========================================================================
@@ -379,7 +379,7 @@ async def test_role_hierarchy_kick_blocked(client):
     # Mod tries to kick admin -> should fail
     r = await client.delete(f"/api/v1/members/{admin_uid}", headers=h_mod)
     assert r.status_code == 403
-    assert r.json()["detail"]["error"]["code"] == "ROLE_HIERARCHY"
+    assert r.json()["error"]["code"] == "ROLE_HIERARCHY"
 
 
 async def test_role_hierarchy_kick_allowed(client):
@@ -404,7 +404,7 @@ async def test_role_hierarchy_ban_blocked(client):
     # Mod tries to ban admin -> should fail
     r = await client.put(f"/api/v1/bans/{admin_uid}", headers=h_mod, json={"reason": "test"})
     assert r.status_code == 403
-    assert r.json()["detail"]["error"]["code"] == "ROLE_HIERARCHY"
+    assert r.json()["error"]["code"] == "ROLE_HIERARCHY"
 
 
 async def test_role_hierarchy_non_admin_cannot_edit_higher_role(client):
@@ -423,7 +423,7 @@ async def test_role_hierarchy_non_admin_cannot_edit_higher_role(client):
     # Mod tries to edit senior role (higher rank) -> should fail
     r = await client.patch(f"/api/v1/roles/{senior_role_id}", headers=h_mod, json={"name": "Renamed"})
     assert r.status_code == 403
-    assert r.json()["detail"]["error"]["code"] == "ROLE_HIERARCHY"
+    assert r.json()["error"]["code"] == "ROLE_HIERARCHY"
 
 
 async def test_role_hierarchy_non_admin_cannot_assign_higher_role(client):
@@ -442,7 +442,7 @@ async def test_role_hierarchy_non_admin_cannot_assign_higher_role(client):
     # Mod tries to assign senior role -> should fail
     r = await client.put(f"/api/v1/members/{user_uid}/roles/{senior_role_id}", headers=h_mod)
     assert r.status_code == 403
-    assert r.json()["detail"]["error"]["code"] == "ROLE_HIERARCHY"
+    assert r.json()["error"]["code"] == "ROLE_HIERARCHY"
 
 
 # ==========================================================================
