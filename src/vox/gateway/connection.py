@@ -442,7 +442,12 @@ class Connection:
                             continue
                     presence_data["activity"] = activity
                 self.hub.set_presence(self.user_id, presence_data)
-                # If invisible, broadcast offline to others
+                # Echo back to sender with the true status (confirmation)
+                await self.hub.broadcast(
+                    events.presence_update(user_id=self.user_id, **presence_data),
+                    user_ids=[self.user_id],
+                )
+                # Broadcast to others (invisible → offline)
                 broadcast_status = "offline" if status == "invisible" else status
                 broadcast_data = {**presence_data, "status": broadcast_status}
                 other_ids = [uid for uid in self.hub.connections if uid != self.user_id]

@@ -724,11 +724,20 @@ class TestRelayHandlers:
                     bob_evt = ws_bob.receive_json()
                     assert bob_evt["type"] == "presence_update"
 
+                    # Alice receives bob's online presence
+                    alice_evt = ws_alice.receive_json()
+                    assert alice_evt["type"] == "presence_update"
+
                     # Alice sends presence update
                     ws_alice.send_json({
                         "type": "presence_update",
                         "d": {"status": "idle"}
                     })
+
+                    # Alice should receive her own echo (confirmation)
+                    alice_echo = ws_alice.receive_json()
+                    assert alice_echo["type"] == "presence_update"
+                    assert alice_echo["d"]["status"] == "idle"
 
                     # Bob should receive alice's idle presence
                     event = ws_bob.receive_json()
@@ -1065,8 +1074,10 @@ class TestGatewayEdgeCases:
                     ws2.send_json({"type": "identify", "d": {"token": token2}})
                     ws2.receive_json()  # ready
 
-                    # Drain Alice's presence_update from Bob connecting
+                    # Drain cross-presence updates from connecting
                     evt = ws1.receive_json()
+                    assert evt["type"] == "presence_update"
+                    evt = ws2.receive_json()
                     assert evt["type"] == "presence_update"
 
                     # Bob sets invisible
@@ -1074,8 +1085,10 @@ class TestGatewayEdgeCases:
                         "type": "presence_update",
                         "d": {"status": "invisible"}
                     })
-                    # Bob sees his own broadcast
-                    ws2.receive_json()
+                    # Bob sees his own echo with the true status
+                    bob_echo = ws2.receive_json()
+                    assert bob_echo["type"] == "presence_update"
+                    assert bob_echo["d"]["status"] == "invisible"
 
                     # Alice should see "offline", not "invisible"
                     evt = ws1.receive_json()
