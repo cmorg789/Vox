@@ -207,13 +207,23 @@ def create_app(database_url: str | None = None) -> FastAPI:
     from starlette.middleware.base import BaseHTTPMiddleware
     from fastapi.responses import JSONResponse
 
-    _UPLOAD_PATHS = frozenset({"/api/v1/files", "/api/v1/emoji", "/api/v1/server/icon"})
+    _UPLOAD_PREFIX = ("/api/v1/files", "/api/v1/emoji", "/api/v1/server/icon")
+
+    def _is_upload_path(path: str) -> bool:
+        if path.startswith(_UPLOAD_PREFIX):
+            return True
+        # /api/v1/feeds/{id}/files, /api/v1/dms/{id}/files
+        if path.endswith("/files") and (
+            path.startswith("/api/v1/feeds/") or path.startswith("/api/v1/dms/")
+        ):
+            return True
+        return False
 
     class BodySizeLimitMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
             if request.method in ("POST", "PUT", "PATCH"):
                 # Skip upload routes — they enforce their own limits
-                if not any(request.url.path.startswith(p) for p in _UPLOAD_PATHS):
+                if not _is_upload_path(request.url.path):
                     from vox.config import config as _cfg
                     cl = int(request.headers.get("content-length", 0))
                     if cl > _cfg.limits.max_request_body:

@@ -228,7 +228,7 @@ class MediaConfig(_DbSettings):
     url: str = "quic://127.0.0.1:4443"
     tls_cert: str | None = None  # Path to PEM cert file; omit to use self-signed
     tls_key: str | None = None   # Path to PEM key file; omit to use self-signed
-    allowed_file_mimes: str = "image/*,video/*,audio/*,application/pdf,text/plain"
+    allowed_file_mimes: str = "*/*"
     allowed_emoji_mimes: str = "image/png,image/gif,image/webp"
     allowed_sticker_mimes: str = "image/png,image/gif,image/webp,image/apng"
 

@@ -42,9 +42,11 @@ def int_limit(*, ge: int | None = None, max_attr: str | None = None):
 
 
 def check_mime(mime: str, allowlist: str) -> bool:
-    """Check if a MIME type matches a comma-separated allowlist (supports type/* wildcards)."""
+    """Check if a MIME type matches a comma-separated allowlist (supports type/* and */* wildcards)."""
     allowed = [s.strip() for s in allowlist.split(",") if s.strip()]
     for pattern in allowed:
+        if pattern == "*/*":
+            return True
         if pattern == mime:
             return True
         if pattern.endswith("/*") and mime.startswith(pattern[:-1]):
