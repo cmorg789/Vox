@@ -272,6 +272,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     from vox.api.search import router as search_router
     from vox.api.files import router as files_router
     from vox.api.embeds import router as embeds_router
+    from vox.api.gifs import router as gifs_router
     from vox.api.sync import router as sync_router
     from vox.api.federation import router as federation_router
 
@@ -295,6 +296,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(search_router)
     app.include_router(files_router)
     app.include_router(embeds_router)
+    app.include_router(gifs_router)
     app.include_router(sync_router)
     app.include_router(federation_router)
 

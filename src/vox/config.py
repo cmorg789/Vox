@@ -245,6 +245,23 @@ class WebAuthnConfig(_DbSettings):
     origin: str | None = None
 
 
+class GifsConfig(_DbSettings):
+    model_config = {"env_prefix": "VOX_GIFS_"}
+
+    _DB_KEY_MAP: ClassVar[dict[str, str]] = {
+        "gifs_provider": "provider",
+        "gifs_api_key": "api_key",
+        "gifs_content_filter": "content_filter",
+        "gifs_locale": "locale",
+    }
+    _SENSITIVE: ClassVar[set[str]] = {"api_key"}
+
+    provider: str = "klipy"
+    api_key: str | None = None
+    content_filter: str = "high"  # Klipy: "off", "low", "medium", "high"
+    locale: str | None = None  # e.g. "en_US" — omit for provider default
+
+
 class FederationConfig(_DbSettings):
     model_config = {"env_prefix": "VOX_FEDERATION_"}
 
@@ -274,6 +291,7 @@ _SECTIONS: dict[str, type[BaseSettings]] = {
     "limits": LimitsConfig,
     "media": MediaConfig,
     "webauthn": WebAuthnConfig,
+    "gifs": GifsConfig,
     "federation": FederationConfig,
 }
 
@@ -290,6 +308,7 @@ class ServerConfig(BaseModel):
     limits: LimitsConfig = LimitsConfig()
     media: MediaConfig = MediaConfig()
     webauthn: WebAuthnConfig = WebAuthnConfig()
+    gifs: GifsConfig = GifsConfig()
     federation: FederationConfig = FederationConfig()
 
 
