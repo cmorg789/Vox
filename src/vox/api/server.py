@@ -130,3 +130,59 @@ async def update_limits(
         await save_limit(db, name, value)
     await db.commit()
     return config.limits
+
+
+# --- GIF Settings ---
+
+
+class GifsSettingsResponse(BaseModel):
+    provider: str
+    api_key_set: bool
+    content_filter: str
+    locale: str | None
+
+
+class UpdateGifsRequest(BaseModel):
+    provider: str | None = None
+    api_key: str | None = None
+    content_filter: str | None = None
+    locale: str | None = None
+
+
+@router.get("/gifs", response_model=GifsSettingsResponse)
+async def get_gifs(
+    _: User = require_permission(MANAGE_SERVER),
+):
+    """Returns GIF configuration with api_key masked to a boolean."""
+    g = config.gifs
+    return GifsSettingsResponse(
+        provider=g.provider,
+        api_key_set=bool(g.api_key),
+        content_filter=g.content_filter,
+        locale=g.locale,
+    )
+
+
+@router.patch("/gifs", response_model=GifsSettingsResponse)
+async def update_gifs(
+    body: UpdateGifsRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = require_permission(MANAGE_SERVER),
+):
+    """Update GIF settings. Writes to DB and hot-reloads in-memory."""
+    if body.provider is not None:
+        await save_config_value(db, "gifs_provider", body.provider)
+    if body.api_key is not None:
+        await save_config_value(db, "gifs_api_key", body.api_key)
+    if body.content_filter is not None:
+        await save_config_value(db, "gifs_content_filter", body.content_filter)
+    if body.locale is not None:
+        await save_config_value(db, "gifs_locale", body.locale)
+    await db.commit()
+    g = config.gifs
+    return GifsSettingsResponse(
+        provider=g.provider,
+        api_key_set=bool(g.api_key),
+        content_filter=g.content_filter,
+        locale=g.locale,
+    )

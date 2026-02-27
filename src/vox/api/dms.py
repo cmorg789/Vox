@@ -342,8 +342,8 @@ async def send_dm_message(
     user: User = require_dm_participant(),
 ) -> SendMessageResponse:
     # Empty message validation
-    if not (body.body and body.body.strip()) and not body.attachments:
-        raise HTTPException(status_code=400, detail={"error": {"code": "EMPTY_MESSAGE", "message": "Message must have body or attachments."}})
+    if not (body.body and body.body.strip()) and not body.attachments and not getattr(body, "embed", None):
+        raise HTTPException(status_code=400, detail={"error": {"code": "EMPTY_MESSAGE", "message": "Message must have body, attachments, or embed."}})
     if body.body and len(body.body) > config.limits.message_body_max:
         raise HTTPException(status_code=400, detail={"error": {"code": "MESSAGE_TOO_LARGE", "message": f"Message body exceeds maximum of {config.limits.message_body_max} characters."}})
     # Slash command interception

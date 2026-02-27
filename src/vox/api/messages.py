@@ -153,6 +153,8 @@ async def _handle_slash_command(
     db: AsyncSession,
 ) -> SendMessageResponse | None:
     """If text is a slash command, intercept and create interaction. Returns response or None."""
+    if not text:
+        return None
     parsed = _parse_slash_command(text)
     if parsed is None:
         return None
@@ -312,8 +314,8 @@ async def send_feed_message(
         raise HTTPException(status_code=404, detail={"error": {"code": "SPACE_NOT_FOUND", "message": "Feed not found."}})
 
     # Empty message validation
-    if not (body.body and body.body.strip()) and not body.attachments:
-        raise HTTPException(status_code=400, detail={"error": {"code": "EMPTY_MESSAGE", "message": "Message must have body or attachments."}})
+    if not (body.body and body.body.strip()) and not body.attachments and not getattr(body, "embed", None):
+        raise HTTPException(status_code=400, detail={"error": {"code": "EMPTY_MESSAGE", "message": "Message must have body, attachments, or embed."}})
     if body.body and len(body.body) > config.limits.message_body_max:
         raise HTTPException(status_code=400, detail={"error": {"code": "MESSAGE_TOO_LARGE", "message": f"Message body exceeds maximum of {config.limits.message_body_max} characters."}})
 
@@ -493,8 +495,8 @@ async def send_thread_message(
     if thread.locked:
         raise HTTPException(status_code=403, detail={"error": {"code": "THREAD_LOCKED", "message": "This thread is locked."}})
     # Empty message validation
-    if not (body.body and body.body.strip()) and not body.attachments:
-        raise HTTPException(status_code=400, detail={"error": {"code": "EMPTY_MESSAGE", "message": "Message must have body or attachments."}})
+    if not (body.body and body.body.strip()) and not body.attachments and not getattr(body, "embed", None):
+        raise HTTPException(status_code=400, detail={"error": {"code": "EMPTY_MESSAGE", "message": "Message must have body, attachments, or embed."}})
     if body.body and len(body.body) > config.limits.message_body_max:
         raise HTTPException(status_code=400, detail={"error": {"code": "MESSAGE_TOO_LARGE", "message": f"Message body exceeds maximum of {config.limits.message_body_max} characters."}})
     # Slash command interception
