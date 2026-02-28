@@ -342,8 +342,8 @@ async def send_dm_message(
     user: User = require_dm_participant(),
 ) -> SendMessageResponse:
     # Empty message validation
-    if not (body.body and body.body.strip()) and not body.attachments and not getattr(body, "embed", None):
-        raise HTTPException(status_code=400, detail={"error": {"code": "EMPTY_MESSAGE", "message": "Message must have body, attachments, or embed."}})
+    if not (body.body and body.body.strip()) and not body.opaque_blob and not body.attachments and not getattr(body, "embed", None):
+        raise HTTPException(status_code=400, detail={"error": {"code": "EMPTY_MESSAGE", "message": "Message must have body, opaque_blob, attachments, or embed."}})
     if body.body and len(body.body) > config.limits.message_body_max:
         raise HTTPException(status_code=400, detail={"error": {"code": "MESSAGE_TOO_LARGE", "message": f"Message body exceeds maximum of {config.limits.message_body_max} characters."}})
     # Slash command interception
@@ -352,7 +352,7 @@ async def send_dm_message(
         return intercepted
     msg_id = await _snowflake()
     ts = int(time.time() * 1000)
-    msg = Message(id=msg_id, dm_id=dm_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to)
+    msg = Message(id=msg_id, dm_id=dm_id, author_id=user.id, body=body.body, opaque_blob=body.opaque_blob, timestamp=ts, reply_to=body.reply_to)
     db.add(msg)
     await db.flush()
     attachment_dicts = []
@@ -369,7 +369,7 @@ async def send_dm_message(
             attachment_dicts.append({"file_id": f.id, "name": f.name, "size": f.size, "mime": f.mime, "url": f.url})
     await db.commit()
     pids = await _dm_participant_ids(db, dm_id)
-    await dispatch(gw.message_create(msg_id=msg_id, dm_id=dm_id, author_id=user.id, body=body.body, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions, attachments=attachment_dicts or None), user_ids=pids, db=db)
+    await dispatch(gw.message_create(msg_id=msg_id, dm_id=dm_id, author_id=user.id, body=body.body, opaque_blob=body.opaque_blob, timestamp=ts, reply_to=body.reply_to, mentions=body.mentions, attachments=attachment_dicts or None), user_ids=pids, db=db)
     await notify_for_message(db, msg_id=msg_id, feed_id=None, thread_id=None, dm_id=dm_id, author_id=user.id, body=body.body, reply_to=body.reply_to, mentions=body.mentions)
 
     # Outbound federation relay for federated participants

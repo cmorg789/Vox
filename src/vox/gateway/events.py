@@ -59,9 +59,11 @@ def message_create(
     author_id: int | None = None, body: str | None = None, timestamp: int = 0,
     reply_to: int | None = None, mentions: list[int] | None = None,
     webhook_id: int | None = None, embed: dict | None = None,
-    attachments: list[dict] | None = None,
+    attachments: list[dict] | None = None, opaque_blob: str | None = None,
 ) -> dict[str, Any]:
     d: dict[str, Any] = {"msg_id": msg_id, "author_id": author_id, "body": body, "timestamp": timestamp}
+    if opaque_blob is not None:
+        d["opaque_blob"] = opaque_blob
     if feed_id is not None:
         d["feed_id"] = feed_id
     if dm_id is not None:

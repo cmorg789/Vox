@@ -10,6 +10,7 @@ from vox.models.files import FileResponse
 
 class SendMessageRequest(BaseModel):
     body: str | None = None
+    opaque_blob: str | None = None  # E2EE ciphertext (base64)
     reply_to: int | None = None
     attachments: list[str] | None = None  # file_ids
     mentions: list[int] | None = None
