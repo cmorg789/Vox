@@ -137,6 +137,12 @@ async def add_device(
             status_code=403,
             detail={"error": {"code": "DEVICE_LIMIT_REACHED", "message": f"Maximum of {config.limits.max_devices} devices allowed."}},
         )
+    # Check if device already exists
+    existing = (await db.execute(select(Device).where(Device.id == body.device_id))).scalar_one_or_none()
+    if existing is not None:
+        if existing.user_id != user.id:
+            raise HTTPException(status_code=409, detail={"error": {"code": "DEVICE_ID_CONFLICT", "message": "Device ID already in use."}})
+        return AddDeviceResponse(device_id=body.device_id)
     db.add(Device(id=body.device_id, user_id=user.id, device_name=body.device_name, created_at=datetime.now(timezone.utc)))
     await db.commit()
     devices_result = await db.execute(select(Device).where(Device.user_id == user.id))
