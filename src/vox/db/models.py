@@ -395,6 +395,15 @@ class KeyBackup(Base):
     encrypted_blob: Mapped[str] = mapped_column(Text)
 
 
+class MLSKeyPackage(Base):
+    __tablename__ = "mls_key_packages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    device_id: Mapped[str] = mapped_column(String(255), ForeignKey("devices.id", ondelete="CASCADE"), index=True)
+    key_data: Mapped[str] = mapped_column(Text)  # base64-encoded MLS KeyPackage
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 # --- Bots & Webhooks ---
 
 

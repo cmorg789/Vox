@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
 from vox.api.deps import get_current_user, get_db
-from vox.db.models import Device, KeyBackup, OneTimePrekey, Prekey, User, dm_participants
+from vox.db.models import Device, KeyBackup, MLSKeyPackage, OneTimePrekey, Prekey, User, dm_participants
 from vox.config import config
 from vox.gateway import events as gw
 from vox.gateway.dispatch import dispatch
@@ -19,10 +19,12 @@ from vox.models.e2ee import (
     DevicePrekey,
     KeyBackupRequest,
     KeyBackupResponse,
+    MLSKeyPackagesResponse,
     PairDeviceRequest,
     PairDeviceResponse,
     PairRespondRequest,
     PrekeyBundleResponse,
+    UploadMLSKeyPackagesRequest,
     UploadPrekeysRequest,
 )
 
@@ -222,17 +224,64 @@ async def download_key_backup(
     return KeyBackupResponse(encrypted_blob=backup.encrypted_blob)
 
 
+@router.post("/mls/{device_id}/key-packages", status_code=201)
+async def upload_mls_key_packages(
+    device_id: str,
+    body: UploadMLSKeyPackagesRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    result = await db.execute(select(Device).where(Device.id == device_id, Device.user_id == user.id))
+    device = result.scalar_one_or_none()
+    if device is None:
+        raise HTTPException(status_code=404, detail={"error": {"code": "DEVICE_NOT_FOUND", "message": "Device not found."}})
+
+    for kp in body.key_packages:
+        db.add(MLSKeyPackage(device_id=device.id, key_data=kp, created_at=datetime.now(timezone.utc)))
+    await db.commit()
+
+
+@router.get("/mls/{user_id}/key-packages")
+async def get_mls_key_packages(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> MLSKeyPackagesResponse:
+    # Get all devices for the target user
+    devices_result = await db.execute(select(Device).where(Device.user_id == user_id))
+    devices = devices_result.scalars().all()
+    device_ids = [d.id for d in devices]
+
+    if not device_ids:
+        return MLSKeyPackagesResponse(key_packages=[])
+
+    # Pop one key package per device (consume on fetch, like one-time prekeys)
+    key_packages: list[str] = []
+    for did in device_ids:
+        result = await db.execute(
+            select(MLSKeyPackage).where(MLSKeyPackage.device_id == did).limit(1)
+        )
+        kp = result.scalar_one_or_none()
+        if kp:
+            key_packages.append(kp.key_data)
+            await db.delete(kp)
+
+    await db.commit()
+    return MLSKeyPackagesResponse(key_packages=key_packages)
+
+
 @router.post("/reset", status_code=204)
 async def reset_keys(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    # Delete all prekeys and one-time prekeys for user's devices
+    # Delete all prekeys, one-time prekeys, and MLS key packages for user's devices
     devices = (await db.execute(select(Device).where(Device.user_id == user.id))).scalars().all()
     for dev in devices:
         from sqlalchemy import delete
         await db.execute(delete(Prekey).where(Prekey.device_id == dev.id))
         await db.execute(delete(OneTimePrekey).where(OneTimePrekey.device_id == dev.id))
+        await db.execute(delete(MLSKeyPackage).where(MLSKeyPackage.device_id == dev.id))
     await db.commit()
     result = await db.execute(
         select(dm_participants.c.user_id)

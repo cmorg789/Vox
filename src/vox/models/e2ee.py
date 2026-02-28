@@ -73,3 +73,14 @@ class AddDeviceResponse(VoxModel):
 
 class KeyBackupResponse(VoxModel):
     encrypted_blob: str
+
+
+# --- MLS Key Packages ---
+
+
+class UploadMLSKeyPackagesRequest(BaseModel):
+    key_packages: list[str]  # base64-encoded MLS KeyPackage bytes
+
+
+class MLSKeyPackagesResponse(VoxModel):
+    key_packages: list[str]  # base64-encoded MLS KeyPackage bytes
